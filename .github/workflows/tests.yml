@@ -28,7 +28,7 @@ jobs:
           path: fork
 
       - name: Check out upstream Eden
-        run: git clone --depth 50 https://git.eden-emu.dev/eden-emu/eden.git eden
+        run: git clone --depth 50 --branch v0.2.1 https://git.eden-emu.dev/eden-emu/eden.git eden
 
       - uses: actions/setup-java@v4
         with:

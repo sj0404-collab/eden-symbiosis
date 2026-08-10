@@ -43,7 +43,7 @@ jobs:
         run: |
           # depth 50 rather than 1: git apply --3way needs history to resolve
           # a context mismatch instead of failing outright.
-          git clone --depth 50 https://git.eden-emu.dev/eden-emu/eden.git eden
+          git clone --depth 50 --branch v0.2.1 https://git.eden-emu.dev/eden-emu/eden.git eden
           cd eden && echo "upstream: $(git rev-parse --short HEAD)"
 
       - name: Set up JDK 17

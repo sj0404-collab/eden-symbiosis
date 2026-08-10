@@ -1,5 +1,5 @@
 diff --git a/src/android/app/build.gradle.kts b/src/android/app/build.gradle.kts
-index 0cef7e7..94de124 100644
+index ccc5b3cabe..86004afa16 100644
 --- a/src/android/app/build.gradle.kts
 +++ b/src/android/app/build.gradle.kts
 @@ -178,6 +178,31 @@ android {
@@ -34,19 +34,23 @@ index 0cef7e7..94de124 100644
          }
      }
  
-@@ -219,8 +244,8 @@ android {
+@@ -216,8 +241,12 @@ android {
+ 
          create("legacy") {
              dimension = "version"
-             minSdk = 29
 -            manifestPlaceholders += mapOf("appNameBase" to "Eden Legacy")
 -            resValue("string", "app_name_suffixed", "Eden Legacy")
++            // The legacy flavour exists to reach older devices; defaultConfig's
++            // minSdk 24 is raised to 29 here because that is the floor for the
++            // storage APIs this build relies on.
++            minSdk = 29
 +            manifestPlaceholders += mapOf("appNameBase" to "Eden Symbiosis")
 +            resValue("string", "app_name_suffixed", "Eden Symbiosis")
              applicationId = "dev.legacy.eden_emulator"
  
              externalNativeBuild {
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/adapters/SetupAdapter.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/adapters/SetupAdapter.kt
-index 3057eea..8668c98 100644
+index 3057eea3e4..8668c98cbe 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/adapters/SetupAdapter.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/adapters/SetupAdapter.kt
 @@ -8,6 +8,7 @@ package org.yuzu.yuzu_emu.adapters
@@ -126,10 +130,10 @@ index 3057eea..8668c98 100644
                  ViewUtils.showView(binding.textConfirmation, 200)
              }
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt
-index 7f6e793..ae46c3c 100644
+index eccf0549e7..ef99111791 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt
-@@ -90,7 +90,17 @@ enum class BooleanSetting(override val key: String) : AbstractBooleanSetting {
+@@ -88,7 +88,17 @@ enum class BooleanSetting(override val key: String) : AbstractBooleanSetting {
      GPU_LOG_MEMORY_TRACKING("gpu_log_memory_tracking"),
      GPU_LOG_DRIVER_DEBUG("gpu_log_driver_debug"),
  
@@ -149,10 +153,10 @@ index 7f6e793..ae46c3c 100644
  //  external fun isFrameSkippingEnabled(): Boolean
      external fun isFrameInterpolationEnabled(): Boolean
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/IntSetting.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/IntSetting.kt
-index 117336a..6cac13e 100644
+index 60e2a89564..a9c837cb00 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/IntSetting.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/IntSetting.kt
-@@ -69,7 +69,23 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
+@@ -68,7 +68,23 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
      INPUT_OVERLAY_AUTO_HIDE("input_overlay_auto_hide"),
      OVERLAY_GRID_SIZE("overlay_grid_size"),
      GPU_LOG_RING_BUFFER_SIZE("gpu_log_ring_buffer_size"),
@@ -178,10 +182,10 @@ index 117336a..6cac13e 100644
  
      override fun getInt(needsGlobal: Boolean): Int = NativeConfig.getInt(key, needsGlobal)
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/view/SettingsItem.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/view/SettingsItem.kt
-index 63ac7b0..fb67695 100644
+index 230390749e..5e15960b4d 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/view/SettingsItem.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/view/SettingsItem.kt
-@@ -573,6 +573,65 @@ abstract class SettingsItem(
+@@ -566,6 +566,65 @@ abstract class SettingsItem(
                      valuesId = R.array.rendererVSyncValues
                  )
              )
@@ -248,16 +252,15 @@ index 63ac7b0..fb67695 100644
                  SingleChoiceSetting(
                      IntSetting.RENDERER_SCALING_FILTER,
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/ui/SettingsFragmentPresenter.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/ui/SettingsFragmentPresenter.kt
-index 594099f..ce51a17 100644
+index 4da218bfcc..834ca79db9 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/ui/SettingsFragmentPresenter.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/ui/SettingsFragmentPresenter.kt
-@@ -250,14 +250,18 @@ class SettingsFragmentPresenter(
+@@ -243,13 +243,20 @@ class SettingsFragmentPresenter(
              add(BooleanSetting.USE_CUSTOM_RTC.key)
              add(LongSetting.CUSTOM_RTC.key)
  
--            add(HeaderSetting(R.string.clocks))
+-            add(HeaderSetting(R.string.cpu))
 -            add(IntSetting.FAST_CPU_TIME.key)
--            add(IntSetting.FAST_GPU_TIME.key)
 -            add(BooleanSetting.CORE_SYNC_CORE_SPEED.key)
 -
 -            add(IntSetting.MEMORY_LAYOUT.key)
@@ -265,8 +268,10 @@ index 594099f..ce51a17 100644
 -            add(IntSetting.CPU_TICKS.key)
 +            // Clock and CPU-tick knobs are a frequent source of "it broke and
 +            // I don't know why". Hidden unless the full list is requested.
++            // R.string.cpu, not R.string.clocks: v0.2.1 has no "clocks"
++            // string, and referencing a missing resource fails the build.
 +            if (BooleanSetting.SYMBIOSIS_SHOW_ADVANCED.getBoolean()) {
-+                add(HeaderSetting(R.string.clocks))
++                add(HeaderSetting(R.string.cpu))
 +                add(IntSetting.FAST_CPU_TIME.key)
 +                add(IntSetting.FAST_GPU_TIME.key)
 +                add(BooleanSetting.CORE_SYNC_CORE_SPEED.key)
@@ -278,7 +283,7 @@ index 594099f..ce51a17 100644
  
              if (!NativeConfig.isPerGameConfigLoaded()) {
                  add(HeaderSetting(R.string.network))
-@@ -270,7 +274,9 @@ class SettingsFragmentPresenter(
+@@ -262,7 +269,9 @@ class SettingsFragmentPresenter(
      // TODO(crueter): sub-submenus?
      private fun addGraphicsSettings(sl: ArrayList<SettingsItem>) {
          sl.apply {
@@ -289,7 +294,7 @@ index 594099f..ce51a17 100644
  
              add(IntSetting.RENDERER_RESOLUTION.key)
              add(IntSetting.RENDERER_VSYNC.key)
-@@ -280,6 +286,14 @@ class SettingsFragmentPresenter(
+@@ -272,6 +281,14 @@ class SettingsFragmentPresenter(
              }
              add(IntSetting.RENDERER_ANTI_ALIASING.key)
  
@@ -304,7 +309,7 @@ index 594099f..ce51a17 100644
              add(HeaderSetting(R.string.advanced))
  
              add(IntSetting.RENDERER_ACCURACY.key)
-@@ -333,6 +347,12 @@ class SettingsFragmentPresenter(
+@@ -324,6 +341,12 @@ class SettingsFragmentPresenter(
  
              add(HeaderSetting(R.string.stats_overlay_items))
              add(BooleanSetting.SHOW_FPS.key)
@@ -317,7 +322,7 @@ index 594099f..ce51a17 100644
              add(BooleanSetting.SHOW_FRAMETIME.key)
              add(BooleanSetting.SHOW_APP_RAM_USAGE.key)
              add(BooleanSetting.SHOW_SYSTEM_RAM_USAGE.key)
-@@ -1263,6 +1283,13 @@ class SettingsFragmentPresenter(
+@@ -1254,6 +1277,13 @@ class SettingsFragmentPresenter(
  
      private fun addDebugSettings(sl: ArrayList<SettingsItem>) {
          sl.apply {
@@ -332,7 +337,7 @@ index 594099f..ce51a17 100644
  
              add(IntSetting.RENDERER_BACKEND.key)
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/EmulationFragment.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/EmulationFragment.kt
-index 5b93c88..c52b7fd 100644
+index 120bafdd14..421ce05164 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/EmulationFragment.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/EmulationFragment.kt
 @@ -93,6 +93,7 @@ import org.yuzu.yuzu_emu.utils.GpuDriverHelper
@@ -393,7 +398,7 @@ index 5b93c88..c52b7fd 100644
          emulationViewModel.drawerOpen.collect(viewLifecycleOwner) {
              if (it) {
                  binding.drawerLayout.open()
-@@ -1263,6 +1286,94 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+@@ -1256,6 +1279,94 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
          }
      }
  
@@ -488,7 +493,7 @@ index 5b93c88..c52b7fd 100644
      private fun pauseEmulationAndCaptureFrame() {
          emulationState.pause()
          updatePauseMenuEntry(true)
-@@ -1420,7 +1531,21 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+@@ -1413,7 +1524,21 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
  
      override fun onPause() {
          if (this::emulationState.isInitialized) {
@@ -511,7 +516,7 @@ index 5b93c88..c52b7fd 100644
                  pauseEmulationAndCaptureFrame()
              } else {
                  updatePausedFrameVisibility()
-@@ -1599,6 +1724,23 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+@@ -1591,6 +1716,23 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                          binding.showStatsOverlayText.setBackgroundResource(0)
                      }
  
@@ -535,7 +540,7 @@ index 5b93c88..c52b7fd 100644
                      binding.showStatsOverlayText.text = sb.toString()
                  }
                  perfStatsUpdateHandler.postDelayed(perfStatsRunnable!!, 800)
-@@ -1959,6 +2101,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+@@ -1951,6 +2093,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
              ViewUtils.showView(binding.loadingIndicator)
              ViewUtils.hideView(binding.inputContainer)
              ViewUtils.hideView(binding.showStatsOverlayText)
@@ -543,8 +548,298 @@ index 5b93c88..c52b7fd 100644
          }
          if (this::emulationState.isInitialized) {
              emulationState.stop()
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/GameFoldersFragment.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/GameFoldersFragment.kt
+index 6e05df799b..48ccdedc6a 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/GameFoldersFragment.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/GameFoldersFragment.kt
+@@ -1,193 +1,133 @@
+-// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
++// SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+ // SPDX-License-Identifier: GPL-3.0-or-later
+ 
+ package org.yuzu.yuzu_emu.fragments
+ 
+-import android.content.Intent
+-import android.net.Uri
+ import android.os.Bundle
+ import android.view.LayoutInflater
+ import android.view.View
+ import android.view.ViewGroup
+-import android.widget.Toast
+-import androidx.activity.result.contract.ActivityResultContracts
+-import androidx.core.view.ViewCompat
+-import androidx.core.view.WindowInsetsCompat
+-import androidx.core.view.updatePadding
++import androidx.core.view.isVisible
+ import androidx.fragment.app.Fragment
+-import androidx.fragment.app.activityViewModels
+-import androidx.recyclerview.widget.GridLayoutManager
+-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+-import com.google.android.material.transition.MaterialSharedAxis
++import androidx.lifecycle.lifecycleScope
++import androidx.navigation.findNavController
++import androidx.recyclerview.widget.LinearLayoutManager
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
+ import org.yuzu.yuzu_emu.R
+-import org.yuzu.yuzu_emu.adapters.FolderAdapter
+-import org.yuzu.yuzu_emu.databinding.FragmentFoldersBinding
+-import org.yuzu.yuzu_emu.model.DirectoryType
+-import org.yuzu.yuzu_emu.model.GameDir
+-import org.yuzu.yuzu_emu.model.GamesViewModel
+-import org.yuzu.yuzu_emu.model.HomeViewModel
+-import org.yuzu.yuzu_emu.utils.ViewUtils.updateMargins
+-import org.yuzu.yuzu_emu.utils.collect
+-
++import org.yuzu.yuzu_emu.adapters.GameFolderAdapter
++import org.yuzu.yuzu_emu.databinding.FragmentGameFoldersBinding
++import org.yuzu.yuzu_emu.utils.GameFolderScanner
++
++/**
++ * Lists the folders that hold games, rather than the games themselves.
++ *
++ * The default screen shows a flat list of every title, which stops being
++ * useful once there are more than a handful and says nothing about where they
++ * live or what they cost in storage. This shows each folder with its game
++ * count and total size, so "which of these is eating my SD card" is answerable
++ * at a glance.
++ *
++ * Nothing is cached. The folder list in `config.ini` is read and the contents
++ * counted on every visit: a cache is what made a deleted game keep appearing
++ * and a newly copied one stay invisible, and the scan is cheap enough that
++ * avoiding it was never worth the confusion.
++ */
+ class GameFoldersFragment : Fragment() {
+-    private var _binding: FragmentFoldersBinding? = null
++    private var _binding: FragmentGameFoldersBinding? = null
+     private val binding get() = _binding!!
+ 
+-    private val homeViewModel: HomeViewModel by activityViewModels()
+-    private val gamesViewModel: GamesViewModel by activityViewModels()
+-
+-    private val getGamesDirectory =
+-        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { result ->
+-            if (result != null) {
+-                processGamesDir(result)
+-            }
+-        }
+-
+-    private val getExternalContentDirectory =
+-        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { result ->
+-            if (result != null) {
+-                processExternalContentDir(result)
+-            }
+-        }
+-
+-    override fun onCreate(savedInstanceState: Bundle?) {
+-        super.onCreate(savedInstanceState)
+-        enterTransition = MaterialSharedAxis(MaterialSharedAxis.X, true)
+-        returnTransition = MaterialSharedAxis(MaterialSharedAxis.X, false)
+-        reenterTransition = MaterialSharedAxis(MaterialSharedAxis.X, false)
+-
+-        gamesViewModel.onOpenGameFoldersFragment()
+-    }
+-
+     override fun onCreateView(
+         inflater: LayoutInflater,
+         container: ViewGroup?,
+         savedInstanceState: Bundle?
+     ): View {
+-        _binding = FragmentFoldersBinding.inflate(inflater)
++        _binding = FragmentGameFoldersBinding.inflate(inflater, container, false)
+         return binding.root
+     }
+ 
+     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+         super.onViewCreated(view, savedInstanceState)
+-        homeViewModel.setStatusBarShadeVisibility(visible = false)
+-
+-        binding.toolbarFolders.setNavigationOnClickListener {
+-            requireActivity().onBackPressedDispatcher.onBackPressed()
+-        }
+-
+-        binding.listFolders.apply {
+-            layoutManager = GridLayoutManager(
+-                requireContext(),
+-                resources.getInteger(R.integer.grid_columns)
+-            )
+-            adapter = FolderAdapter(requireActivity(), gamesViewModel)
+-        }
+ 
+-        gamesViewModel.folders.collect(viewLifecycleOwner) {
+-            (binding.listFolders.adapter as FolderAdapter).submitList(it)
++        binding.toolbarGameFolders.setNavigationOnClickListener {
++            binding.root.findNavController().popBackStack()
+         }
+ 
+-        binding.buttonAdd.setOnClickListener {
+-            // Show a model to choose between Game and External Content
+-            val options = arrayOf(
+-                getString(R.string.games),
+-                getString(R.string.external_content)
+-            )
+-
+-            MaterialAlertDialogBuilder(requireContext())
+-                .setTitle(R.string.add_folders)
+-                .setItems(options) { _, which ->
+-                    when (which) {
+-                        0 -> { // Game Folder
+-                            getGamesDirectory.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).data)
+-                        }
+-                        1 -> { // External Content Folder
+-                            getExternalContentDirectory.launch(null)
+-                        }
+-                    }
+-                }
+-                .show()
+-        }
++        binding.listFolders.layoutManager = LinearLayoutManager(requireContext())
++        binding.swipeFolders.setOnRefreshListener { rescan() }
+ 
+-        setInsets()
++        rescan()
+     }
+ 
+-    override fun onStop() {
+-        super.onStop()
+-        gamesViewModel.onCloseGameFoldersFragment()
+-    }
++    /** Re-reads the folders from disk. Deliberately not memoised. */
++    private fun rescan() {
++        binding.swipeFolders.isRefreshing = true
++        viewLifecycleOwner.lifecycleScope.launch {
++            val folders = withContext(Dispatchers.IO) {
++                GameFolderScanner.scan(requireContext())
++            }
+ 
+-    private fun processGamesDir(result: Uri) {
+-        requireContext().contentResolver.takePersistableUriPermission(
+-            result,
+-            Intent.FLAG_GRANT_READ_URI_PERMISSION
+-        )
+-
+-        val uriString = result.toString()
+-        val folder = gamesViewModel.folders.value.firstOrNull { it.uriString == uriString }
+-        if (folder != null) {
+-            Toast.makeText(
+-                requireContext().applicationContext,
+-                R.string.folder_already_added,
+-                Toast.LENGTH_SHORT
+-            ).show()
+-            return
+-        }
++            if (_binding == null) return@launch
+ 
+-        AddGameFolderDialogFragment.newInstance(uriString, calledFromGameFragment = false)
+-            .show(parentFragmentManager, AddGameFolderDialogFragment.TAG)
+-    }
++            binding.swipeFolders.isRefreshing = false
++            binding.textNoFolders.isVisible = folders.isEmpty()
++            binding.listFolders.isVisible = folders.isNotEmpty()
+ 
+-    private fun processExternalContentDir(result: Uri) {
+-        requireContext().contentResolver.takePersistableUriPermission(
+-            result,
+-            Intent.FLAG_GRANT_READ_URI_PERMISSION
+-        )
++            val games = folders.sumOf { it.gameCount }
++            val bytes = folders.sumOf { it.totalBytes }
++            binding.textFoldersSummary.text = getString(
++                R.string.folders_summary,
++                folders.size,
++                games,
++                GameFolderScanner.humanSize(bytes)
++            )
+ 
+-        val uriString = result.toString()
+-        val folder = gamesViewModel.folders.value.firstOrNull {
+-            it.uriString == uriString && it.type == DirectoryType.EXTERNAL_CONTENT
+-        }
+-        if (folder != null) {
+-            Toast.makeText(
+-                requireContext().applicationContext,
+-                R.string.folder_already_added,
+-                Toast.LENGTH_SHORT
+-            ).show()
+-            return
++            binding.listFolders.adapter = GameFolderAdapter(
++                requireActivity() as androidx.appcompat.app.AppCompatActivity,
++                folders
++            ) { folder ->
++                // Tapping a folder re-reads it and shows what is inside, so a
++                // game copied in a moment ago appears without a restart.
++                showFolderContents(folder)
++            }
+         }
+-
+-        val externalContentDir = GameDir(uriString, deepScan = false, DirectoryType.EXTERNAL_CONTENT)
+-        gamesViewModel.addFolder(externalContentDir, savedFromGameFragment = false)
+     }
+ 
+-    private fun setInsets() =
+-        ViewCompat.setOnApplyWindowInsetsListener(
+-            binding.root
+-        ) { _: View, windowInsets: WindowInsetsCompat ->
+-            val barInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+-            val cutoutInsets = windowInsets.getInsets(WindowInsetsCompat.Type.displayCutout())
+-
+-            val leftInsets = barInsets.left + cutoutInsets.left
+-            val rightInsets = barInsets.right + cutoutInsets.right
+-
+-            binding.toolbarFolders.updateMargins(left = leftInsets, right = rightInsets)
++    /** Lists the ROMs in one folder, read fresh at the moment of asking. */
++    private fun showFolderContents(folder: GameFolderScanner.Folder) {
++        viewLifecycleOwner.lifecycleScope.launch {
++            val entries = withContext(Dispatchers.IO) {
++                GameFolderScanner.listGames(requireContext(), folder.uriString)
++            }
++            if (_binding == null) return@launch
+ 
+-            val fabSpacing = resources.getDimensionPixelSize(R.dimen.spacing_fab)
+-            binding.buttonAdd.updateMargins(
+-                left = leftInsets + fabSpacing,
+-                right = rightInsets + fabSpacing,
+-                bottom = barInsets.bottom + fabSpacing
+-            )
++            val body = if (entries.isEmpty()) {
++                getString(R.string.folder_empty)
++            } else {
++                entries.joinToString("\n") {
++                    "${it.name}  —  ${GameFolderScanner.humanSize(it.bytes)}"
++                }
++            }
+ 
+-            binding.listFolders.updateMargins(left = leftInsets, right = rightInsets)
++            MessageDialogFragment.newInstance(
++                requireActivity(),
++                titleString = folder.displayName,
++                descriptionString = body
++            ).show(childFragmentManager, MessageDialogFragment.TAG)
++        }
++    }
+ 
+-            binding.listFolders.updatePadding(
+-                bottom = barInsets.bottom +
+-                    resources.getDimensionPixelSize(R.dimen.spacing_bottom_list_fab)
+-            )
++    override fun onResume() {
++        super.onResume()
++        // A folder's contents can change while the app is in the background -
++        // a game copied over USB, for instance - so re-read rather than trust
++        // what was on screen a minute ago.
++        if (_binding != null) rescan()
++    }
+ 
+-            windowInsets
+-        }
++    override fun onDestroyView() {
++        super.onDestroyView()
++        _binding = null
++    }
+ }
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt
-index 37eda22..26517f8 100644
+index 37eda22c69..26517f82a7 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt
 @@ -170,6 +170,17 @@ class HomeSettingsFragment : Fragment() {
@@ -566,7 +861,7 @@ index 37eda22..26517f8 100644
                  HomeSetting(
                      R.string.multiplayer,
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/SetupFragment.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/SetupFragment.kt
-index 41f2da0..d42a82f 100644
+index 41f2da08a7..d42a82f9fd 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/SetupFragment.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/SetupFragment.kt
 @@ -42,6 +42,7 @@ import org.yuzu.yuzu_emu.model.SetupPage
@@ -818,10 +1113,21 @@ index 41f2da0..d42a82f 100644
          }
      }
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/ui/GamesFragment.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/ui/GamesFragment.kt
-index 6931a1f..3295219 100644
+index 6931a1f9d5..9f3f3e65ea 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/ui/GamesFragment.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/ui/GamesFragment.kt
-@@ -184,6 +184,14 @@ class GamesFragment : Fragment() {
+@@ -180,10 +180,25 @@ class GamesFragment : Fragment() {
+ 
+         updateButtonsVisibility()
+ 
++        // Tools sits on the game screen itself, next to the filter and the gear.
++        // It was previously reachable only from inside Settings, which is the
++        // one place it does not belong: none of these are preferences.
++        binding.toolsButton.setOnClickListener {
++            findNavController().navigate(R.id.action_global_toolsFragment)
++        }
++
+         binding.addDirectory.setOnClickListener {
              getGamesDirectory.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).data)
          }
  
@@ -837,7 +1143,7 @@ index 6931a1f..3295219 100644
              launchQLaunch()
          }
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
-index f961c5e..ba1ece6 100644
+index f961c5e984..ba1ece6185 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
 @@ -24,9 +24,20 @@ object DirectoryInitialization {
@@ -899,7 +1205,7 @@ index f961c5e..ba1ece6 100644
              e.printStackTrace()
          }
 diff --git a/src/android/app/src/main/jni/CMakeLists.txt b/src/android/app/src/main/jni/CMakeLists.txt
-index 7013691..7a07c63 100644
+index c68e206d24..b1c996087f 100644
 --- a/src/android/app/src/main/jni/CMakeLists.txt
 +++ b/src/android/app/src/main/jni/CMakeLists.txt
 @@ -11,6 +11,7 @@ add_library(yuzu-android SHARED
@@ -911,10 +1217,10 @@ index 7013691..7a07c63 100644
      game_metadata.cpp
      native_log.cpp
 diff --git a/src/android/app/src/main/jni/native.cpp b/src/android/app/src/main/jni/native.cpp
-index c367a06..14c31f4 100644
+index abfc428919..33a843d233 100644
 --- a/src/android/app/src/main/jni/native.cpp
 +++ b/src/android/app/src/main/jni/native.cpp
-@@ -42,6 +42,13 @@ extern "C" {
+@@ -38,6 +38,13 @@
  
  #include "common/android/multiplayer/multiplayer.h"
  #include "common/android/android_common.h"
@@ -926,9 +1232,9 @@ index c367a06..14c31f4 100644
 +#include "common/symbiosis/driver_broker.h"
 +#include "common/symbiosis/memory_governor.h"
  #include "common/android/id_cache.h"
+ #include "common/detached_tasks.h"
  #include "common/dynamic_library.h"
- #include "common/fs/path_util.h"
-@@ -185,6 +192,76 @@ void EmulationSession::InitializeGpuDriver(const std::string& hook_lib_dir,
+@@ -181,6 +188,76 @@ void EmulationSession::InitializeGpuDriver(const std::string& hook_lib_dir,
      }
  
      m_vulkan_library = std::make_shared<Common::DynamicLibrary>(handle);
@@ -1005,7 +1311,7 @@ index c367a06..14c31f4 100644
  #endif
  }
  
-@@ -316,6 +393,11 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
+@@ -312,6 +389,11 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
          .program_index = static_cast<s32>(program_index),
      };
  
@@ -1017,7 +1323,7 @@ index c367a06..14c31f4 100644
      m_load_result = m_system.Load(EmulationSession::GetInstance().Window(), filepath, params);
      if (m_load_result != Core::SystemResultStatus::Success) {
          return m_load_result;
-@@ -339,6 +421,15 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
+@@ -335,6 +417,15 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
  void EmulationSession::ShutdownEmulation() {
      std::scoped_lock lock(m_mutex);
  
@@ -1033,7 +1339,7 @@ index c367a06..14c31f4 100644
      if (m_next_program_index != -1) {
          ChangeProgram(m_next_program_index);
          m_next_program_index = -1;
-@@ -1231,6 +1322,12 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_run(JNIEnv* env, jobject jobj, jstrin
+@@ -1217,6 +1308,12 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_run(JNIEnv* env, jobject jobj, jstrin
  
      const Core::SystemResultStatus result{
          RunEmulation(path, j_program_index, j_frontend_initiated)};
@@ -1046,12 +1352,8 @@ index c367a06..14c31f4 100644
      if (result != Core::SystemResultStatus::Success) {
          env->CallStaticVoidMethod(Common::Android::GetNativeLibraryClass(),
                                    Common::Android::GetExitEmulationActivity(),
-diff --git a/src/android/app/src/main/res/drawable/ic_launcher_foreground.png b/src/android/app/src/main/res/drawable/ic_launcher_foreground.png
-deleted file mode 100644
-index 53f1cac..0000000
-Binary files a/src/android/app/src/main/res/drawable/ic_launcher_foreground.png and /dev/null differ
 diff --git a/src/android/app/src/main/res/layout/fragment_emulation.xml b/src/android/app/src/main/res/layout/fragment_emulation.xml
-index db363bc..beda20b 100644
+index db363bc723..beda20b473 100644
 --- a/src/android/app/src/main/res/layout/fragment_emulation.xml
 +++ b/src/android/app/src/main/res/layout/fragment_emulation.xml
 @@ -194,6 +194,43 @@
@@ -1098,8 +1400,49 @@ index db363bc..beda20b 100644
          </FrameLayout>
  
      </androidx.coordinatorlayout.widget.CoordinatorLayout>
+diff --git a/src/android/app/src/main/res/layout/fragment_games.xml b/src/android/app/src/main/res/layout/fragment_games.xml
+index e316b3d59f..4b25d24e6f 100644
+--- a/src/android/app/src/main/res/layout/fragment_games.xml
++++ b/src/android/app/src/main/res/layout/fragment_games.xml
+@@ -85,6 +85,36 @@
+ 
+         </com.google.android.material.card.MaterialCardView>
+ 
++        <Space
++            android:layout_width="15dp"
++            android:layout_height="wrap_content"
++            />
++
++        <com.google.android.material.card.MaterialCardView
++            android:id="@+id/tools_button"
++            style="@style/EdenCard"
++            android:layout_width="42dp"
++            android:layout_height="42dp"
++            android:background="@android:color/transparent"
++            app:cardCornerRadius="21dp"
++            app:cardBackgroundColor="@android:color/transparent"
++            app:cardElevation="0dp"
++            app:strokeColor="?attr/colorOutline"
++            app:strokeWidth="1dp"
++            android:padding="8dp"
++            android:contentDescription="@string/tools"
++            >
++
++            <ImageView
++                android:layout_width="18dp"
++                android:layout_height="18dp"
++                android:layout_gravity="center"
++                android:src="@drawable/ic_tune"
++                app:tint="?attr/colorPrimary"
++                />
++
++        </com.google.android.material.card.MaterialCardView>
++
+         <Space
+             android:layout_width="15dp"
+             android:layout_height="wrap_content"
 diff --git a/src/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml b/src/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-index 5ed0a2d..10bc7a5 100644
+index 5ed0a2df70..10bc7a5de4 100644
 --- a/src/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 +++ b/src/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 @@ -2,4 +2,5 @@
@@ -1109,7 +1452,7 @@ index 5ed0a2d..10bc7a5 100644
 +    <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>
  </adaptive-icon>
 diff --git a/src/android/app/src/main/res/navigation/home_navigation.xml b/src/android/app/src/main/res/navigation/home_navigation.xml
-index dd567ab..39c285b 100644
+index dd567abc1a..39c285bf0f 100644
 --- a/src/android/app/src/main/res/navigation/home_navigation.xml
 +++ b/src/android/app/src/main/res/navigation/home_navigation.xml
 @@ -99,6 +99,73 @@
@@ -1187,7 +1530,7 @@ index dd567ab..39c285b 100644
          android:id="@+id/driverManagerFragment"
          android:name="org.yuzu.yuzu_emu.fragments.DriverManagerFragment"
 diff --git a/src/android/app/src/main/res/values-ru/strings.xml b/src/android/app/src/main/res/values-ru/strings.xml
-index 3dbeb6f..1f862d4 100644
+index 192ade7f99..3d173d40de 100644
 --- a/src/android/app/src/main/res/values-ru/strings.xml
 +++ b/src/android/app/src/main/res/values-ru/strings.xml
 @@ -252,7 +252,7 @@
@@ -1199,7 +1542,90 @@ index 3dbeb6f..1f862d4 100644
      <string name="permissions">Предоставить разрешения</string>
      <string name="permissions_description">Предоставить дополнительные разрешения для использования определённых функций эмулятора</string>
      <string name="install_firmware_warning_description">Многим играм требуется доступ к прошивке для правильной работы.</string>
-@@ -1175,4 +1175,240 @@
+@@ -424,6 +424,9 @@
+     <string name="cpu_accuracy">Точность ЦП</string>
+     <string name="value_with_units">%1$s%2$s</string>
+ 
++    <string name="program_args">Аргументы Homebrew</string>
++    <string name="program_args_description">Аргументы командной строки, переданные Homebrew при запуске (например, -noglsl)</string>
++
+     <!-- System settings strings -->
+     <string name="device_name">Название устройства</string>
+     <string name="use_docked_mode">Режим док-станции</string>
+@@ -466,9 +469,11 @@
+     <string name="advanced">Расширенные</string>
+ 
+     <string name="renderer_accuracy">Режим ГПУ</string>
+-    <string name="renderer_accuracy_description">Управляет режимом эмуляции графического процессора. Большинство игр нормально отображаются в режимах «Быстрый» или «Сбалансированный», но для некоторых требуется режим «Точный». Частицы обычно корректно отображаются только в режиме «Точный».</string>
++    <string name="renderer_accuracy_description">Управляет режимом эмуляции ГПУ. Большинство игр нормально отображаются в режиме Быстрый, но для некоторых требуется режим Точный. Частицы обычно корректно отображаются только в режиме Точный.</string>
+     <string name="dma_accuracy">Точность DMA</string>
+     <string name="dma_accuracy_description">Управляет точностью DMA. Безопасная точность может исправить проблемы в некоторых играх, но в некоторых случаях также может повлиять на производительность. Если не уверены, оставьте значение По умолчанию.</string>
++    <string name="gpu_fence_behavior">Поведение барьеров ГПУ</string>
++    <string name="gpu_fence_behavior_description">Управляет поведением синхронизации через барьеры ГПУ. Мгновенный — самый быстрый вариант, но может вызывать некоторые проблемы. Сбалансированный обеспечивает лучшую совместимость и может исправлять проблемы в некоторых играх. Точный ещё больше повышает совместимость ценой некоторого снижения производительности. Строгий — самый медленный вариант, но может исправлять проблемы, требующие более строгой синхронизации. По умолчанию соответствует настройке точности ГПУ.</string>
+     <string name="anisotropic_filtering">Анизотропная фильтрация</string>
+     <string name="anisotropic_filtering_description">Улучшает качество текстур под углом</string>
+     <string name="vram_usage_mode">Режим VRAM</string>
+@@ -490,6 +495,8 @@
+     <string name="renderer_reactive_flushing_description">Повышение точности рендеринга в некоторых играх за счет снижения производительности.</string>
+     <string name="enable_buffer_history">Включить историю буфера</string>
+     <string name="enable_buffer_history_description">Позволяет обращаться к предыдущим состояниям буфера. Эта опция может повысить качество рендеринга и стабильность производительности в некоторых играх.</string>
++    <string name="enable_gpu_buffer_readback">Включить обратное чтение буфера ГПУ</string>
++    <string name="enable_gpu_buffer_readback_description">Сохраняет измененные ГПУ данные буфера путем чтения их обратно перед выгрузками. Некоторые игры требуют этого, чтобы рендерить определенные эффекты правильно. Может вызывать проблемы если оборудование не может обработать дополнительную рабочую нагрузку.</string>
+     <string name="use_optimized_vertex_buffers">Оптимизированные вершинные буферы</string>
+     <string name="use_optimized_vertex_buffers_description">Включает оптимизированную привязку вершинного буфера для повышения производительности. Требует Mesa Turnip 26.0+ / QCOM. Приводит к вылету на старых версиях драйверов Turnip (25.3 и ниже).</string>
+ 
+@@ -560,14 +567,16 @@
+ 
+     <!-- GPU Logging strings -->
+     <string name="gpu_logging_header">Ведение журнала ГПУ</string>
+-    <string name="gpu_logging_enabled">Включить ведение журнала ГПУ</string>
+-    <string name="gpu_logging_enabled_description">Записывать операции ГПУ в файл eden_gpu.log для отладки драйверов Adreno</string>
+     <string name="gpu_log_level">Уровень журналирования</string>
+     <string name="gpu_log_level_description">Уровень детализации логов ГПУ (больше значение = больше деталей, выше нагрузка)</string>
+     <string name="gpu_log_vulkan_calls">Записывать вызовы Vulkan API</string>
+     <string name="gpu_log_vulkan_calls_description">Отслеживать все вызовы Vulkan API в кольцевом буфере</string>
+-    <string name="gpu_log_shader_dumps">Выгрузить шейдеры</string>
+-    <string name="gpu_log_shader_dumps_description">Сохранять скомпилированные SPIR-V шейдеры в файлы</string>
++    <string name="gpu_log_shader_dumps">Выгрузить SPIR-V шейдеры</string>
++    <string name="gpu_log_shader_dumps_description">Сохранять перекомпилированные SPIR-V бинарные файлы (.spv) в папку дампа. Проверять с помощью spirv-dis/spirv-cross/spirv-val.</string>
++    <string name="dump_guest_shaders">Выгрузить гостевые (Maxwell) шейдеры</string>
++    <string name="dump_guest_shaders_description">Сохранять файлы байткода гостевых шейдеров Maxwell (*.ash) в папку дампа. Проверять с помощью nvdisasm.</string>
++    <string name="dump_macros">Выгрузить макросы Maxwell</string>
++    <string name="dump_macros_description">Сохранять файлы макропрограмм Maxwell (*.macro) в папку дампа. Проверять с помощью envydis.</string>
+     <string name="gpu_log_memory_tracking">Отслеживать память ГПУ</string>
+     <string name="gpu_log_memory_tracking_description">Мониторить выделение и освобождение памяти ГПУ</string>
+     <string name="gpu_log_driver_debug">Отладочная информация драйвера</string>
+@@ -945,7 +954,6 @@
+     <string name="clock_fast">Быстрая (2000MHz)</string>
+ 
+     <!-- GPU overclock factors -->
+-    <string name="off">Выкл.</string>
+     <string name="fast_gpu_medium">Среднее (256)</string>
+     <string name="fast_gpu_high">Высокое (512)</string>
+ 
+@@ -987,7 +995,6 @@
+ 
+     <!-- Renderer Accuracy -->
+     <string name="renderer_accuracy_low">Быстрый</string>
+-    <string name="renderer_accuracy_medium">Сбалансированный</string>
+     <string name="renderer_accuracy_high">Точный</string>
+ 
+     <!-- DMA Accuracy -->
+@@ -995,6 +1002,13 @@
+     <string name="dma_accuracy_unsafe">Небезопасно</string>
+     <string name="dma_accuracy_safe">Безопасный</string>
+ 
++    <!-- GPU Fence Behavior -->
++    <string name="gpu_fence_behavior_default">По умолчанию</string>
++    <string name="gpu_fence_behavior_immediate">Мгновенный</string>
++    <string name="gpu_fence_behavior_balanced">Сбалансированный</string>
++    <string name="gpu_fence_behavior_accurate">Точный</string>
++    <string name="gpu_fence_behavior_strict">Строгий</string>
++
+     <string name="vram_usage_conservative">Консервативный</string>
+     <string name="vram_usage_aggressive">Агрессивный</string>
+ 
+@@ -1161,4 +1175,256 @@
      <string name="add_folders">Добавить папку</string>
      <string name="percent">%1$d %%</string>
  
@@ -1439,12 +1865,28 @@ index 3dbeb6f..1f862d4 100644
 +    <string name="yes">да</string>
 +    <string name="no">нет</string>
 +
++
++    <!-- Game folders -->
++    <string name="game_folders_description">Ваши папки: сколько в каждой игр и сколько они занимают</string>
++    <string name="folders_summary">Папок: %1$d · игр: %2$d · %3$s</string>
++    <string name="no_game_folders">Папок с играми пока нет. Добавьте на главном экране.</string>
++    <string name="folder_unreadable">Не читается — проверьте разрешение на доступ к памяти</string>
++    <string name="folder_empty">В этой папке нет игр.</string>
++    <plurals name="folder_game_count">
++        <item quantity="one">%d игра</item>
++        <item quantity="few">%d игры</item>
++        <item quantity="many">%d игр</item>
++        <item quantity="other">%d игр</item>
++    </plurals>
++
++    <string name="tools">Инструменты</string>
++    <string name="tools_description">Диагностика, настройка ФПС, работа с дампами и совместимость</string>
  </resources>
 diff --git a/src/android/app/src/main/res/values/arrays.xml b/src/android/app/src/main/res/values/arrays.xml
-index 1bad110..4f8b8d9 100644
+index 99838b98cc..e06209ff5d 100644
 --- a/src/android/app/src/main/res/values/arrays.xml
 +++ b/src/android/app/src/main/res/values/arrays.xml
-@@ -654,4 +654,36 @@
+@@ -637,4 +637,36 @@
          <item>3</item>
          <item>4</item>
      </integer-array>
@@ -1482,14 +1924,14 @@ index 1bad110..4f8b8d9 100644
 +    </integer-array>
  </resources>
 diff --git a/src/android/app/src/main/res/values/colors.xml b/src/android/app/src/main/res/values/colors.xml
-index 472567b..eeb9412 100644
+index 472567b323..eeb9412118 100644
 --- a/src/android/app/src/main/res/values/colors.xml
 +++ b/src/android/app/src/main/res/values/colors.xml
 @@ -1 +1 @@
 -<?xml version='1.0' encoding='utf-8'?><resources><color name='ic_launcher_background'>#1F143C</color></resources>
 +<?xml version='1.0' encoding='utf-8'?><resources><color name='ic_launcher_background'>#0E1116</color></resources>
 diff --git a/src/android/app/src/main/res/values/strings.xml b/src/android/app/src/main/res/values/strings.xml
-index bb1d85d..f84ed39 100644
+index 7372fa5e34..5cffd16bd4 100644
 --- a/src/android/app/src/main/res/values/strings.xml
 +++ b/src/android/app/src/main/res/values/strings.xml
 @@ -3,7 +3,7 @@
@@ -1510,7 +1952,152 @@ index bb1d85d..f84ed39 100644
      <string name="permissions">Grant Permissions</string>
      <string name="permissions_description">Grant optional permissions to use specific features of the emulator</string>
      <string name="install_firmware_warning_description">Many games require access to firmware to run properly.</string>
-@@ -1808,4 +1808,276 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+@@ -434,6 +434,9 @@
+     <string name="cpu_accuracy">CPU accuracy</string>
+     <string name="value_with_units">%1$s%2$s</string>
+ 
++    <string name="program_args">Homebrew Args</string>
++    <string name="program_args_description">Command-line arguments passed to homebrew at launch (e.g. -noglsl).</string>
++
+     <!-- System settings strings -->
+     <string name="device_name">Device name</string>
+     <string name="use_docked_mode">Docked Mode</string>
+@@ -447,8 +450,8 @@
+     <string name="set_custom_rtc">Set custom RTC</string>
+ 
+     <!-- CPU -->
+-    <string name="fast_cpu_time">CPU Overclock</string>
+-    <string name="fast_cpu_time_description">Forces the emulated CPU to run at a higher clock, reducing certain FPS limiters. Use Boost (1700MHz) to run at the Switch\'s highest native clock, or Fast (2000MHz) to run at 2x clock.</string>
++    <string name="fast_cpu_time">CPU Clocks</string>
++    <string name="fast_cpu_time_description">Raises the clock the emulated CPU reports, which removes some FPS limiters. Weaker CPUs may see reduced performance, and certain games may behave improperly.</string>
+     <string name="custom_cpu_ticks">Custom CPU Ticks</string>
+     <string name="custom_cpu_ticks_description">Set a custom value of CPU ticks. Higher values can increase performance, but may also cause the game to freeze. A range of 77–21000 is recommended.</string>
+     <string name="cpu_ticks">Ticks</string>
+@@ -468,17 +471,19 @@
+     <string name="renderer_resolution">Resolution (Handheld/Docked)</string>
+     <string name="renderer_vsync">VSync mode</string>
+     <string name="renderer_scaling_filter">Window adapting filter</string>
+-    <string name="fsr_sharpness">FSR sharpness</string>
+-    <string name="fsr_sharpness_description">Determines how sharpened the image will look while using FSR\'s dynamic contrast</string>
++    <string name="fsr_sharpness">FSR/SGSR sharpness</string>
++    <string name="fsr_sharpness_description">Determines how sharpened the image will look while using FSR or SGSR filters</string>
+     <string name="renderer_anti_aliasing">Anti-aliasing method</string>
+ 
+ 
+     <string name="advanced">Advanced</string>
+ 
+     <string name="renderer_accuracy">GPU Mode</string>
+-    <string name="renderer_accuracy_description">Controls the GPU emulation mode. Most games render fine with Fast or Balanced modes, but Accurate is still required for some. Particles tend to only render correctly with Accurate mode.</string>
++    <string name="renderer_accuracy_description">Controls the GPU emulation mode. Most games render fine with Fast, but Accurate is still required for some. Particles tend to only render correctly with Accurate mode.</string>
+     <string name="dma_accuracy">DMA Accuracy</string>
+     <string name="dma_accuracy_description">Controls the DMA precision accuracy. Safe precision can fix issues in some games, but it can also impact performance in some cases. If unsure, leave this on Default.</string>
++    <string name="gpu_fence_behavior">GPU Fence Behavior</string>
++    <string name="gpu_fence_behavior_description">Controls the GPU fence synchronization behavior. Immediate is the fastest option, but can introduce some issues. Balanced offers better compatibility and may fix issues in some games. Accurate further improves compatibility at the cost of some performance. Strict is the slowest option, but can fix issues that require stricter synchronization. Default follows the GPU Accuracy setting.</string>
+     <string name="anisotropic_filtering">Anisotropic filtering</string>
+     <string name="anisotropic_filtering_description">Improves the quality of textures when viewed at oblique angles</string>
+     <string name="vram_usage_mode">VRAM Usage Mode</string>
+@@ -500,13 +505,15 @@
+     <string name="renderer_reactive_flushing_description">Improves rendering accuracy in some games at the cost of performance.</string>
+     <string name="enable_buffer_history">Enable buffer history</string>
+     <string name="enable_buffer_history_description">Enables access to previous buffer states. This option may improve rendering quality and performance consistency in some games.</string>
++    <string name="enable_gpu_buffer_readback">Enable GPU Buffer Readback</string>
++    <string name="enable_gpu_buffer_readback_description">Preserves GPU-modified buffer data by reading it back before uploads. Some games require this to render certain effects properly. May cause issues if the hardware cannot handle the additional workload.</string>
+     <string name="use_optimized_vertex_buffers">Optimized Vertex Buffers</string>
+     <string name="use_optimized_vertex_buffers_description">Enables optimized vertex buffer binding for improved performance. Requires Mesa 26.0+ Turnip drivers/ QCOM drivers. Will crash on older Turnip drivers (25.3 and below).</string>
+ 
+     <string name="hacks">Hacks</string>
+ 
+-    <string name="fast_gpu_time">Fast GPU Time</string>
+-    <string name="fast_gpu_time_description">Forces most games to run at their highest native resolution. Use 256 for maximal performance and 512 for maximal graphics fidelity.</string>
++    <string name="fast_gpu_time">GPU Clocks</string>
++    <string name="fast_gpu_time_description">Makes the game believe GPU work finishes faster than it does, so it stops lowering resolution and render distance to fit the Switch\'s clocks.</string>
+     <string name="skip_cpu_inner_invalidation">Skip CPU Inner Invalidation</string>
+     <string name="skip_cpu_inner_invalidation_description">Skips certain CPU-side cache invalidations during memory updates, reducing CPU usage and improving it\'s performance. This may cause glitches or crashes on some games.</string>
+     <string name="fix_bloom_effects">Fix Bloom Effects</string>
+@@ -553,6 +560,7 @@
+ 
+     <!-- Debug settings strings -->
+     <string name="cpu">CPU</string>
++    <string name="clocks">Clocks</string>
+     <string name="use_auto_stub">Use Auto Stub</string>
+     <string name="use_auto_stub_description">Automatically stub missing services and functions. This may improve compatibility but can cause crashes and stability issues.</string>
+ 
+@@ -570,14 +578,16 @@
+ 
+     <!-- GPU Logging strings -->
+     <string name="gpu_logging_header">GPU Logging</string>
+-    <string name="gpu_logging_enabled">Enable GPU Logging</string>
+-    <string name="gpu_logging_enabled_description">Log GPU operations to eden_gpu.log for debugging Adreno drivers</string>
+     <string name="gpu_log_level">Log Level</string>
+     <string name="gpu_log_level_description">Detail level for GPU logs (higher = more detail, more overhead)</string>
+     <string name="gpu_log_vulkan_calls">Log Vulkan API Calls</string>
+     <string name="gpu_log_vulkan_calls_description">Track all Vulkan API calls in ring buffer</string>
+-    <string name="gpu_log_shader_dumps">Dump Shaders</string>
+-    <string name="gpu_log_shader_dumps_description">Save compiled shader SPIR-V to files</string>
++    <string name="gpu_log_shader_dumps">Dump SPIR-V Shaders</string>
++    <string name="gpu_log_shader_dumps_description">Save recompiled SPIR-V binaries (.spv) to dump folder. Inspect with spirv-dis/spirv-cross/spirv-val.</string>
++    <string name="dump_guest_shaders">Dump Guest (Maxwell) Shaders</string>
++    <string name="dump_guest_shaders_description">Save Maxwell guest shader bytecode files (*.ash) to dump folder. Inspect with nvdisasm.</string>
++    <string name="dump_macros">Dump Maxwell Macros</string>
++    <string name="dump_macros_description">Save Maxwell macro program files (*.macro) to dump folder. Inspect with envydis.</string>
+     <string name="gpu_log_memory_tracking">Track GPU Memory</string>
+     <string name="gpu_log_memory_tracking_description">Monitor GPU memory allocations and deallocations</string>
+     <string name="gpu_log_driver_debug">Driver Debug Info</string>
+@@ -959,14 +969,15 @@
+     <string name="memory_6gb">6GB (Unsafe)</string>
+     <string name="memory_8gb">8GB (Unsafe)</string>
+ 
+-    <!--CPU clock speeds-->
+-    <string name="clock_boost">Boost (1700MHz)</string>
+-    <string name="clock_fast">Fast (2000MHz)</string>
++    <!-- CPU clock levels -->
++    <string name="clock_normal">Normal</string>
++    <string name="clock_boost">Boost</string>
++    <string name="clock_fast">Overclock</string>
+ 
+-    <!-- GPU overclock factors -->
+-    <string name="off">Off</string>
+-    <string name="fast_gpu_medium">Medium (256)</string>
+-    <string name="fast_gpu_high">High (512)</string>
++    <!-- GPU clock levels -->
++    <string name="fast_gpu_normal">Normal</string>
++    <string name="fast_gpu_medium">Boost</string>
++    <string name="fast_gpu_high">Overclock</string>
+ 
+     <!-- GPU swizzle texture size -->
+     <string name="gpu_texturesizeswizzle_verysmall">Very Small (16 MB)</string>
+@@ -1030,7 +1041,6 @@
+ 
+     <!-- Renderer Accuracy -->
+     <string name="renderer_accuracy_low">Fast</string>
+-    <string name="renderer_accuracy_medium">Balanced</string>
+     <string name="renderer_accuracy_high">Accurate</string>
+ 
+     <!-- DMA Accuracy -->
+@@ -1038,6 +1048,13 @@
+     <string name="dma_accuracy_unsafe">Unsafe</string>
+     <string name="dma_accuracy_safe">Safe</string>
+ 
++    <!-- GPU Fence Behavior -->
++    <string name="gpu_fence_behavior_default">Default</string>
++    <string name="gpu_fence_behavior_immediate">Immediate</string>
++    <string name="gpu_fence_behavior_balanced">Balanced</string>
++    <string name="gpu_fence_behavior_accurate">Accurate</string>
++    <string name="gpu_fence_behavior_strict">Strict</string>
++
+     <!-- ASTC Decoding Method Choices -->
+     <string name="accelerate_astc_cpu" translatable="false">CPU</string>
+     <string name="accelerate_astc_gpu" translatable="false">GPU</string>
+@@ -1078,6 +1095,8 @@
+     <string name="scaling_filter_bspline" translatable="false">B-Spline</string>
+     <string name="scaling_filter_mitchell" translatable="false">Mitchell</string>
+     <string name="scaling_filter_mmpx" translatable="false">MMPX</string>
++    <string name="scaling_filter_sgsr" translatable="false">Snapdragon GSR</string>
++    <string name="scaling_filter_sgsr_edge" translatable="false">Snapdragon GSR EdgeDir</string>
+ 
+     <!-- Anti-Aliasing -->
+     <string name="anti_aliasing_none">None</string>
+@@ -1789,4 +1808,290 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
      <string name="add_folders">Add Folder</string>
      <string name="percent">%1$d%%</string>
  
@@ -1786,9 +2373,23 @@ index bb1d85d..f84ed39 100644
 +    <string name="yes">yes</string>
 +    <string name="no">no</string>
 +
++
++    <!-- Game folders -->
++    <string name="game_folders_description">Your folders, with how many games each holds and what they weigh</string>
++    <string name="folders_summary">%1$d folder(s) · %2$d games · %3$s</string>
++    <string name="no_game_folders">No game folders yet. Add one from the home screen.</string>
++    <string name="folder_unreadable">Cannot be read — check storage permission</string>
++    <string name="folder_empty">No games in this folder.</string>
++    <plurals name="folder_game_count">
++        <item quantity="one">%d game</item>
++        <item quantity="other">%d games</item>
++    </plurals>
++
++    <string name="tools">Tools</string>
++    <string name="tools_description">Diagnostics, tuning, ROM utilities and the compatibility list</string>
  </resources>
 diff --git a/src/android/app/src/main/res/values/themes.xml b/src/android/app/src/main/res/values/themes.xml
-index 8e3200a..9a4c5d2 100644
+index 8e3200a5b3..9a4c5d2343 100644
 --- a/src/android/app/src/main/res/values/themes.xml
 +++ b/src/android/app/src/main/res/values/themes.xml
 @@ -2,8 +2,9 @@
@@ -1804,7 +2405,7 @@ index 8e3200a..9a4c5d2 100644
      </style>
  
 diff --git a/src/android/app/src/main/res/values/yuzu_colors.xml b/src/android/app/src/main/res/values/yuzu_colors.xml
-index 3bb98e5..6c03cc5 100644
+index 3bb98e5410..6c03cc5da6 100644
 --- a/src/android/app/src/main/res/values/yuzu_colors.xml
 +++ b/src/android/app/src/main/res/values/yuzu_colors.xml
 @@ -321,4 +321,5 @@
@@ -1814,7 +2415,7 @@ index 3bb98e5..6c03cc5 100644
 +    <color name="symbiosis_splash_bg">#0E1116</color>
  </resources>
 diff --git a/src/android/gradle.properties b/src/android/gradle.properties
-index 151f737..85e1167 100644
+index 151f7378d6..85e1167e57 100644
 --- a/src/android/gradle.properties
 +++ b/src/android/gradle.properties
 @@ -9,7 +9,7 @@
@@ -1837,10 +2438,10 @@ index 151f737..85e1167 100644
 +org.gradle.parallel=false
 +kotlin.compiler.execution.strategy=in-process
 diff --git a/src/common/CMakeLists.txt b/src/common/CMakeLists.txt
-index 10e8cd0..d813694 100644
+index fb2bdda146..d40adb33ec 100644
 --- a/src/common/CMakeLists.txt
 +++ b/src/common/CMakeLists.txt
-@@ -45,6 +45,40 @@ add_library(
+@@ -47,6 +47,40 @@ add_library(
      div_ceil.h
      dynamic_library.cpp
      dynamic_library.h
@@ -1881,7 +2482,7 @@ index 10e8cd0..d813694 100644
      elf.h
      error.cpp
      error.h
-@@ -252,6 +286,12 @@ endif()
+@@ -258,6 +292,12 @@ target_link_libraries(common PRIVATE lz4::lz4 LLVM::Demangle zstd::zstd)
  if(ANDROID)
      # For ASharedMemory_create
      target_link_libraries(common PRIVATE android)
@@ -1895,10 +2496,10 @@ index 10e8cd0..d813694 100644
  
  create_target_directory_groups(common)
 diff --git a/src/common/settings.h b/src/common/settings.h
-index 0f35045..7e644b2 100644
+index e10f5105a1..cc213e099e 100644
 --- a/src/common/settings.h
 +++ b/src/common/settings.h
-@@ -469,6 +469,101 @@ struct Values {
+@@ -459,6 +459,101 @@ struct Values {
                                                              "accelerate_astc",
                                                              Category::RendererAdvanced};
  
@@ -2001,10 +2602,10 @@ index 0f35045..7e644b2 100644
                                                                 FramePacingMode::Target_Auto,
                                                                 FramePacingMode::Target_Auto,
 diff --git a/src/video_core/host_shaders/CMakeLists.txt b/src/video_core/host_shaders/CMakeLists.txt
-index 5b8f47a..825517d 100644
+index 60b399ccba..0e51e58197 100644
 --- a/src/video_core/host_shaders/CMakeLists.txt
 +++ b/src/video_core/host_shaders/CMakeLists.txt
-@@ -56,6 +56,7 @@ set(SHADER_FILES
+@@ -51,6 +51,7 @@ set(SHADER_FILES
      ${CMAKE_CURRENT_SOURCE_DIR}/present_lanczos.frag
      ${CMAKE_CURRENT_SOURCE_DIR}/present_spline1.frag
      ${CMAKE_CURRENT_SOURCE_DIR}/present_mmpx.frag
@@ -2013,7 +2614,7 @@ index 5b8f47a..825517d 100644
      ${CMAKE_CURRENT_SOURCE_DIR}/queries_prefix_scan_sum_nosubgroups.comp
      ${CMAKE_CURRENT_SOURCE_DIR}/resolve_conditional_render.comp
 diff --git a/src/video_core/renderer_vulkan/present/filters.cpp b/src/video_core/renderer_vulkan/present/filters.cpp
-index 6203b41..fddb7a9 100644
+index 6203b41218..fddb7a97aa 100644
 --- a/src/video_core/renderer_vulkan/present/filters.cpp
 +++ b/src/video_core/renderer_vulkan/present/filters.cpp
 @@ -7,9 +7,13 @@
@@ -2093,7 +2694,7 @@ index 6203b41..fddb7a9 100644
 +
  } // namespace Vulkan
 diff --git a/src/video_core/renderer_vulkan/present/filters.h b/src/video_core/renderer_vulkan/present/filters.h
-index afc3ba2..216677d 100644
+index afc3ba29a0..216677d301 100644
 --- a/src/video_core/renderer_vulkan/present/filters.h
 +++ b/src/video_core/renderer_vulkan/present/filters.h
 @@ -25,4 +25,8 @@ std::unique_ptr<WindowAdaptPass> MakeScaleForce(const Device& device, VkFormat f
@@ -2106,7 +2707,7 @@ index afc3ba2..216677d 100644
 +
  } // namespace Vulkan
 diff --git a/src/video_core/renderer_vulkan/present/util.cpp b/src/video_core/renderer_vulkan/present/util.cpp
-index 2b83902..f3d879a 100644
+index a2c4727703..4b91b93fe3 100644
 --- a/src/video_core/renderer_vulkan/present/util.cpp
 +++ b/src/video_core/renderer_vulkan/present/util.cpp
 @@ -369,7 +369,8 @@ vk::PipelineLayout CreateWrappedPipelineLayout(const Device& device,
@@ -2148,7 +2749,7 @@ index 2b83902..f3d879a 100644
  
  vk::Pipeline CreateWrappedPremultipliedBlendingPipeline(
 diff --git a/src/video_core/renderer_vulkan/present/util.h b/src/video_core/renderer_vulkan/present/util.h
-index 38cc620..f698654 100644
+index 38cc6203c5..f698654fb0 100644
 --- a/src/video_core/renderer_vulkan/present/util.h
 +++ b/src/video_core/renderer_vulkan/present/util.h
 @@ -43,9 +43,13 @@ vk::DescriptorSets CreateWrappedDescriptorSets(vk::DescriptorPool& pool,
@@ -2167,19 +2768,19 @@ index 38cc620..f698654 100644
      const Device& device, vk::RenderPass& renderpass, vk::PipelineLayout& layout,
      std::tuple<vk::ShaderModule&, vk::ShaderModule&> shaders);
 diff --git a/src/video_core/renderer_vulkan/present/window_adapt_pass.cpp b/src/video_core/renderer_vulkan/present/window_adapt_pass.cpp
-index 549b066..27bb7a2 100644
+index 22ffacf119..aeea2febd8 100644
 --- a/src/video_core/renderer_vulkan/present/window_adapt_pass.cpp
 +++ b/src/video_core/renderer_vulkan/present/window_adapt_pass.cpp
-@@ -18,10 +18,31 @@
- 
+@@ -16,8 +16,30 @@
  namespace Vulkan {
  
--WindowAdaptPass::WindowAdaptPass(const Device& device, VkFormat frame_format, vk::Sampler&& sampler_, vk::ShaderModule&& fragment_shader_)
-+WindowAdaptPass::WindowAdaptPass(const Device& device, VkFormat frame_format, vk::Sampler&& sampler_, vk::ShaderModule&& fragment_shader_,
+ WindowAdaptPass::WindowAdaptPass(const Device& device_, VkFormat frame_format,
+-                                 vk::Sampler&& sampler_, vk::ShaderModule&& fragment_shader_)
+-    : device(device_), sampler(std::move(sampler_)), fragment_shader(std::move(fragment_shader_)) {
++                                 vk::Sampler&& sampler_, vk::ShaderModule&& fragment_shader_,
 +                                 const VkSpecializationInfo* fragment_spec)
-     : sampler(std::move(sampler_))
-     , fragment_shader(std::move(fragment_shader_))
- {
++    : device(device_), sampler(std::move(sampler_)),
++      fragment_shader(std::move(fragment_shader_)) {
 +    // Take our own copy of the specialization data: Vulkan reads it during
 +    // pipeline creation, which happens below, but keeping it alive for the
 +    // lifetime of the pass costs nothing and avoids a dangling-pointer trap if
@@ -2200,13 +2801,13 @@ index 549b066..27bb7a2 100644
 +        has_spec = true;
 +    }
 +
-     CreateDescriptorSetLayout(device);
-     CreatePipelineLayout(device);
-     CreateVertexShader(device);
-@@ -147,8 +168,9 @@ void WindowAdaptPass::CreateRenderPass(const Device& device, VkFormat frame_form
+     CreateDescriptorSetLayout();
+     CreatePipelineLayout();
+     CreateVertexShader();
+@@ -143,8 +165,9 @@ void WindowAdaptPass::CreateRenderPass(VkFormat frame_format) {
  }
  
- void WindowAdaptPass::CreatePipelines(const Device& device) {
+ void WindowAdaptPass::CreatePipelines() {
 +    const VkSpecializationInfo* spec = has_spec ? &spec_info : nullptr;
      opaque_pipeline = CreateWrappedPipeline(device, render_pass, pipeline_layout,
 -                                            std::tie(vertex_shader, fragment_shader));
@@ -2215,10 +2816,10 @@ index 549b066..27bb7a2 100644
          device, render_pass, pipeline_layout, std::tie(vertex_shader, fragment_shader));
      coverage_pipeline = CreateWrappedCoverageBlendingPipeline(
 diff --git a/src/video_core/renderer_vulkan/present/window_adapt_pass.h b/src/video_core/renderer_vulkan/present/window_adapt_pass.h
-index 58d6fc0..95e814e 100644
+index cf667a4fc6..89d9cee15b 100644
 --- a/src/video_core/renderer_vulkan/present/window_adapt_pass.h
 +++ b/src/video_core/renderer_vulkan/present/window_adapt_pass.h
-@@ -6,6 +6,8 @@
+@@ -3,6 +3,8 @@
  
  #pragma once
  
@@ -2227,7 +2828,7 @@ index 58d6fc0..95e814e 100644
  #include <list>
  
  #include "common/math_util.h"
-@@ -29,8 +31,12 @@ class RasterizerVulkan;
+@@ -26,8 +28,12 @@ class RasterizerVulkan;
  
  class WindowAdaptPass final {
  public:
@@ -2240,8 +2841,8 @@ index 58d6fc0..95e814e 100644
 +                             const VkSpecializationInfo* fragment_spec = nullptr);
      ~WindowAdaptPass();
  
-     void Draw(const Device& device, RasterizerVulkan& rasterizer, Scheduler& scheduler, size_t image_index,
-@@ -52,6 +58,12 @@ private:
+     void Draw(RasterizerVulkan& rasterizer, Scheduler& scheduler, size_t image_index,
+@@ -51,6 +57,12 @@ private:
      vk::Sampler sampler;
      vk::ShaderModule vertex_shader;
      vk::ShaderModule fragment_shader;
@@ -2255,10 +2856,10 @@ index 58d6fc0..95e814e 100644
      vk::Pipeline opaque_pipeline;
      vk::Pipeline premultiplied_pipeline;
 diff --git a/src/video_core/renderer_vulkan/vk_blit_screen.cpp b/src/video_core/renderer_vulkan/vk_blit_screen.cpp
-index 05314fe..562565a 100644
+index 75a8c3bf91..630740c150 100644
 --- a/src/video_core/renderer_vulkan/vk_blit_screen.cpp
 +++ b/src/video_core/renderer_vulkan/vk_blit_screen.cpp
-@@ -12,6 +12,7 @@
+@@ -13,6 +13,7 @@
  #include "video_core/present.h"
  #include "video_core/renderer_vulkan/present/filters.h"
  #include "video_core/renderer_vulkan/present/layer.h"
@@ -2266,10 +2867,10 @@ index 05314fe..562565a 100644
  #include "video_core/renderer_vulkan/vk_blit_screen.h"
  #include "video_core/renderer_vulkan/vk_present_manager.h"
  #include "video_core/renderer_vulkan/vk_scheduler.h"
-@@ -38,8 +39,29 @@ void BlitScreen::WaitIdle(const Device& device) {
+@@ -39,8 +40,29 @@ void BlitScreen::WaitIdle() {
  }
  
- void BlitScreen::SetWindowAdaptPass(const Device& device) {
+ void BlitScreen::SetWindowAdaptPass() {
 +    // The active launcher can override the scaling filter entirely: a retro
 +    // preset has to run its own shader to pixelate and quantise, and no stock
 +    // filter can do that. Checked first so the user's launcher choice always
@@ -2296,7 +2897,7 @@ index 05314fe..562565a 100644
  
      switch (scaling_filter) {
      case Settings::ScalingFilter::NearestNeighbor:
-@@ -93,7 +115,18 @@ void BlitScreen::DrawToFrame(const Device& device, RasterizerVulkan& rasterizer,
+@@ -92,7 +114,18 @@ void BlitScreen::DrawToFrame(RasterizerVulkan& rasterizer, Frame* frame,
      bool resource_update_required = false;
      bool presentation_recreate_required = false;
  
@@ -2316,7 +2917,7 @@ index 05314fe..562565a 100644
          resource_update_required = true;
      }
  
-@@ -147,7 +180,12 @@ vk::Framebuffer BlitScreen::CreateFramebuffer(const Device& device, const Layout
+@@ -146,7 +179,12 @@ vk::Framebuffer BlitScreen::CreateFramebuffer(const Layout::FramebufferLayout& l
      bool format_updated = swapchain_view_format != current_view_format;
      swapchain_view_format = current_view_format;
  
@@ -2327,14 +2928,14 @@ index 05314fe..562565a 100644
 +                                   : false;
 +    if (!window_adapt || scaling_filter != filters.get_scaling_filter() || format_updated ||
 +        retro_wanted2 != retro_active || retro_generation != retro_now2) {
-         WaitIdle(device);
-         SetWindowAdaptPass(device);
+         WaitIdle();
+         SetWindowAdaptPass();
          image_index = 0;
 diff --git a/src/video_core/renderer_vulkan/vk_blit_screen.h b/src/video_core/renderer_vulkan/vk_blit_screen.h
-index e50f0bc..62d7d2a 100644
+index 531c57fc5c..169c238843 100644
 --- a/src/video_core/renderer_vulkan/vk_blit_screen.h
 +++ b/src/video_core/renderer_vulkan/vk_blit_screen.h
-@@ -80,6 +80,11 @@ private:
+@@ -78,6 +78,11 @@ private:
      VkFormat swapchain_view_format{};
  
      Settings::ScalingFilter scaling_filter{};
@@ -2347,7 +2948,7 @@ index e50f0bc..62d7d2a 100644
      std::list<Layer> layers{};
  };
 diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
-index 785602b..6e366ff 100644
+index d0f98091c1..33d3d650e3 100644
 --- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
 +++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
 @@ -18,6 +18,7 @@
@@ -2358,7 +2959,7 @@ index 785602b..6e366ff 100644
  #include "core/core.h"
  #include "shader_recompiler/backend/spirv/emit_spirv.h"
  #include "shader_recompiler/environment.h"
-@@ -316,6 +317,21 @@ size_t GetTotalPipelineWorkers() {
+@@ -341,6 +342,21 @@ size_t GetTotalPipelineWorkers() {
  #endif
  }
  
@@ -2380,19 +2981,18 @@ index 785602b..6e366ff 100644
  } // Anonymous namespace
  
  size_t ComputePipelineCacheKey::Hash() const noexcept {
-@@ -350,8 +366,8 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
+@@ -373,8 +389,7 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
        texture_cache{texture_cache_}, shader_notify{shader_notify_},
        use_asynchronous_shaders{Settings::values.use_asynchronous_shaders.GetValue()},
        use_vulkan_pipeline_cache{Settings::values.use_vulkan_driver_pipeline_cache.GetValue()},
 -      workers(device.HasBrokenParallelShaderCompiling() ? 1ULL : GetTotalPipelineWorkers(),
--              "VkPipelineBuilder", {}, Common::ThreadPlacement::Background),
-+      workers(ReportedPipelineWorkers(device), "VkPipelineBuilder", {},
-+              Common::ThreadPlacement::Background),
-       serialization_thread(1, "VkPipelineSerialization", {},
-                            Common::ThreadPlacement::Background) {
+-              "VkPipelineBuilder"),
++      workers(ReportedPipelineWorkers(device), "VkPipelineBuilder"),
+       serialization_thread(1, "VkPipelineSerialization") {
      const auto& float_control{device.FloatControlProperties()};
+     const VkDriverId driver_id{device.GetDriverID()};
 diff --git a/src/video_core/renderer_vulkan/vk_scheduler.cpp b/src/video_core/renderer_vulkan/vk_scheduler.cpp
-index 3601a3e..776f588 100644
+index fdaf9baacc..171ff31b60 100644
 --- a/src/video_core/renderer_vulkan/vk_scheduler.cpp
 +++ b/src/video_core/renderer_vulkan/vk_scheduler.cpp
 @@ -19,6 +19,7 @@
@@ -2403,7 +3003,7 @@ index 3601a3e..776f588 100644
  #include "video_core/renderer_vulkan/vk_scheduler.h"
  #include "video_core/renderer_vulkan/vk_state_tracker.h"
  #include "video_core/renderer_vulkan/vk_texture_cache.h"
-@@ -362,6 +363,12 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
+@@ -292,6 +293,12 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
              break;
          case VK_ERROR_DEVICE_LOST:
              device.ReportLoss();
@@ -2417,7 +3017,7 @@ index 3601a3e..776f588 100644
          default:
              vk::Check(result);
 diff --git a/src/video_core/renderer_vulkan/vk_swapchain.cpp b/src/video_core/renderer_vulkan/vk_swapchain.cpp
-index fdbad16..aa596a1 100644
+index 7e31f9cf67..58929274ac 100644
 --- a/src/video_core/renderer_vulkan/vk_swapchain.cpp
 +++ b/src/video_core/renderer_vulkan/vk_swapchain.cpp
 @@ -16,6 +16,7 @@
@@ -2448,10 +3048,10 @@ index fdbad16..aa596a1 100644
      // Ensure Triple buffering if possible.
      if (capabilities.maxImageCount > 0) {
 diff --git a/src/video_core/texture_cache/texture_cache.h b/src/video_core/texture_cache/texture_cache.h
-index 98a5e05..1a5d152 100644
+index 5a1c680830..ad4b62a97d 100644
 --- a/src/video_core/texture_cache/texture_cache.h
 +++ b/src/video_core/texture_cache/texture_cache.h
-@@ -22,6 +22,10 @@
+@@ -21,6 +21,10 @@
  #include "video_core/host1x/gpu_device_memory_manager.h"
  #include "video_core/texture_cache/image_view_base.h"
  #include "video_core/texture_cache/samples_helper.h"
@@ -2462,7 +3062,7 @@ index 98a5e05..1a5d152 100644
  #include "video_core/texture_cache/texture_cache_base.h"
  #include "video_core/texture_cache/util.h"
  #include "video_core/textures/decoders.h"
-@@ -77,6 +81,82 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
+@@ -76,6 +80,82 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
          minimum_memory = 0;
      }
  
@@ -2545,7 +3145,7 @@ index 98a5e05..1a5d152 100644
      const bool gpu_unswizzle_enabled = Settings::values.gpu_unswizzle_enabled.GetValue();
  
      if (gpu_unswizzle_enabled) {
-@@ -167,11 +247,39 @@ void TextureCache<P>::RunGarbageCollector() {
+@@ -166,11 +246,39 @@ void TextureCache<P>::RunGarbageCollector() {
      }
  }
  
@@ -2586,10 +3186,10 @@ index 98a5e05..1a5d152 100644
      if (total_used_memory > minimum_memory) {
          RunGarbageCollector();
 diff --git a/src/video_core/texture_cache/texture_cache_base.h b/src/video_core/texture_cache/texture_cache_base.h
-index fafc331..dbcb1d6 100644
+index 47f52c5c99..c631664efa 100644
 --- a/src/video_core/texture_cache/texture_cache_base.h
 +++ b/src/video_core/texture_cache/texture_cache_base.h
-@@ -38,6 +38,9 @@
+@@ -37,6 +37,9 @@
  #include "video_core/texture_cache/image_info.h"
  #include "video_core/texture_cache/image_view_base.h"
  #include "video_core/texture_cache/render_targets.h"
@@ -2599,7 +3199,7 @@ index fafc331..dbcb1d6 100644
  #include "video_core/texture_cache/types.h"
  #include "video_core/textures/texture.h"
  
-@@ -151,6 +154,8 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
+@@ -152,6 +155,8 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
  public:
      explicit TextureCache(Runtime&, Tegra::MaxwellDeviceMemoryManager&);
  
@@ -2608,7 +3208,7 @@ index fafc331..dbcb1d6 100644
      /// Notify the cache that a new frame has been queued
      void TickFrame();
  
-@@ -451,6 +456,19 @@ private:
+@@ -475,6 +480,19 @@ private:
      bool has_deleted_images = false;
      bool is_rescaling = false;
      u64 total_used_memory = 0;
@@ -2629,7 +3229,7 @@ index fafc331..dbcb1d6 100644
      u64 expected_memory;
      u64 critical_memory;
 diff --git a/src/video_core/vulkan_common/vulkan_device.cpp b/src/video_core/vulkan_common/vulkan_device.cpp
-index 8c41a7e..d95ce63 100644
+index 6e55306079..94ef048aea 100644
 --- a/src/video_core/vulkan_common/vulkan_device.cpp
 +++ b/src/video_core/vulkan_common/vulkan_device.cpp
 @@ -22,6 +22,9 @@
@@ -2642,7 +3242,7 @@ index 8c41a7e..d95ce63 100644
  #include "video_core/vulkan_common/vulkan_device.h"
  #include "video_core/vulkan_common/vulkan_wrapper.h"
  #include "video_core/gpu_logging/gpu_logging.h"
-@@ -503,6 +506,84 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR
+@@ -485,6 +488,84 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR
      CollectPhysicalMemoryInfo();
      CollectToolingInfo();
  
@@ -2725,5 +3325,5 @@ index 8c41a7e..d95ce63 100644
 +    }
 +
      if (is_qualcomm) {
+         // Qualcomm Adreno GPUs doesn't handle scaled vertex attributes; keep emulation enabled
          must_emulate_scaled_formats = true;
-         LOG_WARNING(Render_Vulkan, "Qualcomm drivers require scaled vertex format emulation.");

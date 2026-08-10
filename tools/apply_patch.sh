@@ -36,6 +36,12 @@ fi
 [ -d "$PATCH_DIR" ] || { echo "patch directory not found: $PATCH_DIR" >&2; exit 1; }
 [ -d "$EDEN_DIR" ]  || { echo "eden checkout not found: $EDEN_DIR"    >&2; exit 1; }
 
+# PINNED TAG: this patch is cut against v0.2.1, not master. Upstream master
+# carries b870bd255 "[android] config: load configuration on game start", which
+# calls reloadGlobalConfig() on every launch; ReadPathValues() begins with
+# game_dirs.clear(), so the configured game folders are wiped each time a game
+# starts. v0.2.1 predates that.
+
 P="$PATCH_DIR"
 E="$EDEN_DIR"
 A="$E/src/android/app/src/main"

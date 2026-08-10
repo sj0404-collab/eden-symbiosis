@@ -180,6 +180,13 @@ class GamesFragment : Fragment() {
 
         updateButtonsVisibility()
 
+        // Tools sits on the game screen itself, next to the filter and the gear.
+        // It was previously reachable only from inside Settings, which is the
+        // one place it does not belong: none of these are preferences.
+        binding.toolsButton.setOnClickListener {
+            findNavController().navigate(R.id.action_global_toolsFragment)
+        }
+
         binding.addDirectory.setOnClickListener {
             getGamesDirectory.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).data)
         }
