@@ -166,11 +166,37 @@ jobs:
 
           curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
             | sudo tar xz -C /usr/local/bin
+          # Validate the token before spending time on a desktop nobody can
+          # reach. An ep_/ak_ prefix is a different ngrok credential entirely -
+          # an endpoint or API key, not an agent authtoken - and produces
+          # ERR_NGROK_105 several minutes later, long after the cause scrolls
+          # past.
+          case "$NGROK_TOKEN" in
+            ep_*|ak_*)
+              echo "::error::That looks like an ngrok endpoint or API key, not an agent authtoken."
+              echo "An authtoken is ~49 characters and starts with a digit."
+              echo "Copy it from https://dashboard.ngrok.com/get-started/your-authtoken"
+              echo "(Your Authtoken -> Copy), then update the NGROK_AUTH_TOKEN secret."
+              exit 1 ;;
+          esac
+
           ngrok config add-authtoken "$NGROK_TOKEN"
           nohup ngrok http 6080 --domain="$NGROK_DOMAIN" --log stdout \
             > /tmp/ngrok.log 2>&1 &
-          sleep 6
+          sleep 8
 
+          if grep -q "ERR_NGROK_105" /tmp/ngrok.log; then
+            echo "::error::ngrok rejected the authtoken (ERR_NGROK_105)."
+            echo "Replace the NGROK_AUTH_TOKEN secret with the value from"
+            echo "https://dashboard.ngrok.com/get-started/your-authtoken"
+            exit 1
+          fi
+          if grep -qE "ERR_NGROK_(324|334|108)" /tmp/ngrok.log; then
+            echo "::error::The domain is refused or already in use by another session."
+            grep -aoE "ERR_NGROK_[0-9]+" /tmp/ngrok.log | head -1
+            echo "A free account allows one tunnel at a time - cancel the other run first."
+            exit 1
+          fi
           if ! grep -q "started tunnel" /tmp/ngrok.log; then
             echo "::warning::ngrok may not have started; log follows."
             tail -20 /tmp/ngrok.log
