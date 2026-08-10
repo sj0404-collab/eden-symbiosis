@@ -13,6 +13,86 @@ index 0cef7e7..3f3cae7 100644
              applicationId = "dev.legacy.eden_emulator"
  
              externalNativeBuild {
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/adapters/SetupAdapter.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/adapters/SetupAdapter.kt
+index 3057eea..8668c98 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/adapters/SetupAdapter.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/adapters/SetupAdapter.kt
+@@ -8,6 +8,7 @@ package org.yuzu.yuzu_emu.adapters
+ 
+ import android.text.Html
+ import android.view.LayoutInflater
++import android.view.View
+ import android.view.ViewGroup
+ import androidx.appcompat.app.AppCompatActivity
+ import androidx.core.content.res.ResourcesCompat
+@@ -31,7 +32,36 @@ class SetupAdapter(val activity: AppCompatActivity, pages: List<SetupPage>) :
+ 
+     inner class SetupPageViewHolder(val binding: PageSetupBinding) :
+         AbstractViewHolder<SetupPage>(binding), SetupCallback {
++        /** Page currently shown by this holder; needed because the holder is reused. */
++        private var boundPage: SetupPage? = null
++
+         override fun bind(model: SetupPage) {
++            boundPage = model
++            // Reset before anything else.
++            //
++            // ViewPager2 is a RecyclerView, so this holder is reused across
++            // pages. onStepCompleted() hides the button container and reveals
++            // the "Done!" label, and nothing ever put them back: a holder that
++            // previously showed the completed permissions page handed the data
++            // page a hidden container, so its buttons existed but could not be
++            // seen. That is the "the folder button disappeared" report.
++            //
++            // Removing the child views matters just as much - binding the same
++            // page twice (rotation, notifyDataSetChanged) otherwise appends a
++            // second copy of every button.
++            binding.pageButtonContainer.removeAllViews()
++            // Set the state directly rather than via ViewUtils: those helpers
++            // animate alpha, and an animation still in flight from the previous
++            // page would fight this one and could leave alpha at 0 on a view
++            // that is nominally VISIBLE.
++            binding.pageButtonContainer.animate().cancel()
++            binding.textConfirmation.animate().cancel()
++            binding.pageButtonContainer.alpha = 1f
++            binding.pageButtonContainer.visibility = View.VISIBLE
++            binding.pageButtonContainer.isClickable = true
++            binding.textConfirmation.alpha = 1f
++            binding.textConfirmation.visibility = View.INVISIBLE
++
+             if (model.pageSteps.invoke() == PageState.COMPLETE) {
+                 onStepCompleted(0, pageFullyCompleted = true)
+             }
+@@ -80,10 +110,29 @@ class SetupAdapter(val activity: AppCompatActivity, pages: List<SetupPage>) :
+                 Html.fromHtml(activity.resources.getString(model.descriptionId), 0)
+         }
+ 
++        /**
++         * True while any button on this page can still usefully be pressed.
++         *
++         * A button reporting UNDEFINED is optional but live - the data-folder
++         * button is exactly that - so it must keep the page open.
++         */
++        private fun hasActionableButton(): Boolean =
++            boundPage?.pageButtons?.any {
++                it.buttonState.invoke() != ButtonState.BUTTON_ACTION_COMPLETE
++            } == true
++
+         override fun onStepCompleted(pageButtonId: Int, pageFullyCompleted: Boolean) {
+             val button = binding.pageButtonContainer.findViewById<MaterialButton>(pageButtonId)
+ 
+-            if (pageFullyCompleted) {
++            // Only collapse the page when it has nothing left to offer.
++            //
++            // Hiding the container removes the data-folder button too, and that
++            // one is never "done": pointing at a different folder is a thing
++            // the user may want at any time, including after keys and firmware
++            // are already installed. Losing it is the "the button disappeared"
++            // bug, so keep the buttons on screen whenever one of them is still
++            // actionable.
++            if (pageFullyCompleted && !hasActionableButton()) {
+                 ViewUtils.hideView(binding.pageButtonContainer, 200)
+                 ViewUtils.showView(binding.textConfirmation, 200)
+             }
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt
 index 7f6e793..ae46c3c 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt
@@ -1897,7 +1977,7 @@ index 0f35045..7e644b2 100644
                                                                 FramePacingMode::Target_Auto,
                                                                 FramePacingMode::Target_Auto,
 diff --git a/src/video_core/host_shaders/CMakeLists.txt b/src/video_core/host_shaders/CMakeLists.txt
-index 0d342c4..49c47b8 100644
+index 5b8f47a..825517d 100644
 --- a/src/video_core/host_shaders/CMakeLists.txt
 +++ b/src/video_core/host_shaders/CMakeLists.txt
 @@ -56,6 +56,7 @@ set(SHADER_FILES
