@@ -10,6 +10,7 @@ import androidx.preference.PreferenceManager
 import java.io.File
 import java.io.IOException
 import org.yuzu.yuzu_emu.NativeLibrary
+import org.yuzu.yuzu_emu.model.GameDir
 import org.yuzu.yuzu_emu.YuzuApplication
 
 /**
@@ -189,15 +190,10 @@ object SharedDataDirectory {
      * @return true when the redirect was applied.
      */
     fun redirectNow(path: String): Boolean = runCatching {
-        // Remember the game folders before touching anything.
-        //
-        // reloadGlobalConfig() re-reads config.ini from the *new* data root,
-        // and AndroidConfig::ReadPathValues() starts with
-        // `AndroidSettings::values.game_dirs.clear()` (android_config.cpp:70).
-        // A shared folder that has no config.ini of its own therefore replaces
-        // the user's game list with an empty one - which is exactly the
-        // reported "yesterday it saw my games, today it does not".
-        val previousDirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: emptyArray()
+        // Snapshot before anything moves: reloadGlobalConfig() below re-reads
+        // config.ini from the new root, and ReadPathValues() starts with
+        // game_dirs.clear() (android_config.cpp:70).
+        rememberGameDirs()
 
         NativeLibrary.setAppDirectory(path)
         ensureLayout(path)
@@ -208,33 +204,76 @@ object SharedDataDirectory {
         NativeLibrary.initializeSystem(true)
         NativeConfig.reloadGlobalConfig()
 
-        // Restore the list if the new root had nothing to say about it. Merging
-        // rather than overwriting keeps entries the shared folder does define,
-        // so two installations can each contribute a folder.
-        val loadedDirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: emptyArray()
-        if (previousDirs.isNotEmpty()) {
-            val merged = loadedDirs.toMutableList()
-            val known = merged.map { it.uriString }.toMutableSet()
-            for (dir in previousDirs) {
-                if (known.add(dir.uriString)) {
-                    merged.add(dir)
-                }
-            }
-            if (merged.size != loadedDirs.size) {
-                NativeConfig.setGameDirs(merged.toTypedArray())
-                NativeConfig.saveGlobalConfig()
-                Log.info(
-                    "[SharedData] carried over ${merged.size - loadedDirs.size} game folder(s) " +
-                        "that the new data root did not list"
-                )
-            }
-        }
+        // Put the folders back. Same code path as a cold start, so both cannot
+        // drift apart.
+        restoreGameDirs()
 
         Log.info("[SharedData] data root redirected to $path")
         true
     }.getOrElse {
         Log.error("[SharedData] could not redirect to $path: ${it.message}")
         false
+    }
+
+    // --- Game folder survival --------------------------------------------
+    //
+    // The game list lives in config.ini, which belongs to the data root.
+    // Switching roots therefore switches game lists, and pointing at a folder
+    // with no config of its own empties it - the "yesterday it saw my games,
+    // today it does not" report.
+    //
+    // Keeping a copy in SharedPreferences fixes it for good: preferences belong
+    // to the app, not to the data root, so they survive both the redirect and
+    // the restart that follows it. Two separate code paths (the setup wizard
+    // and the utilities screen) plus the next cold start all funnel through
+    // here, which is why the earlier per-path fix was not enough.
+
+    private const val PREF_GAME_DIRS = "SymbiosisGameDirs"
+
+    /** Records the current game folders so a later root switch cannot lose them. */
+    fun rememberGameDirs() {
+        val dirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return
+        if (dirs.isEmpty()) return
+        // Newline-separated "uri\tdeepScan"; paths cannot contain a newline.
+        val encoded = dirs.joinToString("\n") { "${it.uriString}\t${it.deepScan}" }
+        prefs.edit().putString(PREF_GAME_DIRS, encoded).apply()
+    }
+
+    /**
+     * Puts back any remembered folder the current config does not list.
+     *
+     * Merges rather than replaces, so folders that genuinely belong to the new
+     * data root are kept and two installations can each contribute one.
+     *
+     * @return how many folders were restored.
+     */
+    fun restoreGameDirs(): Int {
+        val encoded = prefs.getString(PREF_GAME_DIRS, null) ?: return 0
+        val remembered = encoded.split('\n').mapNotNull { line ->
+            val parts = line.split('\t')
+            val uri = parts.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            GameDir(uri, parts.getOrNull(1)?.toBoolean() ?: false)
+        }
+        if (remembered.isEmpty()) return 0
+
+        val current = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return 0
+        val merged = current.toMutableList()
+        val known = merged.map { it.uriString }.toMutableSet()
+        var restored = 0
+        for (dir in remembered) {
+            if (known.add(dir.uriString)) {
+                merged.add(dir)
+                restored++
+            }
+        }
+        if (restored > 0) {
+            runCatching {
+                NativeConfig.setGameDirs(merged.toTypedArray())
+                NativeConfig.saveGlobalConfig()
+            }.onFailure { return 0 }
+            Log.info("[SharedData] restored $restored game folder(s) after a data-root change")
+        }
+        return restored
     }
 
     /** Summarises what a usable folder contains, for a confirmation prompt. */

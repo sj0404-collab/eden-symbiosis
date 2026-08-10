@@ -1,3 +1,4 @@
+#include <cassert>
 #include <cstdio>
 #include "common/symbiosis/mali_tuning.h"
 using namespace Symbiosis;

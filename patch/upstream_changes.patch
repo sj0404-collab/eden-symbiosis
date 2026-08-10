@@ -852,10 +852,31 @@ index 41f2da0..d42a82f 100644
          }
      }
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
-index f961c5e..34f6085 100644
+index f961c5e..ba1ece6 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
-@@ -39,8 +39,34 @@ object DirectoryInitialization {
+@@ -24,9 +24,20 @@ object DirectoryInitialization {
+         if (!areDirectoriesReady) {
+             initializeInternalStorage()
+             NativeConfig.initializeGlobalConfig()
++
++            // The game list is stored in config.ini, which belongs to the data
++            // root. If the user switched roots, the list just loaded is the new
++            // root's - empty, for a folder that never had a config of its own.
++            // Put back anything that was remembered before the switch.
++            SharedDataDirectory.restoreGameDirs()
++
+             NativeLibrary.initializeSystem(false)
+             NativeLibrary.reloadProfiles()
+             migrateSettings()
++
++            // Snapshot the effective list so the next root change has something
++            // to restore from.
++            SharedDataDirectory.rememberGameDirs()
+             areDirectoriesReady = true
+         }
+     }
+@@ -39,8 +50,34 @@ object DirectoryInitialization {
  
      private fun initializeInternalStorage() {
          try {

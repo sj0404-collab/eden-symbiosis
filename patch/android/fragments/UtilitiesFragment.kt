@@ -366,6 +366,9 @@ class UtilitiesFragment : Fragment() {
             if (current != null) {
                 SharedDataDirectory.releaseLock(current)
             }
+            // Same hazard in reverse: going back to private storage loads that
+            // root's config, which may not list the folders added while shared.
+            SharedDataDirectory.rememberGameDirs()
             SharedDataDirectory.configuredPath = null
             refreshSharedStatus()
             promptRestart()
@@ -427,6 +430,10 @@ class UtilitiesFragment : Fragment() {
             .setMessage(contents)
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton(R.string.use_this_folder) { _, _ ->
+                // Snapshot the game folders BEFORE the root changes. They live
+                // in the old root's config.ini and would otherwise be gone for
+                // good once the app restarts against the new one.
+                SharedDataDirectory.rememberGameDirs()
                 SharedDataDirectory.configuredPath = path
                 refreshSharedStatus()
                 promptRestart()

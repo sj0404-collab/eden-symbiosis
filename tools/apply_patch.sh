@@ -1,36 +1,82 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Restores the Symbiosis tree into a fresh Eden checkout.
-# Written as a script because copying these by hand was forgotten twice and
-# each miss cost a full 30-minute build.
-set -e
-P=/home/user/symbiosis-patch
-E=/work/eden
-A=$E/src/android/app/src/main
+#
+# Written as a script because copying these files by hand was forgotten twice,
+# and each miss cost a full 30-minute build that appeared to succeed while
+# silently shipping the old code.
+#
+# Paths are arguments rather than constants so the same script serves the local
+# sandbox and a CI runner; hard-coding /work/eden meant CI needed its own copy,
+# and two copies drift.
+#
+# Usage:
+#   bash tools/apply_patch.sh                          # sandbox defaults
+#   bash tools/apply_patch.sh --patch <dir> --eden <dir>
+set -euo pipefail
 
-cd $E
-git apply --3way --exclude='*ic_launcher_foreground.png' $P/upstream_changes.patch 2>&1 | grep -v cleanly || true
-rm -f $A/res/drawable/ic_launcher_foreground.png
+PATCH_DIR="${PATCH_DIR:-/home/user/symbiosis-patch}"
+EDEN_DIR="${EDEN_DIR:-/work/eden}"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --patch) PATCH_DIR="$2"; shift 2 ;;
+    --eden)  EDEN_DIR="$2";  shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+# When run from a checkout of this repository, default to its own patch/ dir.
+if [ ! -d "$PATCH_DIR" ]; then
+  self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -d "$self_dir/../patch" ]; then
+    PATCH_DIR="$(cd "$self_dir/../patch" && pwd)"
+  fi
+fi
+
+[ -d "$PATCH_DIR" ] || { echo "patch directory not found: $PATCH_DIR" >&2; exit 1; }
+[ -d "$EDEN_DIR" ]  || { echo "eden checkout not found: $EDEN_DIR"    >&2; exit 1; }
+
+P="$PATCH_DIR"
+E="$EDEN_DIR"
+A="$E/src/android/app/src/main"
+
+echo "patch: $P"
+echo "eden : $E"
+
+cd "$E"
+
+# --3way needs history, hence the depth-50 clone; the icon is excluded because
+# a binary delete cannot be applied without a full index line.
+git apply --3way --exclude='*ic_launcher_foreground.png' "$P/upstream_changes.patch" \
+  2>&1 | grep -v cleanly || true
+rm -f "$A/res/drawable/ic_launcher_foreground.png"
 
 # C++ layer
-mkdir -p $E/src/common/symbiosis
-cp $P/symbiosis/*.cpp $P/symbiosis/*.h $E/src/common/symbiosis/
+mkdir -p "$E/src/common/symbiosis"
+cp "$P"/symbiosis/*.cpp "$P"/symbiosis/*.h "$E/src/common/symbiosis/"
 
 # Shader
-cp $P/shaders/present_retro.frag $E/src/video_core/host_shaders/
+cp "$P"/shaders/present_retro.frag "$E/src/video_core/host_shaders/"
 
 # JNI bridge
-cp $P/native_symbiosis.cpp $A/jni/
+cp "$P"/native_symbiosis.cpp "$A/jni/"
 
 # Kotlin
-J=$A/java/org/yuzu/yuzu_emu
-cp $P/android/fragments/*.kt $J/fragments/
-cp $P/android/adapters/*.kt $J/adapters/
-cp $P/android/utils/*.kt    $J/utils/
+J="$A/java/org/yuzu/yuzu_emu"
+cp "$P"/android/fragments/*.kt "$J/fragments/"
+cp "$P"/android/adapters/*.kt  "$J/adapters/"
+cp "$P"/android/utils/*.kt     "$J/utils/"
 
 # Resources
-cp $P/android/layout/*.xml   $A/res/layout/
-cp $P/android/drawable/*.xml $A/res/drawable/
-cp $P/android/values/strings-en.xml $A/res/values/strings.xml
-cp $P/android/values/strings-ru.xml $A/res/values-ru/strings.xml
+cp "$P"/android/layout/*.xml   "$A/res/layout/"
+cp "$P"/android/drawable/*.xml "$A/res/drawable/"
+cp "$P"/android/values/strings-en.xml "$A/res/values/strings.xml"
+cp "$P"/android/values/strings-ru.xml "$A/res/values-ru/strings.xml"
+
+# The Kotlin daemon is OOM-killed on a small machine; in-process is slower to
+# start but survives.
+GP="$E/src/android/gradle.properties"
+grep -q 'kotlin.compiler.execution.strategy' "$GP" 2>/dev/null || \
+  echo 'kotlin.compiler.execution.strategy=in-process' >> "$GP"
 
 echo "PATCH_APPLIED files=$(git status --porcelain | wc -l)"
