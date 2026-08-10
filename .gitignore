@@ -2,3 +2,6 @@
 *.jar
 *.class
 /build/
+
+# Repositories the agent clones at runtime
+work/
