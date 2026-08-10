@@ -80,7 +80,12 @@ for f in "$HERE"/tests/t_*.cpp; do
     fi
   else
     # A test whose dependencies are not wired up is reported, never hidden.
-    echo "  SKIP  $n (does not link: $(grep -m1 -oP 'undefined reference to .\K[^'"'"']+' "$BUILD/$n.err" | head -1))"
+    # A test that will not build is reported with the real reason, never a
+    # blank. An empty parenthesis told me nothing on CI and cost a whole run.
+    reason=$(grep -m1 -E "undefined reference|error:|fatal error:" "$BUILD/$n.err" | head -1)
+    echo "  SKIP  $n"
+    echo "        reason: ${reason:-unknown}"
+    sed 's/^/        | /' "$BUILD/$n.err" | head -6
     skip=$((skip+1))
   fi
 done

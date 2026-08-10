@@ -1,0 +1,75 @@
+name: Tests
+
+# A fast feedback loop, separate from the APK build.
+#
+# The full build spends ~25 minutes compiling the emulator before it ever
+# reaches a verification step, so a broken test harness costs a full run to
+# diagnose. This job clones upstream, applies the patch and runs the suite -
+# typically under five minutes - so test problems surface on their own.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'tests/**'
+      - 'tools/run_tests.sh'
+      - 'patch/symbiosis/**'
+      - '.github/workflows/tests.yml'
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Check out upstream Eden
+        run: git clone --depth 50 https://git.eden-emu.dev/eden-emu/eden.git eden
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libfmt-dev
+          # Prove the header is actually present before relying on it.
+          test -f /usr/include/fmt/format.h && echo "libfmt headers ok"
+
+      - name: Apply the Symbiosis patch
+        run: |
+          cd eden
+          bash "$GITHUB_WORKSPACE/fork/tools/apply_patch.sh" \
+            --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
+
+      - name: Install Kotlin
+        run: |
+          curl -sL -o /tmp/kc.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q /tmp/kc.zip -d /tmp
+
+      - name: Run the suite
+        run: |
+          export PATH="/tmp/kotlinc/bin:$PATH"
+          bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden" --max-skip 3
+
+      - name: Check the Russian localisation
+        run: |
+          cd eden/src/android/app/src/main/res
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET, re, sys
+          def load(p):
+              return {e.get('name'): ''.join(e.itertext())
+                      for e in ET.parse(p).getroot().iter('string')}
+          en, ru = load('values/strings.xml'), load('values-ru/strings.xml')
+          fmt = lambda s: sorted(re.findall(r'%(\d+\$[sd]|[sd%])', s))
+          bad = [k for k in ru if k in en and fmt(en[k]) != fmt(ru[k])]
+          if bad:
+              print('format-argument mismatch:', bad[:5]); sys.exit(1)
+          print(f'EN {len(en)} / RU {len(ru)} strings, format arguments agree')
+          PY
