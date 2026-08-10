@@ -1352,6 +1352,10 @@ index abfc428919..33a843d233 100644
      if (result != Core::SystemResultStatus::Success) {
          env->CallStaticVoidMethod(Common::Android::GetNativeLibraryClass(),
                                    Common::Android::GetExitEmulationActivity(),
+diff --git a/src/android/app/src/main/res/drawable/ic_launcher_foreground.png b/src/android/app/src/main/res/drawable/ic_launcher_foreground.png
+deleted file mode 100644
+index 53f1cace9b..0000000000
+Binary files a/src/android/app/src/main/res/drawable/ic_launcher_foreground.png and /dev/null differ
 diff --git a/src/android/app/src/main/res/layout/fragment_emulation.xml b/src/android/app/src/main/res/layout/fragment_emulation.xml
 index db363bc723..beda20b473 100644
 --- a/src/android/app/src/main/res/layout/fragment_emulation.xml
@@ -3229,7 +3233,7 @@ index 47f52c5c99..c631664efa 100644
      u64 expected_memory;
      u64 critical_memory;
 diff --git a/src/video_core/vulkan_common/vulkan_device.cpp b/src/video_core/vulkan_common/vulkan_device.cpp
-index 6e55306079..94ef048aea 100644
+index 6e55306079..edf5bc3363 100644
 --- a/src/video_core/vulkan_common/vulkan_device.cpp
 +++ b/src/video_core/vulkan_common/vulkan_device.cpp
 @@ -22,6 +22,9 @@
@@ -3242,7 +3246,7 @@ index 6e55306079..94ef048aea 100644
  #include "video_core/vulkan_common/vulkan_device.h"
  #include "video_core/vulkan_common/vulkan_wrapper.h"
  #include "video_core/gpu_logging/gpu_logging.h"
-@@ -485,6 +488,84 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR
+@@ -485,6 +488,88 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR
      CollectPhysicalMemoryInfo();
      CollectToolingInfo();
  
@@ -3317,7 +3321,11 @@ index 6e55306079..94ef048aea 100644
 +        Symbiosis::CapabilitySet observed = provider->caps;
 +        observed.Set(Symbiosis::Capability::AstcDecode, IsOptimalAstcSupported());
 +        observed.Set(Symbiosis::Capability::BcnDecode, IsOptimalBcnSupported());
-+        observed.Set(Symbiosis::Capability::Etc2Decode, IsOptimalEtc2Supported());
++        // v0.2.1 has no IsOptimalEtc2Supported() helper, so ask the driver
++        // directly. ETC2 is mandatory on any Vulkan implementation that
++        // advertises textureCompressionETC2, which every Mali part does.
++        observed.Set(Symbiosis::Capability::Etc2Decode,
++                     features.features.textureCompressionETC2 == VK_TRUE);
 +        observed.Set(Symbiosis::Capability::Float16, IsFloat16Supported());
 +        observed.Set(Symbiosis::Capability::Int8, IsInt8Supported());
 +        Symbiosis::GetDriverBroker().UpdateObservedCapabilities(provider, observed,
