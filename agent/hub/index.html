@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Zen Agent</title>
+<!--
+  Web hub for the agent. The upstream file expects hub/index.html but ships
+  without it, so /hub answered 500 with ENOENT - the whole web interface was
+  missing rather than broken.
+
+  Written as one file with no CDN, no framework and no build step: it is opened
+  from a phone over a tunnel, where every extra request is a chance to hang.
+-->
+<style>
+  :root {
+    --bg:#0b0b10; --panel:#14141c; --line:#242430; --text:#e9e9f2;
+    --dim:#8b8b9e; --accent:#22e0d6; --user:#ff2d78; --warn:#ffb020;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; margin:0; }
+  body {
+    background:var(--bg); color:var(--text); display:flex; flex-direction:column;
+    font:15px/1.55 -apple-system,"Segoe UI",Roboto,sans-serif;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  header {
+    display:flex; align-items:center; gap:8px; padding:10px 12px;
+    border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap;
+  }
+  header b { color:var(--accent); letter-spacing:.5px; }
+  select, input, button, textarea {
+    font:inherit; background:#0f0f16; color:var(--text);
+    border:1px solid var(--line); border-radius:9px; padding:9px 10px;
+  }
+  button { background:var(--accent); color:#04202a; border:0; font-weight:700; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  button:disabled { opacity:.45; }
+  #log { flex:1; overflow-y:auto; padding:12px; }
+  .msg { margin-bottom:14px; }
+  .who { font-size:12px; color:var(--dim); margin-bottom:3px; }
+  .msg.me .who { color:var(--user); }
+  .body {
+    white-space:pre-wrap; word-wrap:break-word;
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:10px 12px;
+  }
+  .msg.me .body { border-color:#3a1a28; }
+  .tool { border-left:3px solid var(--warn); font-size:13px; color:#ffd79a; }
+  footer {
+    display:flex; gap:8px; padding:10px; border-top:1px solid var(--line);
+    background:var(--panel);
+  }
+  #q { flex:1; resize:none; max-height:130px; }
+  .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .status { font-size:12px; color:var(--dim); }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--warn); display:inline-block; }
+  .dot.ok { background:var(--accent); } .dot.bad { background:#ff4d4d; }
+  code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <b>Zen Agent</b>
+  <select id="model" title="Модель"></select>
+  <button class="ghost" id="tools-btn" onclick="toggleTools()">Инструменты</button>
+  <span class="status"><span class="dot" id="dot"></span> <span id="stat">проверяю…</span></span>
+</header>
+
+<div id="log">
+  <div class="msg">
+    <div class="who">агент</div>
+    <div class="body">Готов. Пишите задачу — могу читать и править файлы, выполнять команды, работать с git и открывать страницы.
+
+Работа сохраняется в ветку репозитория каждые 2 минуты, поэтому конец сессии ничего не теряет.</div>
+  </div>
+</div>
+
+<div id="tools" style="display:none; padding:10px 12px; border-top:1px solid var(--line); background:var(--panel)">
+  <div class="row">
+    <input id="tool-name" placeholder="инструмент, напр. web_fetch" style="flex:1 1 160px">
+    <input id="tool-args" placeholder='{"url":"example.com"}' style="flex:2 1 220px">
+    <button onclick="callTool()">Вызвать</button>
+  </div>
+  <div class="status" style="margin-top:6px">
+    Частые: <code>read_file</code> <code>write_file</code> <code>execute_command</code>
+    <code>git_status</code> <code>web_search</code> <code>web_fetch</code>
+  </div>
+</div>
+
+<footer>
+  <textarea id="q" rows="1" placeholder="Задача…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}"></textarea>
+  <button id="send" onclick="send()">→</button>
+</footer>
+
+<script>
+// The token arrives as ?token=… and the server turns it into a cookie on first
+// load, so it need not be kept in JavaScript. Reading it here only so a
+// bookmarked link keeps working if the cookie is cleared.
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const H = () => {
+  const h = { 'Content-Type': 'application/json' };
+  if (TOKEN) h['X-Zen-Token'] = TOKEN;
+  return h;
+};
+
+const log = document.getElementById('log');
+const dot = document.getElementById('dot');
+const stat = document.getElementById('stat');
+
+// Kept in step with ZEN_MODELS in zen-agent.js: only the three that answered
+// 3/3 when measured. Offering a dead model is what made the agent look broken.
+const MODELS = [
+  ['laguna-s-2.1-free',      'Laguna S 2.1 — быстрая, стабильная'],
+  ['mimo-v2.5-free',         'MiMo V2.5 — самая быстрая'],
+  ['deepseek-v4-flash-free', 'DeepSeek V4 — медленная, 200K контекст']
+];
+const sel = document.getElementById('model');
+MODELS.forEach(([id, label]) => {
+  const o = document.createElement('option');
+  o.value = id; o.textContent = label; sel.appendChild(o);
+});
+sel.value = localStorage.getItem('zen_model') || MODELS[0][0];
+sel.onchange = () => localStorage.setItem('zen_model', sel.value);
+
+function add(who, text, cls = '') {
+  const d = document.createElement('div');
+  d.className = 'msg' + (who === 'вы' ? ' me' : '');
+  d.innerHTML = '<div class="who"></div><div class="body ' + cls + '"></div>';
+  d.querySelector('.who').textContent = who;
+  d.querySelector('.body').textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d.querySelector('.body');
+}
+
+async function ping() {
+  try {
+    const r = await fetch('/mcp/status', { headers: H() });
+    const ok = r.ok;
+    dot.className = 'dot ' + (ok ? 'ok' : 'bad');
+    stat.textContent = ok ? 'на связи' : 'ошибка ' + r.status;
+  } catch (e) {
+    dot.className = 'dot bad';
+    stat.textContent = 'нет связи';
+  }
+}
+
+const history = [];
+
+async function send() {
+  const q = document.getElementById('q');
+  const text = q.value.trim();
+  if (!text) return;
+  q.value = '';
+  add('вы', text);
+  history.push({ role: 'user', content: text });
+
+  const btn = document.getElementById('send');
+  btn.disabled = true;
+  const out = add('агент', '…');
+
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST', headers: H(),
+      body: JSON.stringify({ model: sel.value, messages: history.slice(-20) })
+    });
+    const d = await r.json();
+    // The endpoint proxies Zen verbatim, so the payload is OpenAI-shaped and
+    // an upstream failure arrives as an error object rather than an HTTP code.
+    const reply = d?.choices?.[0]?.message?.content
+      ?? d?.error?.message
+      ?? (typeof d === 'string' ? d : JSON.stringify(d).slice(0, 400));
+    out.textContent = reply;
+    if (d?.choices?.[0]?.message?.content) {
+      history.push({ role: 'assistant', content: reply });
+    }
+  } catch (e) {
+    out.textContent = 'Ошибка: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    q.focus();
+  }
+}
+
+function toggleTools() {
+  const t = document.getElementById('tools');
+  t.style.display = t.style.display === 'none' ? 'block' : 'none';
+}
+
+async function callTool() {
+  const name = document.getElementById('tool-name').value.trim();
+  if (!name) return;
+  let args = {};
+  const raw = document.getElementById('tool-args').value.trim();
+  if (raw) {
+    try { args = JSON.parse(raw); }
+    catch (e) { add('инструмент', 'Аргументы должны быть JSON: ' + e.message, 'tool'); return; }
+  }
+  const out = add('инструмент', name + ' …', 'tool');
+  try {
+    const r = await fetch('/mcp/call', {
+      method: 'POST', headers: H(),
+      body: JSON.stringify({ tool: name, args })
+    });
+    const d = await r.json();
+    out.textContent = JSON.stringify(d.result ?? d, null, 2).slice(0, 4000);
+  } catch (e) {
+    out.textContent = 'Ошибка: ' + e.message;
+  }
+}
+
+document.getElementById('q').addEventListener('input', e => {
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(e.target.scrollHeight, 130) + 'px';
+});
+
+ping();
+setInterval(ping, 20000);
+</script>
+</body>
+</html>
