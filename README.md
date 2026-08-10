@@ -59,23 +59,54 @@ docs/
 
 ## Building
 
-```bash
-bash tools/setup_env.sh                                   # toolchain + swap
-git clone --depth 50 https://git.eden-emu.dev/eden-emu/eden.git /work/eden
-bash tools/apply_patch.sh                                 # apply this fork
-bash tools/run_build.sh                                   # ~31 min
-```
+**Builds run in GitHub Actions, not on a workstation.** Go to the
+[Actions tab](https://github.com/sj0404-collab/eden-symbiosis/actions), pick
+**Build APK**, press *Run workflow*. About 25 minutes; the APK is attached as an
+artefact and, if the box is ticked, uploaded to gofile.io with its MD5 printed
+in the run summary.
 
-Requires ~6 GB swap: the Kotlin compiler is OOM-killed on 2 GB RAM without
-`kotlin.compiler.execution.strategy=in-process`.
+Two workflows:
+
+| Workflow | Runs | Purpose |
+|---|---|---|
+| **Tests** | ~4 min | Host test suite plus the localisation check. Runs on every change to `tests/`, `tools/run_tests.sh` or the C++ layer. |
+| **Build APK** | ~25 min | The above, then the full NDK build, then verifies the fixes are present in the produced APK. |
+
+`ubuntu-latest` deliberately: Eden's native build is CMake + NDK and targets
+Linux, and `windows-latest` would add path-length and line-ending failures for
+no benefit.
+
+Building locally is possible but not recommended — it needs ~6 GB of swap,
+`kotlin.compiler.execution.strategy=in-process` to survive the OOM killer, and
+takes over half an hour on a small machine:
+
+```bash
+bash tools/setup_env.sh
+git clone --depth 50 https://git.eden-emu.dev/eden-emu/eden.git /work/eden
+bash tools/apply_patch.sh --patch ./patch --eden /work/eden
+bash tools/run_build.sh
+```
 
 ## Running the tests
 
 ```bash
-g++ -std=c++20 -O1 -o /tmp/t tests/t_audit.cpp && /tmp/t
-kotlinc tests/SetupPageTest.kt -include-runtime -d /tmp/t.jar && java -jar /tmp/t.jar
-cd <eden>/src/android/app/src/main/res && python3 test_l10n.py
+git clone --depth 50 https://git.eden-emu.dev/eden-emu/eden.git /tmp/eden
+bash tools/apply_patch.sh --patch ./patch --eden /tmp/eden
+bash tools/run_tests.sh --eden /tmp/eden
 ```
+
+Two traps the harness now guards against, both of which once made the suite
+look green while checking nothing:
+
+- **Never** put `<eden>/src/common` on the include path. Eden ships its own
+  `common/assert.h`, which shadows the standard `<cassert>`; every `assert()`
+  then expands to nothing.
+- Eden's `logging.h` calls `format.get()`, which needs **fmt 10**. Ubuntu
+  packages fmt 9, so set `FMT_INCLUDE` to a fmt 10 checkout — otherwise every
+  test that touches the layer fails to compile and is skipped.
+
+11 of 14 tests build and run; the 3 that need most of `video_core` are reported
+as SKIP, and the harness fails if that number grows.
 
 ## Honest status
 
