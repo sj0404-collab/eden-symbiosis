@@ -124,8 +124,8 @@
       onclick="refresh()">Обновить</button></h2>
   <div id="sessions"><span class="note">загрузка…</span></div>
   <div class="row" style="margin-top:10px">
-    <button id="btn-desktop" onclick="openDesktop()">Открыть рабочий стол</button>
-    <button class="ghost" onclick="window.open(TERMINAL,'_blank')">Терминал + opencode</button>
+    <button id="btn-opencode" onclick="openOpencode()">Открыть opencode</button>
+    <button class="ghost" id="btn-desktop" onclick="openDesktop()">Рабочий стол</button>
   </div>
   <div class="note">
     Постоянный адрес: <code>filly-above-terrapin.ngrok-free.app</code> — не
@@ -133,13 +133,15 @@
     сводки подставляет его сама.
   </div>
   <div class="note">
-    Кнопка сама запускает сессию, если её нет, ждёт туннель и открывает стол —
-    заходить на GitHub не нужно. Терминал открывается по адресу
-    <code>/term/</code> того же домена, в нём уже стоит <code>opencode</code>.
+    Кнопка сама запускает сессию, ждёт туннель и открывает <b>opencode</b> —
+    его собственный веб-интерфейс, ставить на телефон нечего. Заходить на
+    GitHub не нужно.
   </div>
   <div class="note">
-    Работа автоматически коммитится в ветку <code>session/…</code> каждые
-    2 минуты и ещё раз при завершении, поэтому обнуление сессии её не уничтожит.
+    Всё, что opencode пишет, коммитится в ветку <code>opencode-work</code>
+    каждые 2 минуты и ещё раз при завершении. Сессия закончилась или телефон
+    перезагрузился — файлы уже в репозитории, следующая сессия продолжит ту же
+    ветку.
   </div>
   <div class="note">
     Несколько сессий работают одновременно — переключайтесь, открывая нужную
@@ -236,9 +238,39 @@ async function tunnelReady() {
   // A HEAD request through no-cors cannot be read, but it does distinguish
   // "something answered" from "nothing there", which is all that is needed.
   try {
-    await fetch(DESKTOP_BASE + '/vnc.html', { method: 'HEAD', mode: 'no-cors' });
+    await fetch(DESKTOP_BASE + '/', { method: 'HEAD', mode: 'no-cors' });
     return true;
   } catch (e) { return false; }
+}
+
+// opencode's own web UI, served at the root of the tunnel. Starts the session
+// when none is running and waits for it, so the whole thing is one tap.
+async function openOpencode() {
+  const btn = document.getElementById('btn-opencode');
+  const say = t => { if (btn) btn.textContent = t; };
+
+  if (await tunnelReady()) { window.open(DESKTOP_BASE, '_blank'); return; }
+
+  if (!tok()) { alert('Нужен токен, чтобы запустить сессию.'); return; }
+  say('Запускаю…');
+  await fetch(`${API}/actions/workflows/opencode.yml/dispatches`, {
+    method: 'POST', headers: hdr(),
+    body: JSON.stringify({ ref: 'main', inputs: {
+      branch: 'opencode-work', autosave_minutes: '2', prepare_build: 'false' } })
+  });
+
+  for (let i = 0; i < 60; i++) {
+    say(`Поднимаю opencode… ${i * 5}s`);
+    await new Promise(r => setTimeout(r, 5000));
+    if (await tunnelReady()) {
+      say('Открыть opencode');
+      window.open(DESKTOP_BASE, '_blank');
+      refresh();
+      return;
+    }
+  }
+  say('Открыть opencode');
+  alert('Не поднялось за 5 минут — посмотрите журнал запуска.');
 }
 
 async function openDesktop() {

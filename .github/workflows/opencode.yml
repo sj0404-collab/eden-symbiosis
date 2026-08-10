@@ -1,0 +1,219 @@
+name: opencode
+
+# Runs opencode's own web interface on a runner and exposes it on the reserved
+# ngrok domain, so it can be used from a phone browser with nothing installed.
+#
+# The point of this workflow over the desktop one: opencode is the interface,
+# not a program inside a remote desktop. No VNC, no XFCE, no pixel-pushing over
+# mobile data - just its web UI, which is built for this.
+#
+# WHERE THE WORK GOES
+#   The runner is destroyed when the job ends, so nothing on its disk survives.
+#   Everything is committed to a branch in this repository: every two minutes
+#   while the session runs, and once more on the way out - including when the
+#   job is cancelled or hits the six-hour limit. Reconnecting later, or after
+#   the phone reboots, means the files are already in the repo.
+#
+# LIMITS, PLAINLY
+#   * Six hours maximum per job. Platform rule, not a setting.
+#   * A free ngrok account allows one tunnel, so one of these at a time.
+#   * opencode ships free models; a paid provider needs its own key, which can
+#     be added as a secret and is passed through below if present.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to work on (created if absent)"
+        type: string
+        default: "opencode-work"
+      autosave_minutes:
+        description: "Commit and push every N minutes"
+        type: string
+        default: "2"
+      prepare_build:
+        description: "Also check out Eden and apply the patch"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  opencode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+          # Full history: the autosave branch is pushed from here, and a
+          # shallow clone refuses a push that is not a fast-forward.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install opencode
+        run: |
+          npm install -g opencode-ai@latest
+          opencode --version
+
+      - name: Prepare the working branch
+        working-directory: fork
+        run: |
+          git config user.email "opencode@eden-symbiosis"
+          git config user.name  "opencode session"
+
+          BRANCH="${{ inputs.branch }}"
+          # Reuse the branch if it exists, so a later session continues the
+          # same work rather than scattering it across timestamped branches.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git fetch -q origin "$BRANCH"
+            git checkout -q "$BRANCH"
+            echo "continuing on existing branch $BRANCH"
+          else
+            git checkout -q -b "$BRANCH"
+            git push -q -u origin "$BRANCH"
+            echo "created branch $BRANCH"
+          fi
+          echo "WORK_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+      - name: Check out Eden and apply the patch
+        if: inputs.prepare_build
+        run: |
+          git clone --branch v0.2.1 https://git.eden-emu.dev/eden-emu/eden.git eden
+          sudo apt-get update -qq
+          sudo apt-get install -y glslang-tools libfmt-dev
+          cd eden
+          bash "$GITHUB_WORKSPACE/fork/tools/apply_patch.sh" \
+            --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
+
+      - name: Start autosave
+        run: |
+          # Written with printf: an indented heredoc inside a YAML run block
+          # puts leading spaces on every line, and a shebang with spaces in
+          # front of it is not a shebang.
+          printf '%s\n' \
+            '#!/bin/bash' \
+            'cd "$1" || exit 1' \
+            'INTERVAL=$2' \
+            'while true; do' \
+            '  sleep "$INTERVAL"' \
+            '  if [ -n "$(git status --porcelain)" ]; then' \
+            '    git add -A' \
+            '    git commit -q -m "opencode autosave $(date -u "+%Y-%m-%d %H:%M:%S")" >/dev/null 2>&1' \
+            '    git push -q origin HEAD >/dev/null 2>&1' \
+            '  fi' \
+            'done' > "$HOME/autosave.sh"
+          chmod +x "$HOME/autosave.sh"
+
+          SECS=$(( ${{ inputs.autosave_minutes }} * 60 ))
+          nohup "$HOME/autosave.sh" "$GITHUB_WORKSPACE/fork" "$SECS" > /tmp/autosave.log 2>&1 &
+          echo "autosave every ${{ inputs.autosave_minutes }} min -> $WORK_BRANCH"
+
+      - name: Serve opencode and open the tunnel
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+          NGROK_DOMAIN: filly-above-terrapin.ngrok-free.app
+          # Optional: only used if the secret exists.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$NGROK_TOKEN" ]; then
+            echo "::error::NGROK_AUTH_TOKEN is not set - the UI would only be reachable on the runner."
+            echo "Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          cd "$GITHUB_WORKSPACE/fork"
+          # --hostname 0.0.0.0 so ngrok can reach it; --cors for the tunnel
+          # domain, since the browser origin is the ngrok host, not localhost.
+          nohup opencode web --port 4096 --hostname 0.0.0.0 \
+            --cors "https://$NGROK_DOMAIN" --print-logs \
+            > /tmp/opencode.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:4096/ && break
+            sleep 2
+          done
+          if ! curl -sf -o /dev/null http://127.0.0.1:4096/; then
+            echo "::error::opencode did not start."
+            tail -30 /tmp/opencode.log
+            exit 1
+          fi
+          echo "opencode is serving on 4096"
+
+          curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
+            | sudo tar xz -C /usr/local/bin
+          ngrok config add-authtoken "$NGROK_TOKEN"
+
+          nohup ngrok http 4096 --url="https://$NGROK_DOMAIN" --log stdout \
+            > /tmp/ngrok.log 2>&1 &
+          sleep 8
+
+          if grep -q "ERR_NGROK_105" /tmp/ngrok.log; then
+            echo "::error::ngrok rejected the authtoken."
+            exit 1
+          fi
+          if grep -q "ERR_NGROK_334" /tmp/ngrok.log; then
+            # The reserved domain is held by a Cloud Endpoint or another agent.
+            echo "::warning::$NGROK_DOMAIN is taken; using a generated address."
+            pkill -f "ngrok http" || true
+            sleep 2
+            nohup ngrok http 4096 --log stdout > /tmp/ngrok.log 2>&1 &
+            sleep 8
+          fi
+
+          for i in $(seq 1 20); do
+            URL=$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+              | python3 -c "import sys,json;t=json.load(sys.stdin).get('tunnels',[]);print(t[0]['public_url'] if t else '')" 2>/dev/null)
+            [ -n "$URL" ] && break
+            sleep 2
+          done
+          if [ -z "$URL" ]; then
+            echo "::error::no tunnel came up."
+            tail -25 /tmp/ngrok.log
+            exit 1
+          fi
+
+          {
+            echo "## opencode"
+            echo ""
+            echo "**[Open opencode]($URL)**"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Address | \`$URL\` |"
+            echo "| Working branch | \`$WORK_BRANCH\` |"
+            echo "| Autosave | every ${{ inputs.autosave_minutes }} min, and on exit |"
+            echo ""
+            echo "Nothing to install: it is opencode's own web UI. Everything it"
+            echo "writes under \`fork/\` is committed to the branch above, so the"
+            echo "session ending - or the phone rebooting - loses nothing."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "=================================================="
+          echo " opencode: $URL"
+          echo " branch:   $WORK_BRANCH"
+          echo "=================================================="
+
+      - name: Keep the session alive
+        run: |
+          echo "Running until cancelled, or for six hours."
+          sleep 21000
+
+      - name: Final save
+        if: always()
+        run: |
+          cd "$GITHUB_WORKSPACE/fork" || exit 0
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -q -m "opencode final save $(date -u '+%Y-%m-%d %H:%M')" || true
+            git push -q origin HEAD || true
+            echo "Pushed the last changes to ${WORK_BRANCH:-the working branch}."
+          else
+            echo "Nothing left to save."
+          fi
