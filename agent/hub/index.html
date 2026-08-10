@@ -125,6 +125,7 @@
   <span>инстр. <span class="v" id="m-tools">0</span></span>
   <span>токены <span class="v" id="m-tok">0</span></span>
   <span><span class="v" id="m-time">0с</span></span>
+  <span title="Время сессии раннера">сессия <span class="v" id="m-sess">—</span></span>
 </div>
 
 <div id="stream">
@@ -468,6 +469,34 @@ $('q').addEventListener('input',e=>{
   e.target.style.height='auto';
   e.target.style.height=Math.min(e.target.scrollHeight,120)+'px';
 });
+
+/* Runner session clock. The job is killed at six hours without warning, so the
+   remaining time decides whether to start something long or wrap up. Turns
+   amber under 30 minutes and red under 10. */
+async function sessionClock(){
+  try{
+    const r = await fetch('/api/info', { headers: H() });
+    const info = await r.json();
+    const el = $('m-sess');
+    const ses = info.session;
+    if (!ses || !ses.limitMs){
+      // No limit passed: show elapsed only, rather than invent a deadline.
+      el.textContent = ses ? fmt(ses.elapsedMs) : '—';
+      return;
+    }
+    el.textContent = fmt(ses.elapsedMs) + ' / ' + fmt(ses.limitMs)
+                   + ' · осталось ' + fmt(ses.remainingMs);
+    const min = ses.remainingMs / 60000;
+    el.style.color = min < 10 ? 'var(--bad)' : (min < 30 ? 'var(--warn)' : '');
+  }catch(e){ /* the strip is cosmetic; a failed poll must not break the page */ }
+}
+function fmt(ms){
+  const t = Math.max(0, Math.round(ms/1000));
+  const h = Math.floor(t/3600), m = Math.floor((t%3600)/60);
+  return h ? h + 'ч ' + m + 'м' : m + 'м';
+}
+sessionClock();
+setInterval(sessionClock, 30000);
 
 (async function ping(){
   try{

@@ -155,6 +155,7 @@ jobs:
           # mid-task looks exactly like the agent giving up.
           ZEN_BIND_HOST=0.0.0.0 ZEN_REMOTE_TOKEN="$TOKEN" MCP_PORT=8765 \
             ZEN_LONG_TASKS=1 ZEN_LONG_MAX_STEPS=250 \
+            SESSION_STARTED_MS="$(date +%s000)" SESSION_LIMIT_MS=21600000 \
             GITHUB_TOKEN="$GH_TOKEN" \
             nohup node agent/zen-agent.js > /tmp/agent.log 2>&1 &
 

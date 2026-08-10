@@ -399,7 +399,7 @@ function formatToolResult(name, result, args) {
     process_start: '▶️', process_status: '📊', process_logs: '📜', process_stop: '⏹️', monitor_start: '🩺', monitor_list: '🩺', monitor_logs: '📜', monitor_stop: '⏹️',
     terminal_create: '💻', terminal_write: '⌨️', terminal_read: '📟', terminal_list: '💻', terminal_close: '⏹️',
     http_request: '🌐', health_check: '💓', websocket_test: '🔌', npm_install: '📦', npm_run: '▶️', sqlite_info: '🗃️', sqlite_query: '🗃️', sqlite_schema: '🗃️', sqlite_backup: '💾', env_list: '🔐', env_set: '🔐', env_delete: '🔐', run_tests: '🧪', run_lint: '🧹', code_check: '✅', dependency_audit: '🔐',
-    git_status: '🌿', git_diff: '🌿', git_branch: '🌿', git_log: '🌿', git_init: '🌿', git_commit: '🌿', open_url: '🌐', clipboard_read: '📋', clipboard_write: '📋', notify: '🔔', termux_api_status: '📱', termux_battery: '🔋', termux_wifi: '📶', termux_toast: '💬', termux_vibrate: '📳', termux_share: '📤', termux_volume: '🔊', termux_location: '📍',
+    git_status: '🌿', git_diff: '🌿', git_branch: '🌿', git_log: '🌿', git_init: '🌿', git_commit: '🌿', git_clone: '⬇', git_pull: '⬇', git_push: '⬆', open_url: '🌐', clipboard_read: '📋', clipboard_write: '📋', notify: '🔔', termux_api_status: '📱', termux_battery: '🔋', termux_wifi: '📶', termux_toast: '💬', termux_vibrate: '📳', termux_share: '📤', termux_volume: '🔊', termux_location: '📍',
     todo_list: '📋', todo_add: '➕', todo_done: '✅', todo_remove: '🗑️',
   };
   const icon = iconMap[name] || '🔧';
@@ -870,6 +870,9 @@ const MCP_TOOLS = {
   git_branch: 'Показать текущую и доступные Git-ветки',
   git_log: 'Последние Git-коммиты',
   git_init: 'Инициализировать Git-репозиторий',
+  git_clone: 'Склонировать ЛЮБОЙ репозиторий в work/ — repo: owner/name или URL',
+  git_pull: 'Обновить репозиторий из origin',
+  git_push: 'Отправить коммиты в origin',
   git_commit: 'Добавить изменения и создать Git-коммит',
   open_url: 'Открыть URL через Android/Termux',
   clipboard_read: 'Прочитать буфер обмена Android',
@@ -2508,6 +2511,45 @@ async function handleMCPTool(tool, args = {}) {
       return await gitLiveTool(`git log --oneline -n ${limit}`, cwdResult, args);
     }
 
+    case 'git_clone': {
+      // Clones into work/ beside the current checkout, then reports the path so
+      // the model can set_workspace into it. Credentials are already configured
+      // on the runner, so any repository the token can see will clone.
+      const repo = String(args.repo || args.url || '').trim();
+      if (!repo) return { error: 'Нужен repo: owner/name или полный URL.' };
+      const url = /^https?:\/\//.test(repo) ? repo : `https://github.com/${repo}.git`;
+      const name = String(args.name || repo.replace(/\.git$/, '').split('/').pop() || 'repo');
+      const parent = path.join(WORKSPACE_ROOT, 'work');
+      const target = path.join(parent, name);
+      try {
+        fs.mkdirSync(parent, { recursive: true });
+        if (fs.existsSync(target)) {
+          return { success: true, path: target, note: 'Уже склонировано. Обнови через git_pull.' };
+        }
+        const depth = args.full ? [] : ['--depth', '1'];
+        const out = execFileSync('git', ['clone', ...depth, url, target],
+          { encoding: 'utf8', timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
+        return {
+          success: true, path: target, repo: url,
+          note: `Склонировано. Чтобы работать внутри: set_workspace {"path":"${target}"}`,
+          output: String(out || '').slice(0, 500)
+        };
+      } catch (e) {
+        return { error: 'Клонирование не удалось: ' + (e.stderr || e.message || '').toString().slice(0, 400) };
+      }
+    }
+
+    case 'git_pull': {
+      const cwdResult = gitCwd(args); if (cwdResult.error) return cwdResult;
+      return await gitLiveTool('git pull --ff-only', cwdResult, args);
+    }
+
+    case 'git_push': {
+      const cwdResult = gitCwd(args); if (cwdResult.error) return cwdResult;
+      const branch = String(args.branch || '').trim();
+      return await gitLiveTool(branch ? `git push origin ${branch}` : 'git push', cwdResult, args);
+    }
+
     case 'git_init': {
       const cwdResult = gitCwd(args); if (cwdResult.error) return cwdResult;
       return await gitLiveTool('git init', cwdResult, args);
@@ -3233,7 +3275,15 @@ function startEmbeddedServer() {
       if (url.pathname === '/api/tools' && req.method === 'GET') { json(res, 200, { success: true, tools: HUB_TOOL_DEFS.filter(t => t.id !== '_terminal').map(t => ({ ...t, installed: t.launch ? true : installed(t.cmd), version: null })) }); return; }
       if (url.pathname === '/api/info' && req.method === 'GET') {
         const state = loadHubState(); const address = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
-        json(res, 200, { home: WORKSPACE_ROOT, workspace: WORKSPACE_ROOT, platform: process.platform, mode: access.local ? 'local' : 'remote', ip: address, state, terminalAvailable: !!nodePty && !!WebSocketServer, terminalTtlMs: HUB_PTY_TTL_MS }); return;
+        // Session clock. A GitHub runner is killed at six hours with no
+        // warning, so "how long left" is the difference between finishing a
+        // task and losing it. SESSION_LIMIT_MS is set by the workflow;
+        // uptime falls back to this process's own age.
+        const limitMs = parseInt(process.env.SESSION_LIMIT_MS || '0', 10) || 0;
+        const startedMs = parseInt(process.env.SESSION_STARTED_MS || '0', 10) || (Date.now() - Math.round(process.uptime() * 1000));
+        const elapsedMs = Date.now() - startedMs;
+        json(res, 200, { home: WORKSPACE_ROOT, workspace: WORKSPACE_ROOT, platform: process.platform, mode: access.local ? 'local' : 'remote', ip: address, state, terminalAvailable: !!nodePty && !!WebSocketServer, terminalTtlMs: HUB_PTY_TTL_MS,
+          session: { startedMs, elapsedMs, limitMs, remainingMs: limitMs ? Math.max(0, limitMs - elapsedMs) : null } }); return;
       }
       if (url.pathname === '/api/path-history' && req.method === 'GET') { const state = loadHubState(); json(res, 200, { success: true, recentPaths: state.recentPaths || [] }); return; }
       if (url.pathname === '/api/path-history' && req.method === 'POST') { const body = await readJson(req); const p = hubPath(body.p); if (p.error) { json(res, 400, p); return; } const state = loadHubState(); state.recentPaths = [p.path, ...(state.recentPaths || []).filter(x => x !== p.path)].slice(0, 50); saveHubState(state); json(res, 200, { success: true, recentPaths: state.recentPaths }); return; }
@@ -3407,6 +3457,10 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент с доступом к ф�
 - sqlite_info(), sqlite_query(database, sql), sqlite_schema(database), sqlite_backup(database, destination) — локальная SQLite
 - env_list(path), env_set(key, value), env_delete(key) — .env без показа секретных значений
 - git_status(), git_diff(), git_branch(), git_log(), git_init(), git_commit(message) — Git без угадывания состояния
+- git_clone(repo), git_pull(), git_push(branch) — работа с ЛЮБЫМ репозиторием, не только текущим.
+  Ты НЕ ограничен текущей папкой: git_clone({"repo":"owner/name"}) кладёт репозиторий
+  в work/<name>, затем set_workspace({"path":"<путь из ответа>"}) делает его рабочим.
+  Учётные данные уже настроены — доступно всё, что видит токен. После правок: git_commit и git_push.
 - image_info(path), ocr_image(path), vision_analyze(path, prompt, model), vision_ui_audit(path), vision_compare(path, path2) — изображения и скриншоты
 - custom_tool_list(), custom_tool_create(name, description, code), custom_tool_inspect(name), custom_tool_run(name, tool_args), custom_tool_delete(name) — локальные само-созданные plugins
 - subagent_list(), subagent_create(name, description, prompt), subagent_task(agent, prompt), subagent_delete(name) — isolated second-opinion subagents
@@ -4500,7 +4554,7 @@ const TOOL_REQUIRED_ARGS = {
   monitor_start: ['process_name'], monitor_logs: ['id'], monitor_stop: ['id'], terminal_write: ['id'], terminal_read: ['id'], terminal_close: ['id'],
   http_request: ['url'], health_check: ['url'], websocket_test: ['url'], npm_install: ['packages'], npm_run: ['script'],
   sqlite_query: ['database', 'sql'], sqlite_backup: ['database', 'destination'], env_set: ['key', 'value'], env_delete: ['key'],
-  code_check: ['path'], git_commit: ['message'], open_url: ['url'], clipboard_write: ['text'], notify: ['content'], todo_add: ['text'], todo_done: ['id'], todo_remove: ['id'], web_search: ['query'], web_fetch: ['url'], search_text: ['query'],
+  code_check: ['path'], git_commit: ['message'], git_clone: ['repo'], open_url: ['url'], clipboard_write: ['text'], notify: ['content'], todo_add: ['text'], todo_done: ['id'], todo_remove: ['id'], web_search: ['query'], web_fetch: ['url'], search_text: ['query'],
   image_info: ['path'], ocr_image: ['path'], vision_analyze: ['path'], analyze_image: ['path'], vision_ui_audit: ['path'], vision_compare: ['path', 'path2'],
   custom_tool_create: ['name', 'description', 'code'], custom_tool_inspect: ['name'], custom_tool_run: ['name'], custom_tool_delete: ['name'],
   subagent_create: ['name', 'description', 'prompt'], subagent_task: ['agent', 'prompt'], subagent_delete: ['name'],
@@ -4635,7 +4689,7 @@ async function handleToolCall(text, writtenFiles) {
     process_start: '▶️', process_status: '📊', process_logs: '📜', process_stop: '⏹️', monitor_start: '🩺', monitor_list: '🩺', monitor_logs: '📜', monitor_stop: '⏹️',
     terminal_create: '💻', terminal_write: '⌨️', terminal_read: '📟', terminal_list: '💻', terminal_close: '⏹️',
     http_request: '🌐', health_check: '💓', websocket_test: '🔌', npm_install: '📦', npm_run: '▶️', sqlite_info: '🗃️', sqlite_query: '🗃️', sqlite_schema: '🗃️', sqlite_backup: '💾', env_list: '🔐', env_set: '🔐', env_delete: '🔐', run_tests: '🧪', run_lint: '🧹', code_check: '✅', dependency_audit: '🔐',
-    git_status: '🌿', git_diff: '🌿', git_branch: '🌿', git_log: '🌿', git_init: '🌿', git_commit: '🌿', open_url: '🌐', clipboard_read: '📋', clipboard_write: '📋', notify: '🔔',
+    git_status: '🌿', git_diff: '🌿', git_branch: '🌿', git_log: '🌿', git_init: '🌿', git_commit: '🌿', git_clone: '⬇', git_pull: '⬇', git_push: '⬆', open_url: '🌐', clipboard_read: '📋', clipboard_write: '📋', notify: '🔔',
     todo_list: '📋', todo_add: '➕', todo_done: '✅', todo_remove: '🗑️',
   };
   const icon = iconMap[toolName] || '🔧';
