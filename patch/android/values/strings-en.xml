@@ -2094,4 +2094,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
     <string name="tools">Tools</string>
     <string name="tools_description">Diagnostics, tuning, ROM utilities and the compatibility list</string>
+
+    <!-- Home status strip -->
+    <string name="status_keys">Keys</string>
+    <string name="status_firmware">Firmware</string>
+    <string name="status_driver">Driver</string>
+    <string name="status_games">Games</string>
+    <string name="status_saves">Saves</string>
 </resources>

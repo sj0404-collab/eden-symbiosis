@@ -275,6 +275,9 @@ object SharedDataDirectory {
     // here, which is why the earlier per-path fix was not enough.
 
     private const val PREF_GAME_DIRS = "SymbiosisGameDirs"
+    /// Data root the remembered list belongs to; restoring into a different
+    /// root is the only case where the memory is wanted.
+    private const val PREF_GAME_DIRS_ROOT = "SymbiosisGameDirsRoot"
 
     /** Records the current game folders so a later root switch cannot lose them. */
     fun rememberGameDirs() {
@@ -282,7 +285,10 @@ object SharedDataDirectory {
         if (dirs.isEmpty()) return
         // Newline-separated "uri\tdeepScan"; paths cannot contain a newline.
         val encoded = dirs.joinToString("\n") { "${it.uriString}\t${it.deepScan}" }
-        prefs.edit().putString(PREF_GAME_DIRS, encoded).apply()
+        prefs.edit()
+            .putString(PREF_GAME_DIRS, encoded)
+            .putString(PREF_GAME_DIRS_ROOT, configuredPath ?: "")
+            .apply()
     }
 
     /**
@@ -293,6 +299,19 @@ object SharedDataDirectory {
      *
      * @return how many folders were restored.
      */
+    /**
+     * Forgets the remembered folders.
+     *
+     * Called whenever the user edits the folder list. Without this, removing a
+     * folder only removed it from config.ini: the next start restored it from
+     * preferences, and adding it again was refused with "already added" for an
+     * entry that was not visible anywhere. A remembered value that outlives
+     * the user's decision is worse than no memory at all.
+     */
+    fun forgetGameDirs() {
+        prefs.edit().remove(PREF_GAME_DIRS).apply()
+    }
+
     fun restoreGameDirs(): Int {
         val encoded = prefs.getString(PREF_GAME_DIRS, null) ?: return 0
         val remembered = encoded.split('\n').mapNotNull { line ->
@@ -301,6 +320,13 @@ object SharedDataDirectory {
             GameDir(uri, parts.getOrNull(1)?.toBoolean() ?: false)
         }
         if (remembered.isEmpty()) return 0
+
+        // config.ini is authoritative while the data root is unchanged. Restoring
+        // on top of it resurrects folders the user deliberately removed.
+        val root = configuredPath ?: ""
+        if (prefs.getString(PREF_GAME_DIRS_ROOT, root) == root) {
+            return 0
+        }
 
         val current = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return 0
         val merged = current.toMutableList()

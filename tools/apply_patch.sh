@@ -97,6 +97,12 @@ cp "$P"/android/utils/*.kt     "$J/utils/"
 if [ -d "$P/android/ui" ]; then
   cp "$P"/android/ui/*.kt "$J/ui/"
 fi
+if [ -d "$P/android/ui/main" ]; then
+  cp "$P"/android/ui/main/*.kt "$J/ui/main/"
+fi
+if [ -d "$P/android/model" ]; then
+  cp "$P"/android/model/*.kt "$J/model/"
+fi
 
 # Resources
 cp "$P"/android/layout/*.xml   "$A/res/layout/"

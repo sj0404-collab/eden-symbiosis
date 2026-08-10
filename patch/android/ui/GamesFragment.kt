@@ -17,6 +17,12 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
+import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.yuzu.yuzu_emu.utils.SetupStatus
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.core.widget.doOnTextChanged
@@ -188,6 +194,15 @@ class GamesFragment : Fragment() {
         // and there are five here (default, land, ldrtl, w600dp, w1000dp).
         // Requiring it to be non-null broke the build the moment one variant
         // lacked the button.
+        // Status strip. Refreshed in onResume too, because keys and firmware are
+        // usually installed from another screen and the answer changes while
+        // this one is in the background.
+        binding.statusStrip?.setOnClickListener {
+            val paths = binding.statusPaths ?: return@setOnClickListener
+            paths.isVisible = !paths.isVisible
+        }
+        refreshStatusStrip()
+
         binding.toolsButton?.setOnClickListener {
             findNavController().navigate(R.id.action_global_toolsFragment)
         }
@@ -272,6 +287,7 @@ class GamesFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        if (_binding != null) refreshStatusStrip()
         if (getCurrentViewType() == GameAdapter.VIEW_TYPE_CAROUSEL) {
             (binding.gridGames as? CarouselRecyclerView)?.setupCarousel(true)
             (binding.gridGames as? CarouselRecyclerView)?.restoreScrollState(gamesViewModel.lastScrollPosition)
@@ -463,6 +479,36 @@ class GamesFragment : Fragment() {
         val imm = requireActivity()
             .getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager?
         imm?.showSoftInput(binding.searchText, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    /**
+     * Shows what is installed and where, replacing the setup wizard.
+     *
+     * Read fresh every time: the wizard's failure was reporting a remembered
+     * verdict rather than the current one.
+     */
+    private fun refreshStatusStrip() {
+        val line = binding.statusLine ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val ctx = requireContext()
+            val items = withContext(Dispatchers.IO) {
+                runCatching { SetupStatus.all(ctx) }.getOrNull()
+            } ?: return@launch
+            if (_binding == null) return@launch
+
+            line.text = items.joinToString(" · ") {
+                getString(it.labelRes) + (if (it.present) " ✓" else " ✕")
+            }
+
+            binding.statusPaths?.text = buildString {
+                for (item in items) {
+                    append(getString(item.labelRes)).append(": ")
+                        .append(item.detail).append('\n')
+                }
+                append(getString(R.string.status_saves)).append(": ")
+                    .append(SetupStatus.savesPath())
+            }
+        }
     }
 
     override fun onDestroyView() {

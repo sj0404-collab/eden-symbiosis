@@ -1427,4 +1427,11 @@
 
     <string name="tools">Инструменты</string>
     <string name="tools_description">Диагностика, настройка ФПС, работа с дампами и совместимость</string>
+
+    <!-- Home status strip -->
+    <string name="status_keys">Ключи</string>
+    <string name="status_firmware">Прошивка</string>
+    <string name="status_driver">Драйвер</string>
+    <string name="status_games">Игры</string>
+    <string name="status_saves">Сейвы</string>
 </resources>
