@@ -124,21 +124,22 @@
       onclick="refresh()">Обновить</button></h2>
   <div id="sessions"><span class="note">загрузка…</span></div>
   <div class="row" style="margin-top:10px">
-    <button class="ghost" onclick="openDesktop()">Открыть рабочий стол</button>
+    <button id="btn-desktop" onclick="openDesktop()">Открыть рабочий стол</button>
+    <button class="ghost" onclick="window.open(TERMINAL,'_blank')">Терминал + opencode</button>
   </div>
   <div class="note">
     Постоянный адрес: <code>filly-above-terrapin.ngrok-free.app</code> — не
     меняется между запусками. Пароль печатается в сводке запуска; ссылка из
     сводки подставляет его сама.
   </div>
-  <div class="warn">
-    Домен <code>filly-above-terrapin</code> сейчас занят <b>Cloud
-    Endpoint</b>&nbsp;— он отвечает сам и агент к нему привязаться не может
-    (ERR_NGROK_334). Сессия в этом случае берёт адрес, который выдаёт ngrok,
-    и он <b>печатается в сводке запуска</b>. Чтобы вернуть постоянный адрес,
-    удалите Cloud Endpoint на странице
-    <a href="https://dashboard.ngrok.com/endpoints" target="_blank">Endpoints</a>&nbsp;—
-    сам домен за вами останется.
+  <div class="note">
+    Кнопка сама запускает сессию, если её нет, ждёт туннель и открывает стол —
+    заходить на GitHub не нужно. Терминал открывается по адресу
+    <code>/term/</code> того же домена, в нём уже стоит <code>opencode</code>.
+  </div>
+  <div class="note">
+    Работа автоматически коммитится в ветку <code>session/…</code> каждые
+    2 минуты и ещё раз при завершении, поэтому обнуление сессии её не уничтожит.
   </div>
   <div class="note">
     Несколько сессий работают одновременно — переключайтесь, открывая нужную
@@ -187,7 +188,9 @@
 <script>
 const REPO = 'sj0404-collab/eden-symbiosis';
 // Reserved ngrok domain: constant across runs, unlike a TCP tunnel's address.
-const DESKTOP = 'https://filly-above-terrapin.ngrok-free.app/vnc.html?autoconnect=1&resize=remote';
+const DESKTOP_BASE = 'https://filly-above-terrapin.ngrok-free.app';
+const DESKTOP = DESKTOP_BASE + '/vnc.html?autoconnect=1&resize=remote';
+const TERMINAL = DESKTOP_BASE + '/term/';
 const API  = 'https://api.github.com/repos/' + REPO;
 
 const tok = () => localStorage.getItem('gh_token') || '';
@@ -226,12 +229,48 @@ function startSession() {
   });
 }
 
-// The address is only certain once a session reports it, so send the user to
-// the run summary when no session is live.
-function openDesktop() {
-  const live = window.__liveSession;
-  if (live) { window.open(live.html_url, '_blank'); return; }
-  window.open(DESKTOP, '_blank');
+// One button: start a session if none is running, wait for the tunnel, then
+// open the desktop. Previously this dumped the user on the GitHub run page to
+// hunt for a link, which on a phone is several taps and a lot of scrolling.
+async function tunnelReady() {
+  // A HEAD request through no-cors cannot be read, but it does distinguish
+  // "something answered" from "nothing there", which is all that is needed.
+  try {
+    await fetch(DESKTOP_BASE + '/vnc.html', { method: 'HEAD', mode: 'no-cors' });
+    return true;
+  } catch (e) { return false; }
+}
+
+async function openDesktop() {
+  const btn = document.getElementById('btn-desktop');
+  const say = t => { if (btn) btn.textContent = t; };
+
+  if (await tunnelReady()) { window.open(DESKTOP, '_blank'); say('Открыть рабочий стол'); return; }
+
+  if (!window.__liveSession) {
+    if (!tok()) { alert('Нужен токен, чтобы запустить сессию.'); return; }
+    say('Запускаю…');
+    await fetch(`${API}/actions/workflows/remote.yml/dispatches`, {
+      method: 'POST', headers: hdr(),
+      body: JSON.stringify({ ref: 'main', inputs: {
+        mode: 'web', prepare_build: 'false',
+        label: document.getElementById('label').value || 'desktop' } })
+    });
+  }
+
+  // The desktop needs a couple of minutes: apt, VNC, then the tunnel.
+  for (let i = 0; i < 60; i++) {
+    say(`Поднимаю рабочий стол… ${i * 5}s`);
+    await new Promise(r => setTimeout(r, 5000));
+    if (await tunnelReady()) {
+      say('Открыть рабочий стол');
+      window.open(DESKTOP, '_blank');
+      refresh();
+      return;
+    }
+  }
+  say('Открыть рабочий стол');
+  alert('Туннель не поднялся за 5 минут. Откройте журнал запуска — там причина.');
 }
 
 function pill(r) {

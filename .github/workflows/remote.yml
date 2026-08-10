@@ -86,6 +86,47 @@ jobs:
         if: inputs.prepare_build
         run: sdkmanager --install "ndk;28.2.13676358" "cmake;3.31.6" "build-tools;35.0.0" "platforms;android-36"
 
+      - name: Install opencode and set up autosave
+        run: |
+          # opencode is a terminal coding agent; installed here so the session
+          # opens with it ready rather than waiting on npm over a phone.
+          npm install -g opencode-ai@latest >/dev/null 2>&1 || \
+            echo "::warning::opencode install failed; the session still works without it."
+          command -v opencode >/dev/null && opencode --version || true
+
+          # The runner is destroyed when the job ends, so anything not pushed is
+          # lost. A dedicated branch keeps work safe without touching main: a
+          # commit every two minutes, and one final commit on the way out.
+          cd "$GITHUB_WORKSPACE/fork"
+          git config user.email "session@eden-symbiosis"
+          git config user.name  "Runner session"
+          BRANCH="session/${{ inputs.label }}-$(date -u +%Y%m%d-%H%M)"
+          git checkout -b "$BRANCH"
+          git push -q -u origin "$BRANCH" 2>/dev/null || true
+          echo "SESSION_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+          cat > "$HOME/autosave.sh" <<'AS'
+          #!/bin/bash
+          # Commits and pushes whatever changed, every two minutes. Quiet on
+          # purpose: a failed push must not spam a terminal someone is working
+          # in, and the next cycle retries anyway.
+          cd "$1" || exit 1
+          while true; do
+            sleep 120
+            if [ -n "$(git status --porcelain)" ]; then
+              git add -A
+              git commit -q -m "autosave $(date -u '+%H:%M:%S')" >/dev/null 2>&1
+              git push -q origin HEAD >/dev/null 2>&1
+            fi
+          done
+          AS
+          # The heredoc above is indented inside the YAML block, so every line
+          # carries leading spaces - fatal for the shebang. Remove them.
+          sed -i 's/^          //' "$HOME/autosave.sh"
+          chmod +x "$HOME/autosave.sh"
+          nohup "$HOME/autosave.sh" "$GITHUB_WORKSPACE/fork" >/tmp/autosave.log 2>&1 &
+          echo "autosave running on branch $BRANCH"
+
       - name: Write the cheat sheet
         run: |
           cat > "$HOME/README-session.txt" <<'EOF'
@@ -164,6 +205,40 @@ jobs:
             > /tmp/novnc.log 2>&1 &
           sleep 3
 
+          # A browser terminal alongside the desktop. One ngrok tunnel is all a
+          # free account gets, so both are served by nginx on the tunnelled
+          # port: / is the desktop, /term/ is the shell.
+          sudo apt-get install -y ttyd nginx >/dev/null 2>&1 || true
+          if command -v ttyd >/dev/null; then
+            nohup ttyd -p 7681 -W bash > /tmp/ttyd.log 2>&1 &
+          fi
+
+          sudo tee /etc/nginx/sites-available/session >/dev/null <<'NGINX'
+          server {
+            listen 8090;
+            location / {
+              proxy_pass http://127.0.0.1:6080;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_read_timeout 86400;
+            }
+            location /term/ {
+              proxy_pass http://127.0.0.1:7681/;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_read_timeout 86400;
+            }
+          }
+          NGINX
+          sudo sed -i 's/^          //' /etc/nginx/sites-available/session
+          sudo rm -f /etc/nginx/sites-enabled/default
+          sudo ln -sf /etc/nginx/sites-available/session /etc/nginx/sites-enabled/session
+          sudo nginx -t >/dev/null 2>&1 && sudo systemctl restart nginx || \
+            echo "::warning::nginx failed; the terminal tab will be unavailable."
+          sleep 2
+
           curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
             | sudo tar xz -C /usr/local/bin
           # Validate the token before spending time on a desktop nobody can
@@ -191,7 +266,7 @@ jobs:
           # desktop at all, so take the address ngrok hands out instead. The
           # session still works; only the address stops being predictable.
           ACTIVE_URL=""
-          nohup ngrok http 6080 --url="https://$NGROK_DOMAIN" --log stdout \
+          nohup ngrok http 8090 --url="https://$NGROK_DOMAIN" --log stdout \
             > /tmp/ngrok.log 2>&1 &
           sleep 8
 
@@ -209,7 +284,7 @@ jobs:
             echo "https://dashboard.ngrok.com/endpoints - the domain stays reserved."
             pkill -f "ngrok http" || true
             sleep 2
-            nohup ngrok http 6080 --log stdout > /tmp/ngrok.log 2>&1 &
+            nohup ngrok http 8090 --log stdout > /tmp/ngrok.log 2>&1 &
             sleep 8
           fi
 
@@ -240,9 +315,13 @@ jobs:
             echo "| Address | \`$ACTIVE_URL\` |"
             echo "| VNC password | \`$PASS\` |"
             echo ""
-            echo "The link carries the password, so it connects on its own. No app"
-            echo "to install: touch drives the pointer, and an OTG mouse and"
-            echo "keyboard behave as they would on a desktop."
+            echo "| Terminal | [$ACTIVE_URL/term/]($ACTIVE_URL/term/) |"
+            echo "| Work saved to | branch \`$SESSION_BRANCH\`, pushed every 2 min |"
+            echo ""
+            echo "The desktop link carries the password and connects on its own."
+            echo "The terminal opens in the browser too, with \`opencode\` already"
+            echo "installed - no SSH client needed. Touch drives the pointer; an"
+            echo "OTG mouse and keyboard behave as on a desktop."
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "=================================================="
@@ -333,3 +412,16 @@ jobs:
           echo "RDP is up. This job stays alive until you cancel it, or for six"
           echo "hours - whichever comes first."
           sleep 21000
+
+      - name: Save work before the runner is destroyed
+        if: always()
+        run: |
+          cd "$GITHUB_WORKSPACE/fork" || exit 0
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -q -m "final autosave $(date -u '+%Y-%m-%d %H:%M')" || true
+            git push -q origin HEAD || true
+            echo "Pushed the last changes to ${SESSION_BRANCH:-the session branch}."
+          else
+            echo "Nothing left to save."
+          fi
