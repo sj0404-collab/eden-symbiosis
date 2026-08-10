@@ -3255,7 +3255,33 @@ function startEmbeddedServer() {
       if (url.pathname === '/api/agent/run' && req.method === 'POST') {
         const body = await readJson(req); const input = String(body.input || body.message || '').trim();
         if (!input) { json(res, 400, { error: 'input is required' }); return; }
-        if (agentBusy || [...HUB_WEB_RUNS.values()].some(r => ['queued', 'running', 'awaiting_approval'].includes(r.status))) { json(res, 409, { error: 'The agent is already busy. Continue/correct the active task first.' }); return; }
+        // A run is only genuinely active while the agent loop is running. If
+        // the loop has finished but a run object was left in a live-looking
+        // state - the old agentBusy leak, a crashed run, or an approval whose
+        // browser tab went away - the entry is stale and holding the console
+        // hostage with a 409 nobody can clear. Reap those first, then decide.
+        const stale = [];
+        for (const r of HUB_WEB_RUNS.values()) {
+          if (!['queued', 'running', 'awaiting_approval'].includes(r.status)) continue;
+          if (agentBusy && WEB_AGENT_RUN_CONTEXT === r) continue;
+          r.status = 'error';
+          r.error = r.error || 'Прошлый запуск не завершился корректно и был сброшен.';
+          r.approval = null;
+          if (typeof r.resolveApproval === 'function') { try { r.resolveApproval('no'); } catch {} }
+          r.resolveApproval = null;
+          r.finishedAt = new Date().toISOString();
+          stale.push(r.id);
+        }
+        if (stale.length) auditEvent('web_run_reaped', { runs: stale });
+
+        if (agentBusy) {
+          json(res, 409, {
+            error: 'The agent is already busy. Continue/correct the active task first.',
+            hint: 'Останови текущую задачу кнопкой стоп, либо POST /api/agent/reset, если она зависла.',
+            activeRun: WEB_AGENT_RUN_CONTEXT ? WEB_AGENT_RUN_CONTEXT.id : null
+          });
+          return;
+        }
         const ensured = ensureSession(body.session || body.sessionId || activeSession || 'default');
         if (ensured.error) { json(res, 400, ensured); return; }
         const model = body.model ? safeWebModel(body.model) : null;
@@ -3267,6 +3293,32 @@ function startEmbeddedServer() {
         if (provider === 'huggingface' && !huggingFaceToken()) { json(res, 400, { error: 'Hugging Face token is not configured. Set HF_TOKEN or HUGGINGFACE_TOKEN in the Core environment; never paste it into this web console.' }); return; }
         const run = launchWebRun(ensured.name, input, model, provider); json(res, 202, { success: true, run: webRunSummary(run) }); return;
       }
+      // Escape hatch. Without it a stuck run can only be cleared by killing
+      // the process - which on a runner means losing the whole session.
+      if (url.pathname === '/api/agent/reset' && req.method === 'POST') {
+        const cleared = [];
+        abortRequested = true;
+        try { activeProviderAbort?.(); } catch {}
+        for (const r of HUB_WEB_RUNS.values()) {
+          if (!['queued', 'running', 'awaiting_approval'].includes(r.status)) continue;
+          if (typeof r.resolveApproval === 'function') { try { r.resolveApproval('no'); } catch {} }
+          r.resolveApproval = null;
+          r.approval = null;
+          r.status = 'error';
+          r.error = 'Запуск сброшен вручную через /api/agent/reset.';
+          r.finishedAt = new Date().toISOString();
+          cleared.push(r.id);
+        }
+        const wasBusy = agentBusy;
+        agentBusy = false;
+        WEB_AGENT_RUN_CONTEXT = null;
+        pendingConfirmation = null;
+        setRunPhase('user-control', 'сброшено пользователем');
+        auditEvent('web_agent_reset', { wasBusy, cleared });
+        json(res, 200, { success: true, wasBusy, cleared, message: 'Агент свободен. Можно отправлять новую задачу.' });
+        return;
+      }
+
       const runMatch = url.pathname.match(/^\/api\/agent\/run\/(run_[A-Za-z0-9-]+)(?:\/(approve|abort))?$/);
       if (runMatch) {
         const run = HUB_WEB_RUNS.get(runMatch[1]); if (!run) { json(res, 404, { error: 'Run not found or expired' }); return; }
@@ -4892,6 +4944,14 @@ async function agentLoop(userInput) {
   let finalAnswer = '';
   let lastRes = null;
 
+  // agentBusy used to be cleared only by the successful path at the very
+  // bottom of this function. Anything that threw on the way - a provider
+  // error, a bad tool result, a network drop - left it stuck at true, and
+  // from then on every /api/agent/run answered "The agent is already busy"
+  // with no way back except restarting the process. The whole body is now
+  // wrapped so the flag is released on every exit path.
+  try {
+
   for (let step = 0; step < agentStepLimit(); step++) {
     TELEMETRY.step = step + 1;
     webRunEvent('round_started', {
@@ -5064,10 +5124,16 @@ ${correction}` });
   await pluginHook('event', { type: 'task.finished', phase: TELEMETRY.phase, steps: TELEMETRY.step, toolCalls: TELEMETRY.toolCalls });
   drawTelemetryPanel(' Итог выполнения ');
   saveHistory();
-  agentBusy = false;
   setRunPhase('user-control', 'ожидание следующей команды');
   console.log(c('▣ Управление снова у вас. Можно дать следующую задачу или корректировку.', 'brightGreen'));
   return finalAnswer;
+
+  } finally {
+    // The single place the flag is released. Runs on success, on a thrown
+    // error and on an early return alike.
+    agentBusy = false;
+    activeProviderAbort = null;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════

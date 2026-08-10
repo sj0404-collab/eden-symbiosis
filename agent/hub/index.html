@@ -421,11 +421,52 @@ async function send(){
     const r = await fetch('/api/agent/run',{method:'POST',headers:H(),
       body:JSON.stringify({input:text, model:$('model').value})});
     const d = await r.json();
+    if(r.status === 409){
+      // The server thinks a task is still running while this tab has no run to
+      // stop - a reload, or a run that died without releasing the agent. Offer
+      // the way out instead of printing a dead end.
+      setBusy(false);
+      say('**Агент занят.** ' + (d.error||'') +
+          (d.activeRun ? '\n\nАктивная задача: `'+d.activeRun+'`.' : '') +
+          '\n\nЕсли задача зависла, нажми «Сбросить» — текущий запуск будет прерван.');
+      offerReset(text);
+      return;
+    }
     if(!r.ok || !d.run){ setBusy(false); say('**Ошибка:** '+(d.error||r.status)); return; }
     runId = d.run.id;
     (d.run.events||[]).forEach(applyEvent);
     timer = setInterval(poll, 1100);
   }catch(e){ setBusy(false); say('**Ошибка:** '+e.message); }
+}
+
+// Shown when the server reports "busy" but this tab holds no run to stop.
+// The button clears the server-side state and resends what was typed, so a
+// stuck agent costs one click rather than a restart of the whole session.
+function offerReset(retryText){
+  const stick = atBottom();
+  const box = document.createElement('div');
+  box.className = 'say';
+  box.style.cssText = 'border:1px solid #d29922;background:#2b2412';
+  const btn = document.createElement('button');
+  btn.textContent = 'Сбросить и повторить';
+  btn.style.cssText = 'background:#d29922;color:#111;border:0;border-radius:6px;'
+    + 'padding:8px 14px;font:inherit;font-weight:600;cursor:pointer';
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = 'Сбрасываю…';
+    try{
+      const r = await fetch('/api/agent/reset',{method:'POST',headers:H()});
+      const d = await r.json();
+      box.remove();
+      say('Сброшено' + (d.cleared && d.cleared.length ? ' (запусков: '+d.cleared.length+')' : '') + '.');
+      if (retryText){ $('q').value = retryText; send(); }
+    }catch(e){
+      btn.disabled = false; btn.textContent = 'Сбросить и повторить';
+      say('**Не удалось сбросить:** '+e.message);
+    }
+  };
+  box.appendChild(btn);
+  stream.appendChild(box);
+  if (stick) scroll();
 }
 
 async function abortRun(){
