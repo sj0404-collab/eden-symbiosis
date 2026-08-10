@@ -208,9 +208,20 @@ jobs:
           # A browser terminal alongside the desktop. One ngrok tunnel is all a
           # free account gets, so both are served by nginx on the tunnelled
           # port: / is the desktop, /term/ is the shell.
-          sudo apt-get install -y ttyd nginx >/dev/null 2>&1 || true
+          # Do not swallow this. Hiding the output meant a failed install went
+          # unnoticed and /term/ answered 404 from websockify - nginx was never
+          # running, so ngrok had been pointed at a port nothing served.
+          sudo apt-get install -y ttyd nginx
+          echo "ttyd:  $(command -v ttyd  || echo MISSING)"
+          echo "nginx: $(command -v nginx || echo MISSING)"
+
           if command -v ttyd >/dev/null; then
+            # -W allows writing; without it the terminal is read-only.
             nohup ttyd -p 7681 -W bash > /tmp/ttyd.log 2>&1 &
+            sleep 2
+            curl -sf -o /dev/null http://127.0.0.1:7681 \
+              && echo "ttyd is serving on 7681" \
+              || { echo "::warning::ttyd did not start"; tail -5 /tmp/ttyd.log; }
           fi
 
           sudo tee /etc/nginx/sites-available/session >/dev/null <<'NGINX'
@@ -235,9 +246,23 @@ jobs:
           sudo sed -i 's/^          //' /etc/nginx/sites-available/session
           sudo rm -f /etc/nginx/sites-enabled/default
           sudo ln -sf /etc/nginx/sites-available/session /etc/nginx/sites-enabled/session
-          sudo nginx -t >/dev/null 2>&1 && sudo systemctl restart nginx || \
-            echo "::warning::nginx failed; the terminal tab will be unavailable."
-          sleep 2
+          # nginx ships a default site on port 80; harmless here, but the
+          # config must still pass or the restart leaves the old one running.
+          if sudo nginx -t; then
+            sudo systemctl restart nginx
+            sleep 2
+            if curl -sf -o /dev/null http://127.0.0.1:8090/vnc.html; then
+              echo "nginx is proxying the desktop on 8090"
+            else
+              echo "::error::nginx is up but 8090 does not serve the desktop."
+              sudo ss -lntp | grep -E '8090|6080|7681' || true
+              exit 1
+            fi
+          else
+            echo "::error::nginx config rejected; the tunnel would serve nothing."
+            sudo nginx -t
+            exit 1
+          fi
 
           curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
             | sudo tar xz -C /usr/local/bin
