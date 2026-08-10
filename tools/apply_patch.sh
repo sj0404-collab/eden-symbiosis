@@ -116,8 +116,66 @@ python3 "$SELF_DIR/merge_strings.py" \
 # The Kotlin daemon is OOM-killed on a small machine; in-process is slower to
 # start but survives.
 GP="$E/src/android/gradle.properties"
-grep -q 'kotlin.compiler.execution.strategy' "$GP" 2>/dev/null || \
-  echo 'kotlin.compiler.execution.strategy=in-process' >> "$GP"
+# Gradle tuning depends on the machine, so decide it here rather than shipping
+# one setting that is wrong everywhere.
+#
+# Upstream ships deliberately tiny limits (1.2 GB heap, one worker, no
+# parallelism) so the build survives a small laptop. On a CI runner with four
+# cores and 16 GB that is the difference between ~10 and ~25 minutes, and the
+# native compile is entirely CPU-bound.
+total_kb=$(awk '/MemTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+cores=$(nproc 2>/dev/null || echo 2)
+
+python3 - "$GP" "$total_kb" "$cores" <<'PYTUNE'
+import sys
+
+gp, total_kb, cores = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+text = open(gp).read() if __import__("os").path.exists(gp) else ""
+big = total_kb >= 7_000_000  # ~7 GB and up counts as a real build machine
+
+if big:
+    # Leave headroom for the Kotlin daemon and the C++ compilers, which live
+    # outside the Gradle JVM.
+    heap = min(6144, max(2048, total_kb // 1024 // 3))
+    settings = {
+        "org.gradle.jvmargs": f"-Xms512m -Xmx{heap}m -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8",
+        "org.gradle.workers.max": str(cores),
+        "org.gradle.parallel": "true",
+        "org.gradle.caching": "true",
+        "kotlin.parallel.tasks.in.project": "true",
+        # A daemon can hold the Kotlin compiler in memory; only safe when there
+        # is enough RAM that the OOM killer will not take it out mid-build.
+        "kotlin.compiler.execution.strategy": "daemon",
+        "kotlin.daemon.jvmargs": "-Xmx2g",
+    }
+else:
+    settings = {
+        "org.gradle.workers.max": "1",
+        "org.gradle.parallel": "false",
+        # In-process, because a separate Kotlin daemon is the first thing the
+        # OOM killer takes on a 2 GB machine.
+        "kotlin.compiler.execution.strategy": "in-process",
+    }
+
+lines, seen = [], set()
+for line in text.splitlines():
+    key = line.split("=", 1)[0].strip()
+    if key in settings:
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"{key}={settings[key]}")
+    else:
+        lines.append(line)
+
+for key, value in settings.items():
+    if key not in seen:
+        lines.append(f"{key}={value}")
+
+open(gp, "w").write("\n".join(lines) + "\n")
+print(f"gradle tuned for {'a large' if big else 'a small'} machine: "
+      f"{total_kb // 1024} MB RAM, {cores} cores")
+PYTUNE
 
 changed=$(git status --porcelain | wc -l)
 echo "PATCH_APPLIED files=$changed"

@@ -119,7 +119,12 @@ jobs:
       - name: Build
         run: |
           cd eden/src/android
-          ./gradlew --no-daemon assembleLegacyDebug
+          # No --no-daemon: the daemon is what lets Gradle keep the Kotlin
+          # compiler warm, and the runner has the memory for it. Also ask
+          # CMake for every core - the native compile is the long pole and
+          # was previously limited to one worker.
+          ./gradlew assembleLegacyDebug \
+            --parallel --build-cache --max-workers="$(nproc)"
 
       - name: Verify the fixes actually shipped
         # objdump and dex strings, not a green tick: a build can succeed with
