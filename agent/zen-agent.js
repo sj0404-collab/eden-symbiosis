@@ -3213,7 +3213,18 @@ function startEmbeddedServer() {
         }
         if (runMatch[2] === 'abort' && req.method === 'POST') {
           abortRequested = true; try { activeProviderAbort?.(); } catch {}
-          if (run.resolveApproval) { const resolve = run.resolveApproval; run.resolveApproval = null; resolve('no'); }
+          if (run.resolveApproval) {
+            const resolve = run.resolveApproval;
+            run.resolveApproval = null;
+            // Clear the pending approval and leave 'awaiting_approval', or the
+            // run reports that it is still waiting on the user after they have
+            // already stopped it - and a client polling status never sees the
+            // stop take effect.
+            run.approval = null;
+            run.status = 'running';
+            resolve('no');
+          }
+          webRunEvent('abort_requested', { at: new Date().toISOString() });
           json(res, 200, { success: true }); return;
         }
       }

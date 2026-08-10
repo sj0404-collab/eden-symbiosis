@@ -38,7 +38,8 @@
         border:1px solid var(--line);border-radius:10px;padding:8px 10px;}
   button{background:var(--accent);color:#04202a;border:0;font-weight:700;}
   button.ghost{background:transparent;color:var(--dim);border:1px solid var(--line);font-weight:600;}
-  button.stop{background:transparent;color:var(--bad);border:1px solid #4a2029;font-weight:700;}
+  button.stopping{background:transparent;color:var(--bad);border:1px solid #4a2029;
+                  font-size:13px;line-height:1;}
   button:disabled{opacity:.35;}
 
   /* Thin status line: phase, round, tools, tokens, clock. */
@@ -116,7 +117,6 @@
   <span class="title"><b>Zen</b> Agent</span>
   <select id="model" style="max-width:44%"></select>
   <button class="ghost" onclick="toggleTerm()" title="Терминал">▣</button>
-  <button class="stop" id="stop" onclick="abortRun()" disabled>Стоп</button>
 </header>
 
 <div id="bar">
@@ -146,8 +146,8 @@
 
 <footer>
   <textarea id="q" rows="1" placeholder="Задача…"
-    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}"></textarea>
-  <button id="send" onclick="send()">→</button>
+    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();primary();}"></textarea>
+  <button id="send" onclick="primary()" aria-label="Отправить">→</button>
 </footer>
 
 <script>
@@ -294,9 +294,22 @@ function finishCard(key, ok, ms, preview){
 
 let runId=null, timer=null, seen=new Set(), startedAt=0, curStep=0, pending=[];
 
+/* The send control doubles as stop, the way Agent Mode does it: an arrow when
+   idle, a filled square while the agent is working. Two buttons meant the stop
+   was in the header, far from the thumb and easy to miss mid-run. */
 function setBusy(on){
-  $('send').disabled = on; $('stop').disabled = !on;
+  const b = $('send');
+  b.disabled = false;                    // never dead: it is the stop control now
+  b.textContent = on ? '\u25A0' : '\u2192';
+  b.classList.toggle('stopping', on);
+  b.setAttribute('aria-label', on ? 'Остановить' : 'Отправить');
   $('dot').className = 'dot ' + (on ? 'run' : 'ok');
+}
+
+/* Enter and the button share this, so the key cannot start a second run while
+   one is going - it stops the current one instead. */
+function primary(){
+  if (runId) abortRun(); else send();
 }
 
 function applyEvent(ev){
@@ -404,8 +417,25 @@ async function send(){
 
 async function abortRun(){
   if(!runId) return;
+  const b = $('send');
   $('phase').textContent='останавливаю';
-  try{ await fetch('/api/agent/run/'+runId+'/abort',{method:'POST',headers:H()}); }catch(e){}
+  b.disabled = true;                       // avoid a second abort mid-request
+  try{ await fetch('/api/agent/run/'+runId+'/abort',{method:'POST',headers:H()}); }
+  catch(e){ say('**Не удалось остановить:** ' + e.message); }
+  b.disabled = false;
+
+  // The agent finishes the tool in flight before it notices the abort, so the
+  // run stays active for a moment. If it has not settled, release the control
+  // anyway rather than leave a button stuck on the stop icon.
+  setTimeout(() => {
+    if (runId){
+      clearInterval(timer); timer = null;
+      setBusy(false); runId = null;
+      $('phase').textContent = 'остановлено';
+      $('dot').className = 'dot bad';
+      say('_Остановлено. Текущий инструмент мог завершиться._');
+    }
+  }, 8000);
 }
 
 function toggleTerm(){ $('drawer').classList.toggle('on'); }
