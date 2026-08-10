@@ -35,12 +35,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install build dependencies
+      - name: Fetch fmt 10 (matching Eden)
+        # Ubuntu 24.04 packages libfmt 9, but Eden's logging.h calls
+        # format.get(), which only exists from fmt 10. Building against the
+        # distribution package fails with "has no member named 'get'", so use
+        # the version Eden itself expects. Header-only, so no build step.
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y libfmt-dev
-          # Prove the header is actually present before relying on it.
-          test -f /usr/include/fmt/format.h && echo "libfmt headers ok"
+          git clone --depth 1 --branch 10.2.1 https://github.com/fmtlib/fmt.git /tmp/fmt
+          echo "FMT_INCLUDE=/tmp/fmt/include" >> "$GITHUB_ENV"
+          test -f /tmp/fmt/include/fmt/format.h && echo "fmt 10.2.1 headers ready"
 
       - name: Apply the Symbiosis patch
         run: |

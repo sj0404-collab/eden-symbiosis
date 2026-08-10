@@ -79,10 +79,11 @@ jobs:
         # These gate the build deliberately: each was written after a bug
         # reached the user, and each fails against the code that shipped it.
         run: |
-          # apt-get update first: without it the install fails on a stale index
-          # and every C++ test silently degrades to SKIP.
-          sudo apt-get update -qq
-          sudo apt-get install -y libfmt-dev
+          # Ubuntu 24.04 packages fmt 9, but Eden's logging.h calls
+          # format.get(), added in fmt 10. Build against the version Eden
+          # expects rather than the distribution one.
+          git clone --depth 1 --branch 10.2.1 https://github.com/fmtlib/fmt.git /tmp/fmt
+          export FMT_INCLUDE=/tmp/fmt/include
           curl -sL -o /tmp/kc.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
           unzip -q /tmp/kc.zip -d /tmp
           export PATH="/tmp/kotlinc/bin:$PATH"

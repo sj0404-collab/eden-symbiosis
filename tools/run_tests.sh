@@ -32,6 +32,17 @@ S="$E/src/common/symbiosis"
 [ -d "$S" ] || { echo "patched Eden not found at $E (run tools/apply_patch.sh first)" >&2; exit 1; }
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Eden's logging.h needs fmt 10 (format.get()); Ubuntu ships fmt 9. Point
+# FMT_INCLUDE at a fmt 10 checkout to build against that instead. FMT_HEADER_ONLY
+# avoids needing the compiled library at all.
+FMT_FLAGS=""
+if [ -n "${FMT_INCLUDE:-}" ]; then
+  FMT_FLAGS="-isystem $FMT_INCLUDE -DFMT_HEADER_ONLY"
+  LINK_FMT=""
+else
+  LINK_FMT="-lfmt"
+fi
 BUILD=$(mktemp -d)
 trap 'rm -rf "$BUILD"' EXIT
 
@@ -70,7 +81,8 @@ for f in "$HERE"/tests/t_*.cpp; do
   [ -e "$f" ] || continue
   n=$(basename "$f" .cpp)
   # shellcheck disable=SC2046
-  if g++ -std=c++20 -O1 -I"$E/src" -o "$BUILD/$n" "$f" $(deps_for "$n") -lfmt \
+  # shellcheck disable=SC2086
+  if g++ -std=c++20 -O1 $FMT_FLAGS -I"$E/src" -o "$BUILD/$n" "$f" $(deps_for "$n") $LINK_FMT \
        > "$BUILD/$n.err" 2>&1; then
     if out=$("$BUILD/$n" 2>&1); then
       echo "  PASS  $n — $(printf '%s' "$out" | tail -1)"; pass=$((pass+1))
