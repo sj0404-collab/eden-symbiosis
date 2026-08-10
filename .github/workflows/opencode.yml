@@ -70,10 +70,14 @@ jobs:
           BRANCH="${{ inputs.branch }}"
           # Reuse the branch if it exists, so a later session continues the
           # same work rather than scattering it across timestamped branches.
+          # Reset the branch to the checked-out commit rather than adopting its
+          # old tip: checking it out replaced the tree with a previous session's
+          # state, so new work never reached the running instance.
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-            git fetch -q origin "$BRANCH"
+            git branch -f "$BRANCH" HEAD
             git checkout -q "$BRANCH"
-            echo "continuing on existing branch $BRANCH"
+            git push -q --force-with-lease origin "$BRANCH" || git push -q -f origin "$BRANCH"
+            echo "reset $BRANCH to $(git rev-parse --short HEAD)"
           else
             git checkout -q -b "$BRANCH"
             git push -q -u origin "$BRANCH"

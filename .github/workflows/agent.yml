@@ -63,14 +63,31 @@ jobs:
           git config user.email "agent@eden-symbiosis"
           git config user.name  "Zen agent"
           BRANCH="${{ inputs.branch }}"
+
+          # Start from the checked-out commit, never from the old branch tip.
+          #
+          # Checking the branch out replaced the whole tree with whatever it
+          # held last time, so a session launched after new commits still
+          # served the agent and its hub from an older state - the UI on the
+          # tunnel stayed stale no matter what had been pushed to main.
+          #
+          # Move the branch pointer to HEAD instead: the session always runs
+          # the current code, and autosave still commits to a branch rather
+          # than to main.
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-            git fetch -q origin "$BRANCH" && git checkout -q "$BRANCH"
-            echo "continuing on $BRANCH"
+            git branch -f "$BRANCH" HEAD
+            git checkout -q "$BRANCH"
+            git push -q --force-with-lease origin "$BRANCH" || git push -q -f origin "$BRANCH"
+            echo "reset $BRANCH to $(git rev-parse --short HEAD)"
           else
             git checkout -q -b "$BRANCH" && git push -q -u origin "$BRANCH"
-            echo "created $BRANCH"
+            echo "created $BRANCH at $(git rev-parse --short HEAD)"
           fi
           echo "WORK_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+          # Prove which build is about to be served, so a stale UI is visible
+          # in the log rather than only in the browser.
+          echo "hub/index.html: $(git log -1 --format='%h %s' -- agent/hub/index.html)"
 
       - name: Clone the repositories to work on
         env:
