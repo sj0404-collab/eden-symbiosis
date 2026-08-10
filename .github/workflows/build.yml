@@ -79,11 +79,14 @@ jobs:
         # These gate the build deliberately: each was written after a bug
         # reached the user, and each fails against the code that shipped it.
         run: |
+          # apt-get update first: without it the install fails on a stale index
+          # and every C++ test silently degrades to SKIP.
+          sudo apt-get update -qq
           sudo apt-get install -y libfmt-dev
           curl -sL -o /tmp/kc.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
           unzip -q /tmp/kc.zip -d /tmp
           export PATH="/tmp/kotlinc/bin:$PATH"
-          bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden"
+          bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden" --max-skip 3
 
       - name: Check the Russian localisation
         run: |

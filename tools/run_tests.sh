@@ -15,8 +15,13 @@
 set -uo pipefail
 
 EDEN_DIR="${EDEN_DIR:-/tmp/citest}"
+# A test that will not link proves nothing. Allow a known few (they need most
+# of video_core), but fail if the number grows - that means the environment is
+# broken, not the code.
+MAX_SKIP="${MAX_SKIP:-99}"
 while [ $# -gt 0 ]; do
   case "$1" in
+    --max-skip) MAX_SKIP="$2"; shift 2 ;;
     --eden) EDEN_DIR="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -100,3 +105,8 @@ fi
 echo
 echo "passed=$pass failed=$fail skipped=$skip"
 [ "$fail" -eq 0 ] || { echo "failing:$failed"; exit 1; }
+if [ "$skip" -gt "$MAX_SKIP" ]; then
+  echo "too many tests could not be built ($skip > $MAX_SKIP): the toolchain is"
+  echo "missing something - libfmt-dev, or the patched Eden tree."
+  exit 1
+fi
