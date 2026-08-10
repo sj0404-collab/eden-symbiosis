@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Two interlocking rings: the visual metaphor for the Symbiosis layer, where two
+separately incomplete components form one working whole. Drawn as a vector so
+it stays crisp at every splash density.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="192dp"
+    android:height="192dp"
+    android:viewportWidth="192"
+    android:viewportHeight="192">
+
+    <!-- Left ring: the "primary" component -->
+    <path
+        android:pathData="M78,96m-42,0a42,42 0,1 1,84 0a42,42 0,1 1,-84 0"
+        android:strokeColor="#4DD8C0"
+        android:strokeWidth="9"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+
+    <!-- Right ring: the "donor" component, offset so the two overlap -->
+    <path
+        android:pathData="M114,96m-42,0a42,42 0,1 1,84 0a42,42 0,1 1,-84 0"
+        android:strokeColor="#7C6CF0"
+        android:strokeWidth="9"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+
+    <!-- The shared region: what the two components achieve together -->
+    <path
+        android:pathData="M96,60 C107,69 113,82 113,96 C113,110 107,123 96,132 C85,123 79,110 79,96 C79,82 85,69 96,60 Z"
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.92" />
+
+</vector>

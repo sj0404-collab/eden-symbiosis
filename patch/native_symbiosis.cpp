@@ -1,0 +1,909 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+/**
+ * @file native_symbiosis.cpp
+ * @brief JNI bridge for the Symbiosis layer: diagnostics, self-test and the
+ *        per-device tuning profile catalogue.
+ */
+
+#include <string>
+#include <vector>
+
+#include <jni.h>
+
+#include "common/android/android_common.h"
+#include "common/logging.h"
+#include "common/settings.h"
+#include "common/symbiosis/abi_shim.h"
+#include "common/symbiosis/device_profiles.h"
+#include "common/symbiosis/driver_broker.h"
+#include "common/symbiosis/memory_governor.h"
+#include "common/symbiosis/selftest.h"
+#include "common/symbiosis/auto_modes.h"
+#include "common/symbiosis/firmware_vault.h"
+#include "common/symbiosis/game_catalogue.h"
+#include "common/symbiosis/rom_tools.h"
+#include "common/symbiosis/settings_audit.h"
+#include "common/symbiosis/settings_guide.h"
+#include "common/symbiosis/save_guard.h"
+#include "common/symbiosis/mali_tuning.h"
+#include "common/symbiosis/launcher_profiles.h"
+#include "common/symbiosis/symbiosis_log.h"
+#include "common/symbiosis/thermal_monitor.h"
+
+namespace {
+
+/// Encodes profiles for Kotlin as newline-separated records with a field
+/// separator that cannot appear in the payload. Far simpler and cheaper than
+/// building JNI objects, and keeps the Kotlin side dependency-free.
+constexpr char kFieldSep = '\x1f';  // unit separator
+constexpr char kRecordSep = '\x1e'; // record separator
+
+std::string EncodeProfile(const Symbiosis::Profile& profile) {
+    std::string out;
+    out += profile.id;
+    out += kFieldSep;
+    out += profile.display_name;
+    out += kFieldSep;
+    out += profile.summary;
+    out += kFieldSep;
+    out += profile.expected_effect;
+    out += kFieldSep;
+    out += profile.works_on_stock_driver ? "1" : "0";
+    out += kFieldSep;
+    out += std::to_string(profile.tweaks.size());
+    for (const auto& tweak : profile.tweaks) {
+        out += kFieldSep;
+        out += tweak.key;
+        out += kFieldSep;
+        out += tweak.value;
+        out += kFieldSep;
+        out += tweak.reason;
+    }
+    return out;
+}
+
+Symbiosis::GpuFamily CurrentFamily() {
+    if (auto* primary = Symbiosis::GetDriverBroker().Primary()) {
+        return primary->family;
+    }
+    return Symbiosis::GpuFamily::Unknown;
+}
+
+Symbiosis::DriverOrigin CurrentOrigin() {
+    if (auto* primary = Symbiosis::GetDriverBroker().Primary()) {
+        return primary->origin;
+    }
+    return Symbiosis::DriverOrigin::System;
+}
+
+} // Anonymous namespace
+
+extern "C" {
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getDriverTopology(JNIEnv* env, jobject) {
+    return Common::Android::ToJString(env,
+                                      Symbiosis::GetDriverBroker().DescribeTopology());
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getMemoryState(JNIEnv* env, jobject) {
+    auto& governor = Symbiosis::GetMemoryGovernor();
+    governor.Initialise();
+    return Common::Android::ToJString(env, governor.DescribeState());
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getShimReport(JNIEnv* env, jobject) {
+    return Common::Android::ToJString(env, Symbiosis::GetAbiShim().DescribeResolutions());
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_runSelfTest(JNIEnv* env, jobject) {
+    const auto report = Symbiosis::RunSelfTest();
+    return Common::Android::ToJString(env, report.ToText());
+}
+
+/// Returns "passed|warned|failed" so the UI can colour the summary chip.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_runSelfTestCounts(JNIEnv* env, jobject) {
+    const auto report = Symbiosis::RunSelfTest();
+    const std::string counts = std::to_string(report.passed) + "|" +
+                               std::to_string(report.warned) + "|" +
+                               std::to_string(report.failed);
+    return Common::Android::ToJString(env, counts);
+}
+
+/// Detected GPU family as a display string.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getDetectedGpu(JNIEnv* env, jobject) {
+    std::string out = Symbiosis::ToString(CurrentFamily());
+    out += " / ";
+    out += Symbiosis::ToString(CurrentOrigin());
+    return Common::Android::ToJString(env, out);
+}
+
+/// All profiles matching the detected hardware, encoded for Kotlin.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getProfilesForDevice(JNIEnv* env, jobject) {
+    const auto profiles =
+        Symbiosis::GetProfileEngine().ProfilesFor(CurrentFamily(), CurrentOrigin());
+    std::string out;
+    for (std::size_t i = 0; i < profiles.size(); ++i) {
+        if (i > 0) {
+            out += kRecordSep;
+        }
+        out += EncodeProfile(profiles[i]);
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+/// Every profile in the catalogue, so the user can pick one for other hardware.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getAllProfiles(JNIEnv* env, jobject) {
+    const auto& profiles = Symbiosis::GetProfileEngine().All();
+    std::string out;
+    for (std::size_t i = 0; i < profiles.size(); ++i) {
+        if (i > 0) {
+            out += kRecordSep;
+        }
+        out += EncodeProfile(profiles[i]);
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+/// Human-readable explanation of a single profile.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_describeProfile(JNIEnv* env, jobject,
+                                                              jstring j_id) {
+    const std::string id = Common::Android::GetJString(env, j_id);
+    auto& engine = Symbiosis::GetProfileEngine();
+    for (const auto& profile : engine.All()) {
+        if (profile.id == id) {
+            return Common::Android::ToJString(env, engine.Describe(profile));
+        }
+    }
+    return Common::Android::ToJString(env, "");
+}
+
+/// Applies a profile's tweaks to the live settings.
+/// Returns the number of settings that were actually changed.
+JNIEXPORT jint JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_applyProfile(JNIEnv* env, jobject, jstring j_id) {
+    const std::string id = Common::Android::GetJString(env, j_id);
+
+    const Symbiosis::Profile* target = nullptr;
+    for (const auto& profile : Symbiosis::GetProfileEngine().All()) {
+        if (profile.id == id) {
+            target = &profile;
+            break;
+        }
+    }
+    if (target == nullptr) {
+        LOG_WARNING(Frontend, "[Symbiosis] applyProfile: unknown id '{}'", id);
+        return 0;
+    }
+
+    int applied = 0;
+    for (const auto& tweak : target->tweaks) {
+        // Walk the settings linkage and set by name. Unknown keys are skipped
+        // rather than treated as an error: the catalogue is shared across
+        // versions and a key may not exist in every build.
+        bool found = false;
+        for (const auto& [category, settings] : Settings::values.linkage.by_category) {
+            for (auto* setting : settings) {
+                if (setting->GetLabel() != tweak.key) {
+                    continue;
+                }
+                found = true;
+                try {
+                    // LoadString is the string-based setter every BasicSetting
+                    // implements; it parses into the setting's real type.
+                    setting->LoadString(tweak.value);
+                    applied++;
+                } catch (const std::exception& e) {
+                    LOG_WARNING(Frontend, "[Symbiosis] could not set {}={}: {}", tweak.key,
+                                tweak.value, e.what());
+                }
+                break;
+            }
+            if (found) {
+                break;
+            }
+        }
+        if (!found) {
+            LOG_DEBUG(Frontend, "[Symbiosis] setting '{}' not present in this build", tweak.key);
+        }
+    }
+
+    LOG_INFO(Frontend, "[Symbiosis] applied profile '{}': {} of {} setting(s)", id, applied,
+             target->tweaks.size());
+    return applied;
+}
+
+/// Live thermal state as "state|tempC|gpuClockPercent|summary|advice".
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getThermalState(JNIEnv* env, jobject) {
+    const auto reading = Symbiosis::GetThermalMonitor().Sample();
+    std::string out = Symbiosis::ToString(reading.state);
+    out += '|';
+    out += std::to_string(reading.max_temp_millic > 0 ? reading.max_temp_millic / 1000 : -1);
+    out += '|';
+    out += std::to_string(reading.gpu_clock_percent);
+    out += '|';
+    out += reading.summary;
+    out += '|';
+    out += reading.advice;
+    return Common::Android::ToJString(env, out);
+}
+
+
+// --- Launchers -----------------------------------------------------------
+
+/// All launcher skins encoded as records:
+/// key | name | description | perfNote | accentARGB | bgARGB | cardRadius |
+/// gridColumns | wideCards | virtualW | virtualH | colorLevels | totalColors
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getLaunchers(JNIEnv* env, jobject) {
+    std::string out;
+    const auto& all = Symbiosis::GetLauncherCatalogue().All();
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        if (i > 0) {
+            out += kRecordSep;
+        }
+        const auto& p = all[i];
+        out += p.key;
+        out += kFieldSep;
+        out += p.display_name;
+        out += kFieldSep;
+        out += p.description;
+        out += kFieldSep;
+        out += p.performance_note;
+        out += kFieldSep;
+        out += std::to_string(p.skin.accent_argb);
+        out += kFieldSep;
+        out += std::to_string(p.skin.background_argb);
+        out += kFieldSep;
+        out += std::to_string(p.skin.card_radius_dp);
+        out += kFieldSep;
+        out += std::to_string(p.skin.grid_columns);
+        out += kFieldSep;
+        out += p.skin.wide_cards ? "1" : "0";
+        out += kFieldSep;
+        out += std::to_string(static_cast<int>(p.retro.virtual_width));
+        out += kFieldSep;
+        out += std::to_string(static_cast<int>(p.retro.virtual_height));
+        out += kFieldSep;
+        out += std::to_string(static_cast<int>(p.retro.color_levels));
+        out += kFieldSep;
+        out += std::to_string(p.retro.ColorCount());
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+/// Index of the active launcher in the catalogue.
+JNIEXPORT jint JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getActiveLauncher(JNIEnv*, jobject) {
+    return static_cast<jint>(Settings::values.symbiosis_launcher.GetValue());
+}
+
+/// Selects a launcher by catalogue index and applies the settings it implies.
+JNIEXPORT jint JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_setActiveLauncher(JNIEnv*, jobject, jint index) {
+    const auto& all = Symbiosis::GetLauncherCatalogue().All();
+    if (index < 0 || static_cast<std::size_t>(index) >= all.size()) {
+        return 0;
+    }
+    Settings::values.symbiosis_launcher.SetValue(static_cast<u32>(index));
+
+    const auto& profile = all[static_cast<std::size_t>(index)];
+    int applied = 0;
+    for (const auto& [key, value] : profile.settings) {
+        for (const auto& [category, settings] : Settings::values.linkage.by_category) {
+            bool done = false;
+            for (auto* setting : settings) {
+                if (setting->GetLabel() != key) {
+                    continue;
+                }
+                try {
+                    setting->LoadString(value);
+                    applied++;
+                } catch (const std::exception& e) {
+                    Symbiosis::LogWarning(Symbiosis::LogArea::Profile,
+                                          std::string{"could not apply "} + key + ": " + e.what());
+                }
+                done = true;
+                break;
+            }
+            if (done) {
+                break;
+            }
+        }
+    }
+
+    Symbiosis::LogInfo(Symbiosis::LogArea::Profile,
+                       "launcher set to '" + profile.display_name + "' (" +
+                           std::to_string(applied) + " setting(s) applied)");
+    return applied;
+}
+
+// --- Logs ----------------------------------------------------------------
+
+/// @param area      Area index, ignored when @p allAreas is true.
+/// @param allAreas  Include every area.
+/// @param minLevel  0 debug, 1 info, 2 warning, 3 error.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getLogDump(JNIEnv* env, jobject, jint area,
+                                                         jboolean allAreas, jint minLevel) {
+    const auto area_enum = static_cast<Symbiosis::LogArea>(
+        area >= 0 && area < static_cast<jint>(Symbiosis::LogArea::COUNT) ? area : 0);
+    const auto level_enum = static_cast<Symbiosis::LogLevel>(
+        minLevel >= 0 && minLevel <= 3 ? minLevel : 0);
+    return Common::Android::ToJString(
+        env, Symbiosis::GetLog().Dump(area_enum, allAreas == JNI_TRUE, level_enum));
+}
+
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_clearLog(JNIEnv*, jobject) {
+    Symbiosis::GetLog().Clear();
+}
+
+JNIEXPORT jint JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getLogCount(JNIEnv*, jobject) {
+    return static_cast<jint>(Symbiosis::GetLog().Count());
+}
+
+/// Warning+error counts per area, joined with '|'.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getLogProblemCounts(JNIEnv* env, jobject) {
+    const auto counts = Symbiosis::GetLog().ProblemCounts();
+    std::string out;
+    for (std::size_t i = 0; i < counts.size(); ++i) {
+        if (i > 0) {
+            out += '|';
+        }
+        out += std::to_string(counts[i]);
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+// --- Thermal policy ------------------------------------------------------
+
+/// "shouldWarn|overCeiling|restMinutes|title|body" for the current reading and
+/// the user's configured thresholds.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getThermalAdvice(JNIEnv* env, jobject) {
+    const auto reading = Symbiosis::GetThermalMonitor().Sample();
+    const auto verdict = Symbiosis::EvaluateThermalPolicy(
+        reading, Settings::values.symbiosis_temp_ceiling.GetValue(),
+        Settings::values.symbiosis_temp_warning.GetValue());
+
+    std::string out;
+    out += verdict.should_warn ? "1" : "0";
+    out += '|';
+    out += verdict.over_ceiling ? "1" : "0";
+    out += '|';
+    out += std::to_string(verdict.suggested_rest_minutes);
+    out += '|';
+    out += verdict.title;
+    out += '|';
+    out += verdict.body;
+    return Common::Android::ToJString(env, out);
+}
+
+
+// --- Crash guard ---------------------------------------------------------
+
+/// True when the layer disabled itself because the previous run crashed.
+JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_isSafeMode(JNIEnv*, jobject) {
+    return Symbiosis::CrashGuard::PreviousRunCrashed() ? JNI_TRUE : JNI_FALSE;
+}
+
+/// Clears the crash marker so the layer runs again next time.
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_clearSafeMode(JNIEnv*, jobject) {
+    Symbiosis::CrashGuard::Reset();
+    Symbiosis::LogInfo(Symbiosis::LogArea::General, "safe mode cleared by user");
+}
+
+
+// --- Auto modes ----------------------------------------------------------
+
+/// Modes for this hardware:
+/// key | name | summary | detail | tempCeiling | tweakCount, then key/value/reason triples
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getAutoModes(JNIEnv* env, jobject) {
+    Symbiosis::GpuFamily family = Symbiosis::GpuFamily::Unknown;
+    Symbiosis::DriverOrigin origin = Symbiosis::DriverOrigin::System;
+    if (auto* primary = Symbiosis::GetDriverBroker().Primary()) {
+        family = primary->family;
+        origin = primary->origin;
+    }
+
+    const auto modes = Symbiosis::GetAutoModeEngine().AllFor(family, origin);
+    std::string out;
+    for (std::size_t i = 0; i < modes.size(); ++i) {
+        if (i > 0) {
+            out += kRecordSep;
+        }
+        const auto& m = modes[i];
+        out += m.key;
+        out += kFieldSep;
+        out += m.display_name;
+        out += kFieldSep;
+        out += m.summary;
+        out += kFieldSep;
+        out += m.detail;
+        out += kFieldSep;
+        out += std::to_string(m.temp_ceiling);
+        out += kFieldSep;
+        out += std::to_string(static_cast<u32>(m.mode));
+        out += kFieldSep;
+        out += std::to_string(m.tweaks.size());
+        for (const auto& t : m.tweaks) {
+            out += kFieldSep;
+            out += t.key;
+            out += kFieldSep;
+            out += t.value;
+            out += kFieldSep;
+            out += t.reason;
+        }
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+/// Applies a mode by enum value. Returns the number of settings changed.
+JNIEXPORT jint JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_applyAutoMode(JNIEnv*, jobject, jint mode) {
+    if (mode < 0 || mode >= static_cast<jint>(Symbiosis::AutoMode::COUNT)) {
+        return 0;
+    }
+    Symbiosis::GpuFamily family = Symbiosis::GpuFamily::Unknown;
+    Symbiosis::DriverOrigin origin = Symbiosis::DriverOrigin::System;
+    if (auto* primary = Symbiosis::GetDriverBroker().Primary()) {
+        family = primary->family;
+        origin = primary->origin;
+    }
+    return static_cast<jint>(Symbiosis::GetAutoModeEngine().Apply(
+        static_cast<Symbiosis::AutoMode>(mode), family, origin));
+}
+
+JNIEXPORT jint JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getCurrentAutoMode(JNIEnv*, jobject) {
+    return static_cast<jint>(Symbiosis::AutoModeEngine::Current());
+}
+
+
+// --- Mali tuning ---------------------------------------------------------
+
+/// Human-readable Mali report, or empty when this is not a Mali GPU.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getMaliReport(JNIEnv* env, jobject) {
+    const auto traits = Symbiosis::MaliTuning::Current();
+    if (traits.generation == Symbiosis::MaliGeneration::NotMali) {
+        return Common::Android::ToJString(env, "");
+    }
+    const auto advice = Symbiosis::MaliTuning::Advise(traits);
+    return Common::Android::ToJString(env, Symbiosis::MaliTuning::Describe(traits, advice));
+}
+
+/// Driver suggestions: name | description | url | isSystem | verdict
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getDriverSuggestions(JNIEnv* env, jobject) {
+    const auto suggestions = Symbiosis::SuggestDrivers(Symbiosis::MaliTuning::Current());
+    std::string out;
+    for (std::size_t i = 0; i < suggestions.size(); ++i) {
+        if (i > 0) {
+            out += kRecordSep;
+        }
+        const auto& d = suggestions[i];
+        out += d.name;
+        out += kFieldSep;
+        out += d.description;
+        out += kFieldSep;
+        out += d.url;
+        out += kFieldSep;
+        out += d.is_system ? "1" : "0";
+        out += kFieldSep;
+        out += d.verdict;
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getFirmwareAdvice(JNIEnv* env, jobject) {
+    return Common::Android::ToJString(env,
+                                      Symbiosis::FirmwareAdvice(Symbiosis::MaliTuning::Current()));
+}
+
+// --- Catalogue -----------------------------------------------------------
+
+/// Homebrew: name | author | description | url | license | isTest | usesGpu
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getHomebrew(JNIEnv* env, jobject) {
+    const auto& list = Symbiosis::GetGameCatalogue().Homebrew();
+    std::string out;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        if (i > 0) {
+            out += kRecordSep;
+        }
+        const auto& h = list[i];
+        out += h.name;
+        out += kFieldSep;
+        out += h.author;
+        out += kFieldSep;
+        out += h.description;
+        out += kFieldSep;
+        out += h.url;
+        out += kFieldSep;
+        out += h.license;
+        out += kFieldSep;
+        out += h.is_test_tool ? "1" : "0";
+        out += kFieldSep;
+        out += h.exercises_gpu ? "1" : "0";
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+/// Compatibility: title | rating | recommendedMode | note | memoryHeavy
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getCompatList(JNIEnv* env, jobject) {
+    const auto& list = Symbiosis::GetGameCatalogue().Compatibility();
+    std::string out;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        if (i > 0) {
+            out += kRecordSep;
+        }
+        const auto& c = list[i];
+        out += c.title;
+        out += kFieldSep;
+        out += Symbiosis::ToString(c.rating);
+        out += kFieldSep;
+        out += std::to_string(c.recommended_mode);
+        out += kFieldSep;
+        out += c.note;
+        out += kFieldSep;
+        out += c.memory_heavy ? "1" : "0";
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+/// Advice for one title, or empty when it is not in the database.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_lookupCompat(JNIEnv* env, jobject,
+                                                           jstring j_title) {
+    const std::string title = Common::Android::GetJString(env, j_title);
+    const auto* entry = Symbiosis::GetGameCatalogue().Lookup(title);
+    if (entry == nullptr) {
+        return Common::Android::ToJString(env, "");
+    }
+    std::string out = entry->title;
+    out += kFieldSep;
+    out += Symbiosis::ToString(entry->rating);
+    out += kFieldSep;
+    out += std::to_string(entry->recommended_mode);
+    out += kFieldSep;
+    out += entry->note;
+    out += kFieldSep;
+    out += entry->memory_heavy ? "1" : "0";
+    return Common::Android::ToJString(env, out);
+}
+
+
+// --- Utilities: firmware vault -------------------------------------------
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_analyseFirmware(JNIEnv* env, jobject,
+                                                              jstring j_dir) {
+    const std::string dir = Common::Android::GetJString(env, j_dir);
+    const auto analysis = Symbiosis::FirmwareVault::Analyse(dir);
+    // total|essential|font|applet|language|entries|prunable
+    std::string out = std::to_string(analysis.total_bytes);
+    out += '|' + std::to_string(analysis.essential_bytes);
+    out += '|' + std::to_string(analysis.font_bytes);
+    out += '|' + std::to_string(analysis.applet_bytes);
+    out += '|' + std::to_string(analysis.language_bytes);
+    out += '|' + std::to_string(analysis.entry_count);
+    out += '|' + std::to_string(analysis.prunable_bytes);
+    return Common::Android::ToJString(env, out);
+}
+
+JNIEXPORT jlong JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_pruneFirmware(JNIEnv* env, jobject, jstring j_dir,
+                                                            jboolean keep_applets,
+                                                            jboolean keep_fonts,
+                                                            jboolean keep_languages) {
+    const std::string dir = Common::Android::GetJString(env, j_dir);
+    const auto analysis = Symbiosis::FirmwareVault::Analyse(dir);
+    Symbiosis::PruneOptions options{};
+    options.keep_applets = keep_applets == JNI_TRUE;
+    options.keep_extra_fonts = keep_fonts == JNI_TRUE;
+    options.keep_extra_languages = keep_languages == JNI_TRUE;
+    return static_cast<jlong>(Symbiosis::FirmwareVault::Prune(dir, analysis, options));
+}
+
+JNIEXPORT jlong JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_estimateFirmware(JNIEnv* env, jobject,
+                                                               jstring j_dir,
+                                                               jboolean keep_applets,
+                                                               jboolean keep_fonts,
+                                                               jboolean keep_languages) {
+    const std::string dir = Common::Android::GetJString(env, j_dir);
+    const auto analysis = Symbiosis::FirmwareVault::Analyse(dir);
+    Symbiosis::PruneOptions options{};
+    options.keep_applets = keep_applets == JNI_TRUE;
+    options.keep_extra_fonts = keep_fonts == JNI_TRUE;
+    options.keep_extra_languages = keep_languages == JNI_TRUE;
+    return static_cast<jlong>(Symbiosis::FirmwareVault::EstimatePrunedSize(analysis, options));
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getCompressionNote(JNIEnv* env, jobject) {
+    return Common::Android::ToJString(env, Symbiosis::FirmwareVault::CompressionNote());
+}
+
+// --- Utilities: ROM tools ------------------------------------------------
+
+/// filename|format|health|size|validEnd|reclaimable|summary|advice
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_inspectDump(JNIEnv* env, jobject, jstring j_path) {
+    const std::string path = Common::Android::GetJString(env, j_path);
+    const auto r = Symbiosis::RomTools::Inspect(path);
+    std::string out = r.filename;
+    out += kFieldSep;
+    out += Symbiosis::ToString(r.format);
+    out += kFieldSep;
+    out += Symbiosis::ToString(r.health);
+    out += kFieldSep;
+    out += std::to_string(r.file_size);
+    out += kFieldSep;
+    out += std::to_string(r.valid_data_end);
+    out += kFieldSep;
+    out += std::to_string(r.reclaimable);
+    out += kFieldSep;
+    out += r.summary;
+    out += kFieldSep;
+    out += r.advice;
+    return Common::Android::ToJString(env, out);
+}
+
+/// Returns bytes reclaimed, or a negative code with the message in the log.
+JNIEXPORT jlong JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_trimXci(JNIEnv* env, jobject, jstring j_path) {
+    const std::string path = Common::Android::GetJString(env, j_path);
+    std::string error;
+    const u64 freed = Symbiosis::RomTools::TrimXci(path, error);
+    if (freed == 0 && !error.empty()) {
+        Symbiosis::LogWarning(Symbiosis::LogArea::General, "trim: " + error);
+    }
+    return static_cast<jlong>(freed);
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_convertXciToNsp(JNIEnv* env, jobject,
+                                                              jstring j_src, jstring j_dst) {
+    const std::string src = Common::Android::GetJString(env, j_src);
+    const std::string dst = Common::Android::GetJString(env, j_dst);
+    std::string error;
+    const u64 written = Symbiosis::RomTools::XciToNsp(src, dst, error);
+    // "bytes|error" so the UI can show the reason rather than a bare failure.
+    return Common::Android::ToJString(env, std::to_string(written) + "|" + error);
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getRomCompressionNote(JNIEnv* env, jobject) {
+    return Common::Android::ToJString(env, Symbiosis::RomTools::CompressionNote());
+}
+
+// --- Utilities: save vault -----------------------------------------------
+
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_configureVault(JNIEnv* env, jobject, jstring j_dir,
+                                                             jint keep) {
+    Symbiosis::SaveVault::Configure(Common::Android::GetJString(env, j_dir),
+                                    static_cast<u32>(keep < 1 ? 1 : keep));
+}
+
+JNIEXPORT jlong JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_backupSaves(JNIEnv* env, jobject, jstring j_save_dir,
+                                                          jstring j_title, jstring j_label) {
+    return static_cast<jlong>(Symbiosis::SaveVault::Backup(
+        Common::Android::GetJString(env, j_save_dir),
+        Common::Android::GetJString(env, j_title),
+        Common::Android::GetJString(env, j_label)));
+}
+
+/// path|titleId|label|size|timestamp|files
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_listBackups(JNIEnv* env, jobject) {
+    const auto list = Symbiosis::SaveVault::List();
+    std::string out;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        if (i > 0) {
+            out += kRecordSep;
+        }
+        const auto& b = list[i];
+        out += b.path;
+        out += kFieldSep;
+        out += b.title_id;
+        out += kFieldSep;
+        out += b.label;
+        out += kFieldSep;
+        out += std::to_string(b.size_bytes);
+        out += kFieldSep;
+        out += std::to_string(b.timestamp);
+        out += kFieldSep;
+        out += std::to_string(b.file_count);
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_restoreBackup(JNIEnv* env, jobject, jstring j_path,
+                                                            jstring j_save_dir) {
+    Symbiosis::SaveBackup backup{};
+    backup.path = Common::Android::GetJString(env, j_path);
+    std::string error;
+    const bool ok = Symbiosis::SaveVault::Restore(
+        backup, Common::Android::GetJString(env, j_save_dir), error);
+    return Common::Android::ToJString(env, ok ? "" : error);
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getVaultStatus(JNIEnv* env, jobject) {
+    return Common::Android::ToJString(env, Symbiosis::SaveVault::Describe());
+}
+
+// --- Utilities: crash analyst --------------------------------------------
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_analyseCrash(JNIEnv* env, jobject) {
+    const auto findings = Symbiosis::CrashAnalyst::Analyse();
+    return Common::Android::ToJString(env, Symbiosis::CrashAnalyst::Describe(findings));
+}
+
+JNIEXPORT jint JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_crashFindingCount(JNIEnv*, jobject) {
+    return static_cast<jint>(Symbiosis::CrashAnalyst::Analyse().size());
+}
+
+
+// --- Settings guide ------------------------------------------------------
+
+/// key | title | section | risk | what | cost | advice
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getGuideEntries(JNIEnv* env, jobject,
+                                                              jint section, jboolean all) {
+    const auto& guide = Symbiosis::GetSettingsGuide();
+    std::vector<Symbiosis::GuideEntry> list;
+    if (all == JNI_TRUE || section < 0 ||
+        section >= static_cast<jint>(Symbiosis::GuideSection::COUNT)) {
+        list = guide.All();
+    } else {
+        list = guide.ForSection(static_cast<Symbiosis::GuideSection>(section));
+    }
+
+    std::string out;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        if (i > 0) {
+            out += kRecordSep;
+        }
+        const auto& e = list[i];
+        out += e.key;
+        out += kFieldSep;
+        out += e.title;
+        out += kFieldSep;
+        out += Symbiosis::ToString(e.section);
+        out += kFieldSep;
+        out += Symbiosis::ToString(e.risk);
+        out += kFieldSep;
+        out += e.what;
+        out += kFieldSep;
+        out += e.cost;
+        out += kFieldSep;
+        out += e.advice;
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+/// Guide entry for one settings key, or empty.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getGuideForKey(JNIEnv* env, jobject,
+                                                             jstring j_key) {
+    const std::string key = Common::Android::GetJString(env, j_key);
+    const auto* e = Symbiosis::GetSettingsGuide().ForKey(key);
+    if (e == nullptr) {
+        return Common::Android::ToJString(env, "");
+    }
+    std::string out = e->key;
+    out += kFieldSep;
+    out += e->title;
+    out += kFieldSep;
+    out += Symbiosis::ToString(e->section);
+    out += kFieldSep;
+    out += Symbiosis::ToString(e->risk);
+    out += kFieldSep;
+    out += e->what;
+    out += kFieldSep;
+    out += e->cost;
+    out += kFieldSep;
+    out += e->advice;
+    return Common::Android::ToJString(env, out);
+}
+
+
+// --- Settings audit ------------------------------------------------------
+
+/// Full launch report: which settings took effect and which did not.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getSettingsAudit(JNIEnv* env, jobject) {
+    return Common::Android::ToJString(env, Symbiosis::SettingsAudit::Describe());
+}
+
+/// Structured audit for the list UI: key, requested, effective, verdict,
+/// remedy, reason, evidence, suggested value.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getAuditEntries(JNIEnv* env, jobject) {
+    const auto entries = Symbiosis::SettingsAudit::Run();
+    std::string out;
+    for (const auto& e : entries) {
+        if (!out.empty()) {
+            out += kRecordSep;
+        }
+        out += e.key;
+        out += kFieldSep;
+        out += e.requested;
+        out += kFieldSep;
+        out += e.effective;
+        out += kFieldSep;
+        out += std::to_string(static_cast<int>(e.verdict));
+        out += kFieldSep;
+        out += std::to_string(static_cast<int>(e.remedy));
+        out += kFieldSep;
+        out += e.reason;
+        out += kFieldSep;
+        out += e.evidence;
+        out += kFieldSep;
+        out += e.suggested_value;
+    }
+    return Common::Android::ToJString(env, out);
+}
+
+/// Counts by verdict: applied, substituted, ignored, unsupported, fixable.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getAuditSummary(JNIEnv* env, jobject) {
+    const auto s = Symbiosis::SettingsAudit::Summarise();
+    std::string out = std::to_string(s.applied);
+    out += kFieldSep;
+    out += std::to_string(s.substituted);
+    out += kFieldSep;
+    out += std::to_string(s.ignored);
+    out += kFieldSep;
+    out += std::to_string(s.unsupported);
+    out += kFieldSep;
+    out += std::to_string(s.fixable);
+    return Common::Android::ToJString(env, out);
+}
+
+/// True once a game has run and the GPU device has reported its facts.
+JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_auditHasData(JNIEnv*, jobject) {
+    return Symbiosis::SettingsAudit::HasData() ? JNI_TRUE : JNI_FALSE;
+}
+
+/// Applies every safe correction. Returns the number of settings changed.
+JNIEXPORT jint JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_auditAutoFix(JNIEnv*, jobject) {
+    return static_cast<jint>(Symbiosis::SettingsAudit::AutoFix());
+}
+
+/// What AutoFix would change, without changing it.
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_previewAuditAutoFix(JNIEnv* env, jobject) {
+    return Common::Android::ToJString(env, Symbiosis::SettingsAudit::PreviewAutoFix());
+}
+
+} // extern "C"

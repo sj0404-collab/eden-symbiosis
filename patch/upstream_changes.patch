@@ -1,0 +1,2625 @@
+diff --git a/src/android/app/build.gradle.kts b/src/android/app/build.gradle.kts
+index 0cef7e7..3f3cae7 100644
+--- a/src/android/app/build.gradle.kts
++++ b/src/android/app/build.gradle.kts
+@@ -219,8 +219,8 @@ android {
+         create("legacy") {
+             dimension = "version"
+             minSdk = 29
+-            manifestPlaceholders += mapOf("appNameBase" to "Eden Legacy")
+-            resValue("string", "app_name_suffixed", "Eden Legacy")
++            manifestPlaceholders += mapOf("appNameBase" to "Eden Symbiosis")
++            resValue("string", "app_name_suffixed", "Eden Symbiosis")
+             applicationId = "dev.legacy.eden_emulator"
+ 
+             externalNativeBuild {
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt
+index 7f6e793..ae46c3c 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/BooleanSetting.kt
+@@ -90,7 +90,17 @@ enum class BooleanSetting(override val key: String) : AbstractBooleanSetting {
+     GPU_LOG_MEMORY_TRACKING("gpu_log_memory_tracking"),
+     GPU_LOG_DRIVER_DEBUG("gpu_log_driver_debug"),
+ 
+-    ENABLE_QUICK_SETTINGS("enable_quick_settings");
++    ENABLE_QUICK_SETTINGS("enable_quick_settings"),
++
++    // Symbiosis
++    SYMBIOSIS_PERFORMANCE_MODE("symbiosis_performance_mode"),
++    SYMBIOSIS_MEMORY_GOVERNOR("symbiosis_memory_governor"),
++    SYMBIOSIS_VERBOSE_LOG("symbiosis_verbose_log"),
++    SYMBIOSIS_SHOW_ADVANCED("symbiosis_show_advanced"),
++    SYMBIOSIS_SHOW_MODE_OVERLAY("symbiosis_show_mode_overlay"),
++    SYMBIOSIS_FLOATING_BUTTON("symbiosis_floating_button"),
++    SYMBIOSIS_PAUSE_ON_MENU("symbiosis_pause_on_menu"),
++    SYMBIOSIS_AUDIT_BUTTON("symbiosis_audit_button");
+ 
+ //  external fun isFrameSkippingEnabled(): Boolean
+     external fun isFrameInterpolationEnabled(): Boolean
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/IntSetting.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/IntSetting.kt
+index 117336a..6cac13e 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/IntSetting.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/IntSetting.kt
+@@ -69,7 +69,23 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
+     INPUT_OVERLAY_AUTO_HIDE("input_overlay_auto_hide"),
+     OVERLAY_GRID_SIZE("overlay_grid_size"),
+     GPU_LOG_RING_BUFFER_SIZE("gpu_log_ring_buffer_size"),
+-    ANDROID_PIPELINE_WORKERS("pipeline_worker_count")
++    ANDROID_PIPELINE_WORKERS("pipeline_worker_count"),
++
++    // Symbiosis: launcher skins and the retro rendering preset.
++    SYMBIOSIS_LAUNCHER("symbiosis_launcher"),
++    SYMBIOSIS_AUTO_MODE("symbiosis_auto_mode"),
++    SYMBIOSIS_FLOATING_BUTTON_CORNER("symbiosis_floating_button_corner"),
++    SYMBIOSIS_FLOATING_BUTTON_ALPHA("symbiosis_floating_button_alpha"),
++    RETRO_WIDTH("retro_width"),
++    RETRO_HEIGHT("retro_height"),
++    RETRO_COLOR_LEVELS("retro_color_levels"),
++    RETRO_DITHER("retro_dither"),
++    RETRO_SCANLINE("retro_scanline"),
++    RETRO_LCD_GRID("retro_lcd_grid"),
++    RETRO_SATURATION("retro_saturation"),
++    RETRO_CONTRAST("retro_contrast"),
++    SYMBIOSIS_TEMP_CEILING("symbiosis_temp_ceiling"),
++    SYMBIOSIS_TEMP_WARNING("symbiosis_temp_warning")
+     ;
+ 
+     override fun getInt(needsGlobal: Boolean): Int = NativeConfig.getInt(key, needsGlobal)
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/view/SettingsItem.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/view/SettingsItem.kt
+index 63ac7b0..fb67695 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/view/SettingsItem.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/model/view/SettingsItem.kt
+@@ -573,6 +573,65 @@ abstract class SettingsItem(
+                     valuesId = R.array.rendererVSyncValues
+                 )
+             )
++            put(
++                SingleChoiceSetting(
++                    IntSetting.SYMBIOSIS_AUTO_MODE,
++                    titleId = R.string.auto_mode,
++                    descriptionId = R.string.auto_mode_description,
++                    choicesId = R.array.autoModeNames,
++                    valuesId = R.array.autoModeValues
++                )
++            )
++            put(
++                SwitchSetting(
++                    BooleanSetting.SYMBIOSIS_FLOATING_BUTTON,
++                    titleId = R.string.show_floating_button,
++                    descriptionId = R.string.show_floating_button_description
++                )
++            )
++            put(
++                SingleChoiceSetting(
++                    IntSetting.SYMBIOSIS_FLOATING_BUTTON_CORNER,
++                    titleId = R.string.floating_button_corner,
++                    choicesId = R.array.floatingCornerNames,
++                    valuesId = R.array.floatingCornerValues
++                )
++            )
++            put(
++                SliderSetting(
++                    IntSetting.SYMBIOSIS_FLOATING_BUTTON_ALPHA,
++                    titleId = R.string.floating_button_alpha,
++                    units = "%"
++                )
++            )
++            put(
++                SwitchSetting(
++                    BooleanSetting.SYMBIOSIS_PAUSE_ON_MENU,
++                    titleId = R.string.pause_on_menu,
++                    descriptionId = R.string.pause_on_menu_description
++                )
++            )
++            put(
++                SwitchSetting(
++                    BooleanSetting.SYMBIOSIS_AUDIT_BUTTON,
++                    titleId = R.string.symbiosis_audit_button,
++                    descriptionId = R.string.symbiosis_audit_button_description
++                )
++            )
++            put(
++                SwitchSetting(
++                    BooleanSetting.SYMBIOSIS_SHOW_MODE_OVERLAY,
++                    titleId = R.string.show_mode_overlay,
++                    descriptionId = R.string.show_mode_overlay_description
++                )
++            )
++            put(
++                SwitchSetting(
++                    BooleanSetting.SYMBIOSIS_SHOW_ADVANCED,
++                    titleId = R.string.show_advanced_settings,
++                    descriptionId = R.string.show_advanced_settings_description
++                )
++            )
+             put(
+                 SingleChoiceSetting(
+                     IntSetting.RENDERER_SCALING_FILTER,
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/ui/SettingsFragmentPresenter.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/ui/SettingsFragmentPresenter.kt
+index 594099f..ce51a17 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/ui/SettingsFragmentPresenter.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/ui/SettingsFragmentPresenter.kt
+@@ -250,14 +250,18 @@ class SettingsFragmentPresenter(
+             add(BooleanSetting.USE_CUSTOM_RTC.key)
+             add(LongSetting.CUSTOM_RTC.key)
+ 
+-            add(HeaderSetting(R.string.clocks))
+-            add(IntSetting.FAST_CPU_TIME.key)
+-            add(IntSetting.FAST_GPU_TIME.key)
+-            add(BooleanSetting.CORE_SYNC_CORE_SPEED.key)
+-
+-            add(IntSetting.MEMORY_LAYOUT.key)
+-            add(BooleanSetting.USE_CUSTOM_CPU_TICKS.key)
+-            add(IntSetting.CPU_TICKS.key)
++            // Clock and CPU-tick knobs are a frequent source of "it broke and
++            // I don't know why". Hidden unless the full list is requested.
++            if (BooleanSetting.SYMBIOSIS_SHOW_ADVANCED.getBoolean()) {
++                add(HeaderSetting(R.string.clocks))
++                add(IntSetting.FAST_CPU_TIME.key)
++                add(IntSetting.FAST_GPU_TIME.key)
++                add(BooleanSetting.CORE_SYNC_CORE_SPEED.key)
++
++                add(IntSetting.MEMORY_LAYOUT.key)
++                add(BooleanSetting.USE_CUSTOM_CPU_TICKS.key)
++                add(IntSetting.CPU_TICKS.key)
++            }
+ 
+             if (!NativeConfig.isPerGameConfigLoaded()) {
+                 add(HeaderSetting(R.string.network))
+@@ -270,7 +274,9 @@ class SettingsFragmentPresenter(
+     // TODO(crueter): sub-submenus?
+     private fun addGraphicsSettings(sl: ArrayList<SettingsItem>) {
+         sl.apply {
+-            // add(IntSetting.RENDERER_NVDEC_EMULATION.key)
++            // The mode selector comes first: for most people it is the only
++            // thing on this screen they need to touch.
++            add(IntSetting.SYMBIOSIS_AUTO_MODE.key)
+ 
+             add(IntSetting.RENDERER_RESOLUTION.key)
+             add(IntSetting.RENDERER_VSYNC.key)
+@@ -280,6 +286,14 @@ class SettingsFragmentPresenter(
+             }
+             add(IntSetting.RENDERER_ANTI_ALIASING.key)
+ 
++            // Everything below is hidden unless the user opts into the full
++            // list. These are accuracy trade-offs and driver workarounds whose
++            // effect is impossible to predict without reading the renderer
++            // source; the auto modes set them coherently instead.
++            if (!BooleanSetting.SYMBIOSIS_SHOW_ADVANCED.getBoolean()) {
++                return@apply
++            }
++
+             add(HeaderSetting(R.string.advanced))
+ 
+             add(IntSetting.RENDERER_ACCURACY.key)
+@@ -333,6 +347,12 @@ class SettingsFragmentPresenter(
+ 
+             add(HeaderSetting(R.string.stats_overlay_items))
+             add(BooleanSetting.SHOW_FPS.key)
++            add(BooleanSetting.SYMBIOSIS_SHOW_MODE_OVERLAY.key)
++            add(BooleanSetting.SYMBIOSIS_FLOATING_BUTTON.key)
++            add(IntSetting.SYMBIOSIS_FLOATING_BUTTON_CORNER.key)
++            add(IntSetting.SYMBIOSIS_FLOATING_BUTTON_ALPHA.key)
++            add(BooleanSetting.SYMBIOSIS_PAUSE_ON_MENU.key)
++            add(BooleanSetting.SYMBIOSIS_AUDIT_BUTTON.key)
+             add(BooleanSetting.SHOW_FRAMETIME.key)
+             add(BooleanSetting.SHOW_APP_RAM_USAGE.key)
+             add(BooleanSetting.SHOW_SYSTEM_RAM_USAGE.key)
+@@ -1263,6 +1283,13 @@ class SettingsFragmentPresenter(
+ 
+     private fun addDebugSettings(sl: ArrayList<SettingsItem>) {
+         sl.apply {
++            // The debug section can put the emulator into states that look like
++            // bugs. Keep it behind the same opt-in.
++            if (!BooleanSetting.SYMBIOSIS_SHOW_ADVANCED.getBoolean()) {
++                add(HeaderSetting(R.string.advanced))
++                add(BooleanSetting.SYMBIOSIS_SHOW_ADVANCED.key)
++                return@apply
++            }
+             add(HeaderSetting(R.string.gpu))
+ 
+             add(IntSetting.RENDERER_BACKEND.key)
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/EmulationFragment.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/EmulationFragment.kt
+index 5b93c88..c52b7fd 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/EmulationFragment.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/EmulationFragment.kt
+@@ -93,6 +93,7 @@ import org.yuzu.yuzu_emu.utils.GpuDriverHelper
+ import org.yuzu.yuzu_emu.utils.InputHandler
+ import org.yuzu.yuzu_emu.utils.Log
+ import org.yuzu.yuzu_emu.utils.NativeConfig
++import org.yuzu.yuzu_emu.utils.SymbiosisStrings
+ import org.yuzu.yuzu_emu.utils.NativeFreedrenoConfig
+ import org.yuzu.yuzu_emu.utils.ViewUtils
+ import org.yuzu.yuzu_emu.utils.ViewUtils.setVisible
+@@ -110,6 +111,23 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+     private var emulationActivity: EmulationActivity? = null
+ 
+     private var perfStatsUpdater: (() -> Unit)? = null
++
++    /**
++     * Human-readable render scale. ResolutionSetup is an enum index, not a
++     * multiplier, so it has to be mapped rather than formatted.
++     */
++    private fun resolutionLabel(index: Int): String = when (index) {
++        0 -> "0.25x"
++        1 -> "0.5x"
++        2 -> "0.75x"
++        3 -> "1x"
++        4 -> "1.25x"
++        5 -> "1.5x"
++        6 -> "2x"
++        7 -> "3x"
++        8 -> "4x"
++        else -> "?"
++    }
+     private var socUpdater: (() -> Unit)? = null
+ 
+     val handler = Handler(Looper.getMainLooper())
+@@ -713,6 +731,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+             override fun onDrawerClosed(drawerView: View) {
+                 binding.drawerLayout.setDrawerLockMode(IntSetting.LOCK_DRAWER.getInt())
+                 emulationViewModel.setDrawerOpen(false)
++                restoreFloatingButtonAlpha()
+             }
+ 
+             override fun onDrawerStateChanged(newState: Int) {
+@@ -987,6 +1006,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+                 ViewUtils.showView(binding.loadingIndicator)
+                 ViewUtils.hideView(binding.inputContainer)
+                 ViewUtils.hideView(binding.showStatsOverlayText)
++                ViewUtils.hideView(binding.buttonLaunchAudit)
+             } else if (deferGameSetupUntilStopCompletes) {
+                 if (!isAdded) {
+                     return@collect
+@@ -995,6 +1015,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+                 finishGameSetup()
+             }
+         }
++        setupFloatingMenuButton()
++        setupLaunchAuditButton()
++
+         emulationViewModel.drawerOpen.collect(viewLifecycleOwner) {
+             if (it) {
+                 binding.drawerLayout.open()
+@@ -1263,6 +1286,94 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+         }
+     }
+ 
++    /**
++     * Floating button that opens the in-game menu.
++     *
++     * Reaching the menu otherwise means the system back gesture, which is easy
++     * to overshoot mid-game and impossible to hit reliably with a controller in
++     * hand. Position and opacity are user preferences, and the whole thing can
++     * be switched off for anyone who prefers a clean screen.
++     */
++    private fun setupFloatingMenuButton() {
++        val enabled = BooleanSetting.SYMBIOSIS_FLOATING_BUTTON.getBoolean()
++        binding.buttonFloatingMenu.setVisible(enabled)
++        if (!enabled) {
++            return
++        }
++
++        val corner = IntSetting.SYMBIOSIS_FLOATING_BUTTON_CORNER.getInt()
++        (binding.buttonFloatingMenu.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
++            params.gravity = when (corner) {
++                1 -> Gravity.BOTTOM or Gravity.START
++                2 -> Gravity.TOP or Gravity.END
++                3 -> Gravity.TOP or Gravity.START
++                else -> Gravity.BOTTOM or Gravity.END
++            }
++            binding.buttonFloatingMenu.layoutParams = params
++        }
++
++        val alpha = IntSetting.SYMBIOSIS_FLOATING_BUTTON_ALPHA.getInt().coerceIn(15, 100)
++        binding.buttonFloatingMenu.alpha = alpha / 100f
++
++        binding.buttonFloatingMenu.setOnClickListener {
++            // Full opacity while the menu is open, so the button is obvious
++            // once the user is already interacting with it.
++            binding.buttonFloatingMenu.alpha = 1f
++            emulationViewModel.setDrawerOpen(true)
++        }
++
++        // Long press toggles the input overlay: a genuinely useful shortcut
++        // that otherwise needs three taps through the menu.
++        binding.buttonFloatingMenu.setOnLongClickListener {
++            val show = !BooleanSetting.SHOW_INPUT_OVERLAY.getBoolean()
++            BooleanSetting.SHOW_INPUT_OVERLAY.setBoolean(show)
++            binding.surfaceInputOverlay.setVisible(show)
++            updateQuickOverlayMenuEntry(show)
++            true
++        }
++    }
++
++    /**
++     * Wires the launch audit button.
++     *
++     * Tied to the performance overlay rather than given its own toggle: the
++     * question this answers ("the frame rate is bad, did my settings even
++     * apply?") only arises when the frame counter is on screen. A separate
++     * preference would be one more thing to discover.
++     */
++    private fun setupLaunchAuditButton() {
++        val enabled = BooleanSetting.SHOW_PERFORMANCE_OVERLAY.getBoolean() &&
++            BooleanSetting.SYMBIOSIS_AUDIT_BUTTON.getBoolean()
++        binding.buttonLaunchAudit.setVisible(enabled)
++        if (!enabled) {
++            return
++        }
++
++        // Deliberately dimmer than the menu button: this is a diagnostic, and
++        // it sits over the game.
++        binding.buttonLaunchAudit.alpha = 0.45f
++
++        binding.buttonLaunchAudit.setOnClickListener {
++            binding.buttonLaunchAudit.alpha = 1f
++            LaunchAuditDialogFragment().show(
++                childFragmentManager,
++                LaunchAuditDialogFragment.TAG
++            )
++            binding.buttonLaunchAudit.postDelayed({
++                _binding?.buttonLaunchAudit?.alpha = 0.45f
++            }, 400)
++        }
++    }
++
++    /** Restores the resting opacity once the menu closes. */
++    private fun restoreFloatingButtonAlpha() {
++        if (!BooleanSetting.SYMBIOSIS_FLOATING_BUTTON.getBoolean()) {
++            return
++        }
++        val alpha = IntSetting.SYMBIOSIS_FLOATING_BUTTON_ALPHA.getInt().coerceIn(15, 100)
++        binding.buttonFloatingMenu.alpha = alpha / 100f
++    }
++
+     private fun pauseEmulationAndCaptureFrame() {
+         emulationState.pause()
+         updatePauseMenuEntry(true)
+@@ -1420,7 +1531,21 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+ 
+     override fun onPause() {
+         if (this::emulationState.isInitialized) {
+-            if (emulationState.isRunning && emulationActivity?.isInPictureInPictureMode != true) {
++            // Two modes, because pausing is not always the right answer.
++            //
++            // Pausing is the safe default: the frame loop stops, nothing is
++            // being rendered while settings change, and battery is saved.
++            //
++            // Not pausing keeps the game running behind the menu. That matters
++            // for anything with a timer, an online session, or a cutscene the
++            // user does not want to interrupt - and it lets a setting change be
++            // seen taking effect immediately.
++            //
++            // Picture-in-picture always keeps running, as before.
++            val pauseWanted = BooleanSetting.SYMBIOSIS_PAUSE_ON_MENU.getBoolean()
++            val inPip = emulationActivity?.isInPictureInPictureMode == true
++
++            if (emulationState.isRunning && !inPip && pauseWanted) {
+                 pauseEmulationAndCaptureFrame()
+             } else {
+                 updatePausedFrameVisibility()
+@@ -1599,6 +1724,23 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+                         binding.showStatsOverlayText.setBackgroundResource(0)
+                     }
+ 
++                    // Show which mode and launcher are active. Without this
++                    // there is no way to tell from inside a game whether a
++                    // setting actually took effect.
++                    if (BooleanSetting.SYMBIOSIS_SHOW_MODE_OVERLAY.getBoolean(needsGlobal)) {
++                        val modeName = SymbiosisStrings.modeName(
++                            requireContext(),
++                            IntSetting.SYMBIOSIS_AUTO_MODE.getInt(needsGlobal),
++                            ""
++                        )
++                        if (modeName.isNotEmpty()) {
++                            if (sb.isNotEmpty()) sb.append('\n')
++                            sb.append(modeName)
++                            val res = IntSetting.RENDERER_RESOLUTION.getInt(needsGlobal)
++                            sb.append(" | ").append(resolutionLabel(res))
++                        }
++                    }
++
+                     binding.showStatsOverlayText.text = sb.toString()
+                 }
+                 perfStatsUpdateHandler.postDelayed(perfStatsRunnable!!, 800)
+@@ -1959,6 +2101,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+             ViewUtils.showView(binding.loadingIndicator)
+             ViewUtils.hideView(binding.inputContainer)
+             ViewUtils.hideView(binding.showStatsOverlayText)
++            ViewUtils.hideView(binding.buttonLaunchAudit)
+         }
+         if (this::emulationState.isInitialized) {
+             emulationState.stop()
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt
+index 37eda22..e7c5163 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt
+@@ -170,6 +170,83 @@ class HomeSettingsFragment : Fragment() {
+                     )
+                 )
+             }
++            add(
++                HomeSetting(
++                    R.string.settings_guide,
++                    R.string.settings_guide_description,
++                    R.drawable.ic_verified,
++                    {
++                        binding.root.findNavController()
++                            .navigate(R.id.action_global_guideFragment)
++                    }
++                )
++            )
++            add(
++                HomeSetting(
++                    R.string.utilities,
++                    R.string.utilities_description,
++                    R.drawable.ic_tune,
++                    {
++                        binding.root.findNavController()
++                            .navigate(R.id.action_global_utilitiesFragment)
++                    }
++                )
++            )
++            add(
++                HomeSetting(
++                    R.string.homebrew_and_compat,
++                    R.string.homebrew_description,
++                    R.drawable.ic_verified,
++                    {
++                        binding.root.findNavController()
++                            .navigate(R.id.action_global_homebrewFragment)
++                    }
++                )
++            )
++            add(
++                HomeSetting(
++                    R.string.launchers,
++                    R.string.launchers_description,
++                    R.drawable.ic_palette,
++                    {
++                        binding.root.findNavController()
++                            .navigate(R.id.action_global_launchersFragment)
++                    }
++                )
++            )
++            add(
++                HomeSetting(
++                    R.string.fps_tuning,
++                    R.string.fps_tuning_description,
++                    R.drawable.ic_speed,
++                    {
++                        binding.root.findNavController()
++                            .navigate(R.id.action_global_fpsTuningFragment)
++                    }
++                )
++            )
++            add(
++                HomeSetting(
++                    R.string.keys_and_firmware,
++                    R.string.keys_and_firmware_description,
++                    R.drawable.ic_key,
++                    {
++                        binding.root.findNavController()
++                            .navigate(R.id.action_global_keysFirmwareFragment)
++                    }
++                )
++            )
++            add(
++                HomeSetting(
++                    R.string.diagnostics,
++                    R.string.diagnostics_description,
++                    R.drawable.ic_verified,
++                    {
++                        binding.root.findNavController()
++                            .navigate(R.id.action_global_diagnosticsFragment)
++                    }
++                )
++            )
+             add(
+                 HomeSetting(
+                     R.string.multiplayer,
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/SetupFragment.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/SetupFragment.kt
+index 41f2da0..4b42e51 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/SetupFragment.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/SetupFragment.kt
+@@ -42,6 +42,7 @@ import org.yuzu.yuzu_emu.model.SetupPage
+ import org.yuzu.yuzu_emu.model.PageState
+ import org.yuzu.yuzu_emu.ui.main.MainActivity
+ import org.yuzu.yuzu_emu.utils.DirectoryInitialization
++import org.yuzu.yuzu_emu.utils.SharedDataDirectory
+ import org.yuzu.yuzu_emu.utils.NativeConfig
+ import org.yuzu.yuzu_emu.utils.ViewUtils
+ import org.yuzu.yuzu_emu.utils.ViewUtils.setVisible
+@@ -60,7 +61,143 @@ class SetupFragment : Fragment() {
+ 
+     private lateinit var pages: MutableList<SetupPage>
+ 
+-    private lateinit var pageButtonCallback: SetupCallback
++    /**
++     * Checks storage permission before opening the picker.
++     *
++     * Without All Files Access the system picker still appears, but the tree it
++     * returns cannot be written to, and the failure surfaces much later as
++     * "the folder does not work". Asking first turns that into one clear
++     * prompt.
++     */
++    private fun requestSharedFolder() {
++        if (SharedDataDirectory.needsAllFilesAccess() &&
++            !SharedDataDirectory.hasAllFilesAccess()
++        ) {
++            MessageDialogFragment.newInstance(
++                requireActivity(),
++                titleId = R.string.setup_data_folder,
++                descriptionId = R.string.need_all_files_access,
++                positiveButtonTitleId = R.string.open_settings,
++                positiveAction = {
++                    runCatching {
++                        startActivity(
++                            Intent(
++                                android.provider.Settings
++                                    .ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
++                                android.net.Uri.parse("package:${requireContext().packageName}")
++                            )
++                        )
++                    }
++                },
++                showNegativeButton = true,
++                negativeButtonTitleId = android.R.string.cancel
++            ).show(childFragmentManager, MessageDialogFragment.TAG)
++            pageButtonCallback?.onStepCompleted(R.string.setup_data_folder, false)
++            return
++        }
++        getSharedFolder.launch(null)
++    }
++
++    private fun rejectFolder(message: String) {
++        MessageDialogFragment.newInstance(
++            requireActivity(),
++            titleId = R.string.setup_data_folder,
++            descriptionString = message
++        ).show(childFragmentManager, MessageDialogFragment.TAG)
++        pageButtonCallback?.onStepCompleted(R.string.setup_data_folder, false)
++    }
++
++    private val getSharedFolder =
++        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
++            if (uri == null) {
++                pageButtonCallback?.onStepCompleted(R.string.setup_data_folder, false)
++                return@registerForActivityResult
++            }
++            runCatching {
++                requireContext().contentResolver.takePersistableUriPermission(
++                    uri,
++                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
++                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
++                )
++            }
++
++            val path = SharedDataDirectory.resolveTreePath(uri)
++            if (path == null) {
++                // Android 11+ blocks Android/data of other apps outright. Say so
++                // rather than silently accepting a folder that will not work.
++                rejectFolder(
++                    getString(
++                        R.string.shared_dir_unreachable,
++                        SharedDataDirectory.suggestedNeutralPath()
++                    )
++                )
++                return@registerForActivityResult
++            }
++
++            val check = SharedDataDirectory.inspect(requireContext(), path)
++            if (!check.ok) {
++                rejectFolder(
++                    when (check.verdict) {
++                        SharedDataDirectory.Verdict.SameAsPrivate ->
++                            getString(R.string.shared_same_as_private)
++                        SharedDataDirectory.Verdict.NotADirectory ->
++                            getString(R.string.shared_not_a_dir)
++                        SharedDataDirectory.Verdict.NoPermission ->
++                            getString(R.string.need_all_files_access)
++                        else -> getString(R.string.shared_not_writable)
++                    }
++                )
++                return@registerForActivityResult
++            }
++
++            SharedDataDirectory.configuredPath = path
++
++            // Redirect the live process, not just the preference.
++            //
++            // This is what makes one step possible. The buttons below ask the
++            // native layer whether keys and firmware exist; that question is
++            // answered against whatever directory was initialised at startup.
++            // Without redirecting first, pointing at a full Eden folder leaves
++            // those buttons reading the old empty one, and the user is told to
++            // install keys they already have.
++            val redirected = SharedDataDirectory.redirectNow(path)
++
++            if (!redirected) {
++                rejectFolder(getString(R.string.shared_redirect_failed))
++                return@registerForActivityResult
++            }
++
++            // Report what was found. A folder that turns out to be empty is
++            // not an error, but the user should learn it now rather than at
++            // the first launch attempt.
++            MessageDialogFragment.newInstance(
++                requireActivity(),
++                titleId = R.string.setup_data_folder,
++                descriptionString = getString(
++                    R.string.shared_dir_adopted,
++                    path,
++                    if (check.hasFirmware) check.firmwareFiles else 0,
++                    getString(if (check.hasKeys) R.string.yes else R.string.no),
++                    getString(if (check.hasSaves) R.string.yes else R.string.no)
++                )
++            ).show(childFragmentManager, MessageDialogFragment.TAG)
++
++            // Re-evaluate every button on this page: adopting a populated
++            // folder can complete the keys and firmware steps outright.
++            pageButtonCallback?.onStepCompleted(R.string.setup_data_folder, false)
++            checkForButtonState.invoke()
++        }
++
++
++    /**
++     * Set when a page button is pressed, so an async result can report back.
++     *
++     * Nullable rather than lateinit: the shared-folder picker can return after
++     * a configuration change, when the callback was never assigned in this
++     * instance. `lateinit` throws on that path, and the safe calls dotted
++     * around this file were only ever hiding a warning, not the exception.
++     */
++    private var pageButtonCallback: SetupCallback? = null
+ 
+     companion object {
+         const val KEY_NEXT_VISIBILITY = "NextButtonVisibility"
+@@ -151,8 +288,40 @@ class SetupFragment : Fragment() {
+                 SetupPage(
+                     R.drawable.ic_folder_open,
+                     R.string.emulator_data,
+-                    R.string.emulator_data_description,
++                    // One page, two routes: adopt an existing Eden folder, or
++                    // install keys and firmware from scratch. Splitting them
++                    // across screens made the second look like it had ignored
++                    // the first.
++                    R.string.emulator_data_description_symbiosis,
+                     mutableListOf<PageButton>().apply {
++                        add(
++                            PageButton(
++                                R.drawable.ic_folder_open,
++                                R.string.setup_data_folder,
++                                R.string.setup_choose_folder_description,
++                                {
++                                    // First button on this page deliberately.
++                                    // Pointing at an existing Eden folder here
++                                    // means firmware and keys are already
++                                    // present, so the buttons below have
++                                    // nothing left to do.
++                                    pageButtonCallback = it
++                                    requestSharedFolder()
++                                },
++                                {
++                                    if (SharedDataDirectory.isSharing(requireContext())) {
++                                        ButtonState.BUTTON_ACTION_COMPLETE
++                                    } else {
++                                        // Undefined, not incomplete: private
++                                        // storage is a perfectly good default
++                                        // and this step is optional.
++                                        ButtonState.BUTTON_ACTION_UNDEFINED
++                                    }
++                                },
++                                false,
++                                false
++                            )
++                        )
+                         add(
+                             PageButton(
+                                 R.drawable.ic_key,
+@@ -227,17 +396,20 @@ class SetupFragment : Fragment() {
+                         )
+                     },
+                     {
+-                        val file = File(
+-                            DirectoryInitialization.userDirectory + "/keys/prod.keys"
+-                        )
+-                        if (file.exists() && NativeLibrary.areKeysPresent() &&
+-                            NativeLibrary.isFirmwareAvailable() && NativeConfig.getGameDirs()
+-                                .isNotEmpty()
+-                        ) {
+-                            PageState.COMPLETE
+-                        } else {
+-                            PageState.INCOMPLETE
+-                        }
++                        // Never report COMPLETE for this page.
++                        //
++                        // SetupAdapter only builds the buttons when the page is
++                        // not already complete (SetupAdapter.kt:39). Returning
++                        // COMPLETE here produced exactly the bug the user hit:
++                        // the page rendered the word "Done!" with no buttons at
++                        // all, so the folder could not be chosen.
++                        //
++                        // Reporting INCOMPLETE keeps every button on screen and
++                        // lets each one show its own state. Nothing here is
++                        // mandatory - the warnings on Next already handle
++                        // skipping - so a page that never says "complete" costs
++                        // the user nothing.
++                        PageState.INCOMPLETE
+                     }
+                 )
+             )
+@@ -395,14 +567,14 @@ class SetupFragment : Fragment() {
+         val page = pages[binding.viewPager2.currentItem]
+         page.pageButtons?.forEach {
+             if (it.buttonState() == ButtonState.BUTTON_ACTION_COMPLETE) {
+-                pageButtonCallback.onStepCompleted(
++                pageButtonCallback?.onStepCompleted(
+                     it.titleId,
+                     pageFullyCompleted = false
+                 )
+             }
+ 
+             if (page.pageSteps() == PageState.COMPLETE) {
+-                pageButtonCallback.onStepCompleted(0, pageFullyCompleted = true)
++                pageButtonCallback?.onStepCompleted(0, pageFullyCompleted = true)
+             }
+         }
+     }
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
+index f961c5e..34f6085 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
+@@ -39,8 +39,34 @@ object DirectoryInitialization {
+ 
+     private fun initializeInternalStorage() {
+         try {
+-            userPath = YuzuApplication.appContext.getExternalFilesDir(null)!!.canonicalPath
+-            NativeLibrary.setAppDirectory(userPath!!)
++            // The whole data tree - firmware, keys, saves, shader cache, NAND -
++            // hangs off this one path. Resolving it through SharedDataDirectory
++            // lets the user point this build at an existing Eden installation
++            // instead of duplicating several hundred megabytes.
++            //
++            // resolve() falls back to private storage whenever the shared
++            // directory is missing or unwritable, so an unmounted SD card means
++            // "starts empty" rather than "will not start".
++            val resolved = SharedDataDirectory.resolve(YuzuApplication.appContext)
++                ?: YuzuApplication.appContext.getExternalFilesDir(null)!!.canonicalPath
++
++            userPath = resolved
++            NativeLibrary.setAppDirectory(resolved)
++
++            // Create the folders the emulator expects. The Android build never
++            // calls Common::FS::CreateEdenPaths(), so a data root that was not
++            // populated by this app has no load/ directory and mods placed
++            // there are silently ignored. Cheap, and idempotent.
++            SharedDataDirectory.ensureLayout(resolved)
++
++            // Claim the directory. Two emulator processes writing one shader
++            // cache and one set of saves corrupt both, silently.
++            if (SharedDataDirectory.isSharing(YuzuApplication.appContext)) {
++                val holder = SharedDataDirectory.acquireLock(resolved)
++                if (holder != null) {
++                    Log.warning("[SharedData] directory is in use by $holder")
++                }
++            }
+         } catch (e: IOException) {
+             e.printStackTrace()
+         }
+diff --git a/src/android/app/src/main/jni/CMakeLists.txt b/src/android/app/src/main/jni/CMakeLists.txt
+index 7013691..7a07c63 100644
+--- a/src/android/app/src/main/jni/CMakeLists.txt
++++ b/src/android/app/src/main/jni/CMakeLists.txt
+@@ -11,6 +11,7 @@ add_library(yuzu-android SHARED
+     native.h
+     native_config.cpp
+     native_freedreno.cpp
++    native_symbiosis.cpp
+     android_settings.cpp
+     game_metadata.cpp
+     native_log.cpp
+diff --git a/src/android/app/src/main/jni/native.cpp b/src/android/app/src/main/jni/native.cpp
+index c367a06..14c31f4 100644
+--- a/src/android/app/src/main/jni/native.cpp
++++ b/src/android/app/src/main/jni/native.cpp
+@@ -42,6 +42,13 @@ extern "C" {
+ 
+ #include "common/android/multiplayer/multiplayer.h"
+ #include "common/android/android_common.h"
++#include "common/fs/path_util.h"
++#include "common/symbiosis/abi_shim.h"
++#include "common/symbiosis/settings_audit.h"
++#include "common/symbiosis/auto_modes.h"
++#include "common/symbiosis/symbiosis_log.h"
++#include "common/symbiosis/driver_broker.h"
++#include "common/symbiosis/memory_governor.h"
+ #include "common/android/id_cache.h"
+ #include "common/dynamic_library.h"
+ #include "common/fs/path_util.h"
+@@ -185,6 +192,76 @@ void EmulationSession::InitializeGpuDriver(const std::string& hook_lib_dir,
+     }
+ 
+     m_vulkan_library = std::make_shared<Common::DynamicLibrary>(handle);
++
++    // --- Symbiosis -------------------------------------------------------
++    // The single driver above is what stock Eden lives or dies with. Ask the
++    // broker to additionally survey every other driver on the device so that
++    // capabilities missing from this one can be borrowed instead of disabled.
++    //
++    // This is strictly additive: if discovery finds nothing (or Symbiosis is
++    // disabled) m_vulkan_library keeps the handle we just opened and behaviour
++    // is byte-for-byte identical to upstream.
++    // Crash guard: if the previous run died with the layer active, start this
++    // one without it. Otherwise a fault inside the layer makes the app
++    // unlaunchable, because the layer runs long before the user can reach a
++    // setting to turn it off -- and clearing app data does not help either.
++    Symbiosis::CrashGuard::SetMarkerDirectory(
++        Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir).string());
++
++    auto symbiosis_mode =
++        static_cast<Symbiosis::SymbiosisMode>(Settings::values.symbiosis_mode.GetValue());
++    if (Symbiosis::CrashGuard::PreviousRunCrashed()) {
++        symbiosis_mode = Symbiosis::SymbiosisMode::Off;
++        LOG_WARNING(Frontend,
++                    "[Symbiosis] disabled for this run after an unclean shutdown. "
++                    "Re-enable it in Diagnostics once the game runs.");
++    }
++
++    if (symbiosis_mode != Symbiosis::SymbiosisMode::Off) {
++        Symbiosis::CrashGuard::BeginSession();
++        auto& broker = Symbiosis::GetDriverBroker();
++        broker.SetMode(symbiosis_mode);
++
++        Symbiosis::BrokerPaths paths{};
++        paths.hook_lib_dir = hook_lib_dir;
++        paths.custom_driver_dir = custom_driver_dir;
++        paths.custom_driver_name = custom_driver_name;
++        paths.file_redirect_dir = file_redirect_dir;
++        paths.extra_scan_dir = custom_driver_dir;
++
++        const std::size_t usable = broker.Discover(paths);
++        LOG_INFO(Frontend, "[Symbiosis] {} usable driver provider(s)", usable);
++        LOG_INFO(Frontend, "\n{}", broker.DescribeTopology());
++
++        // Only take over the primary handle if the broker found a provider it
++        // considers healthier than the one we opened. Never downgrade a
++        // working session.
++        if (auto* primary = broker.Primary();
++            primary != nullptr && primary->library && primary->library->IsOpen() && !handle) {
++            m_vulkan_library = primary->library;
++            LOG_INFO(Frontend, "[Symbiosis] primary driver: {}", primary->name);
++        }
++
++        Symbiosis::GetAbiShim().InstallDefaultAliases();
++    }
++
++    // Apply the selected mode before anything reads the graphics settings.
++    // Doing this on every launch guarantees a coherent configuration even if
++    // the config file was hand-edited, carried over from another build, or
++    // left half-written by an earlier crash. Custom mode is left alone.
++    {
++        Symbiosis::GpuFamily family = Symbiosis::GpuFamily::Unknown;
++        Symbiosis::DriverOrigin origin = Symbiosis::DriverOrigin::System;
++        if (auto* primary = Symbiosis::GetDriverBroker().Primary()) {
++            family = primary->family;
++            origin = primary->origin;
++        }
++        Symbiosis::GetAutoModeEngine().ApplyCurrentOnStartup(family, origin);
++    }
++
++    // Establish the memory budget before any GPU allocation happens.
++    Symbiosis::GetMemoryGovernor().Initialise();
++    LOG_INFO(Frontend, "\n{}", Symbiosis::GetMemoryGovernor().DescribeState());
+ #endif
+ }
+ 
+@@ -316,6 +393,11 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
+         .program_index = static_cast<s32>(program_index),
+     };
+ 
++    // Start a fresh audit for this game. Findings from a previous title would
++    // be misleading here: the settings may have changed, and per-game config
++    // means the effective values differ per title.
++    Symbiosis::SettingsAudit::BeginRun(filepath);
++
+     m_load_result = m_system.Load(EmulationSession::GetInstance().Window(), filepath, params);
+     if (m_load_result != Core::SystemResultStatus::Success) {
+         return m_load_result;
+@@ -339,6 +421,15 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
+ void EmulationSession::ShutdownEmulation() {
+     std::scoped_lock lock(m_mutex);
+ 
++    // Reaching here means the session ended in an orderly way, so clear the
++    // crash marker. Anything that kills the process before this point leaves
++    // the marker behind and the layer sits out the next run.
++    Symbiosis::CrashGuard::EndSession();
++
++    // Drop every memory donor: the caches they point at are about to be
++    // destroyed, and a stale donor is a dangling call.
++    Symbiosis::GetMemoryGovernor().ClearDonors();
++
+     if (m_next_program_index != -1) {
+         ChangeProgram(m_next_program_index);
+         m_next_program_index = -1;
+@@ -1231,6 +1322,12 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_run(JNIEnv* env, jobject jobj, jstrin
+ 
+     const Core::SystemResultStatus result{
+         RunEmulation(path, j_program_index, j_frontend_initiated)};
++
++    // Record the outcome before acting on it. A launch that fails here is the
++    // "started, black screen, dropped back to the list" case, and the status is
++    // otherwise consumed by a dialog that only distinguishes two situations.
++    Symbiosis::SettingsAudit::ReportRunEnded(static_cast<u32>(result), {});
++
+     if (result != Core::SystemResultStatus::Success) {
+         env->CallStaticVoidMethod(Common::Android::GetNativeLibraryClass(),
+                                   Common::Android::GetExitEmulationActivity(),
+diff --git a/src/android/app/src/main/res/drawable/ic_launcher_foreground.png b/src/android/app/src/main/res/drawable/ic_launcher_foreground.png
+deleted file mode 100644
+index 53f1cac..0000000
+Binary files a/src/android/app/src/main/res/drawable/ic_launcher_foreground.png and /dev/null differ
+diff --git a/src/android/app/src/main/res/layout/fragment_emulation.xml b/src/android/app/src/main/res/layout/fragment_emulation.xml
+index db363bc..beda20b 100644
+--- a/src/android/app/src/main/res/layout/fragment_emulation.xml
++++ b/src/android/app/src/main/res/layout/fragment_emulation.xml
+@@ -194,6 +194,43 @@
+                 android:shadowRadius="3"
+                 tools:ignore="RtlHardcoded" />
+ 
++            <!--
++            Launch audit button. Placed next to the performance overlay because
++            that is where the user is looking when the frame rate disappoints,
++            and the audit is the answer to "why". Visibility follows the
++            performance overlay: without the frame counter there is nothing to
++            prompt the question.
++            -->
++            <com.google.android.material.floatingactionbutton.FloatingActionButton
++                android:id="@+id/button_launch_audit"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_gravity="top|start"
++                android:layout_margin="8dp"
++                android:contentDescription="@string/audit_title"
++                android:src="@drawable/ic_audit"
++                android:visibility="gone"
++                app:fabSize="mini"
++                app:tint="@android:color/white" />
++
++            <!--
++            Floating menu button. Sits inside overlay_container so it shares the
++            same coordinate space as the input overlay and cannot end up behind
++            the game surface. Gravity and alpha are set from code because both
++            are user preferences.
++            -->
++            <com.google.android.material.floatingactionbutton.FloatingActionButton
++                android:id="@+id/button_floating_menu"
++                android:layout_width="wrap_content"
++                android:layout_height="wrap_content"
++                android:layout_gravity="bottom|end"
++                android:layout_margin="16dp"
++                android:contentDescription="@string/floating_button"
++                android:src="@drawable/ic_menu"
++                android:visibility="gone"
++                app:fabSize="mini"
++                app:tint="@android:color/white" />
++
+         </FrameLayout>
+ 
+     </androidx.coordinatorlayout.widget.CoordinatorLayout>
+diff --git a/src/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml b/src/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+index 5ed0a2d..10bc7a5 100644
+--- a/src/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
++++ b/src/android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+@@ -2,4 +2,5 @@
+ <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+     <background android:drawable="@color/ic_launcher_background"/>
+     <foreground android:drawable="@drawable/ic_launcher_foreground"/>
++    <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>
+ </adaptive-icon>
+diff --git a/src/android/app/src/main/res/navigation/home_navigation.xml b/src/android/app/src/main/res/navigation/home_navigation.xml
+index dd567ab..11e587e 100644
+--- a/src/android/app/src/main/res/navigation/home_navigation.xml
++++ b/src/android/app/src/main/res/navigation/home_navigation.xml
+@@ -99,6 +99,59 @@
+         android:id="@+id/installableFragment"
+         android:name="org.yuzu.yuzu_emu.fragments.InstallableFragment"
+         android:label="InstallableFragment" />
++    <!-- Symbiosis screens -->
++    <fragment
++        android:id="@+id/fpsTuningFragment"
++        android:name="org.yuzu.yuzu_emu.fragments.FpsTuningFragment"
++        android:label="FpsTuningFragment" />
++    <fragment
++        android:id="@+id/diagnosticsFragment"
++        android:name="org.yuzu.yuzu_emu.fragments.DiagnosticsFragment"
++        android:label="DiagnosticsFragment" />
++    <fragment
++        android:id="@+id/keysFirmwareFragment"
++        android:name="org.yuzu.yuzu_emu.fragments.KeysFirmwareFragment"
++        android:label="KeysFirmwareFragment" />
++    <fragment
++        android:id="@+id/guideFragment"
++        android:name="org.yuzu.yuzu_emu.fragments.GuideFragment"
++        android:label="GuideFragment" />
++    <action
++        android:id="@+id/action_global_guideFragment"
++        app:destination="@id/guideFragment" />
++    <fragment
++        android:id="@+id/utilitiesFragment"
++        android:name="org.yuzu.yuzu_emu.fragments.UtilitiesFragment"
++        android:label="UtilitiesFragment" />
++    <action
++        android:id="@+id/action_global_utilitiesFragment"
++        app:destination="@id/utilitiesFragment" />
++    <fragment
++        android:id="@+id/homebrewFragment"
++        android:name="org.yuzu.yuzu_emu.fragments.HomebrewFragment"
++        android:label="HomebrewFragment" />
++    <action
++        android:id="@+id/action_global_homebrewFragment"
++        app:destination="@id/homebrewFragment" />
++    <fragment
++        android:id="@+id/launchersFragment"
++        android:name="org.yuzu.yuzu_emu.fragments.LaunchersFragment"
++        android:label="LaunchersFragment" />
++    <action
++        android:id="@+id/action_global_launchersFragment"
++        app:destination="@id/launchersFragment" />
++    <action
++        android:id="@+id/action_global_fpsTuningFragment"
++        app:destination="@id/fpsTuningFragment" />
++    <action
++        android:id="@+id/action_global_diagnosticsFragment"
++        app:destination="@id/diagnosticsFragment" />
++    <action
++        android:id="@+id/action_global_keysFirmwareFragment"
++        app:destination="@id/keysFirmwareFragment" />
++    <action
++        android:id="@+id/action_global_installableFragment"
++        app:destination="@id/installableFragment" />
+     <fragment
+         android:id="@+id/driverManagerFragment"
+         android:name="org.yuzu.yuzu_emu.fragments.DriverManagerFragment"
+diff --git a/src/android/app/src/main/res/values-ru/strings.xml b/src/android/app/src/main/res/values-ru/strings.xml
+index 3dbeb6f..e55489b 100644
+--- a/src/android/app/src/main/res/values-ru/strings.xml
++++ b/src/android/app/src/main/res/values-ru/strings.xml
+@@ -252,7 +252,7 @@
+     <string name="install_prod_keys_warning_help">https://yuzu-mirror.github.io/help/quickstart/#guide-introduction</string>
+     <string name="install_firmware_warning">Пропустить добавление прошивки?</string>
+     <string name="emulator_data">Настройка данных эмулятора</string>
+-    <string name="emulator_data_description">Ключи необходимы для работы эмулятора, а прошивка рекомендуется и требуется для использования апплета QLaunch</string>
++    <string name="emulator_data_description">Выберите, где хранить данные, затем добавьте ключи. Ключи обязательны, прошивка рекомендуется и нужна для апплета QLaunch.</string>
+     <string name="permissions">Предоставить разрешения</string>
+     <string name="permissions_description">Предоставить дополнительные разрешения для использования определённых функций эмулятора</string>
+     <string name="install_firmware_warning_description">Многим играм требуется доступ к прошивке для правильной работы.</string>
+@@ -1175,4 +1175,240 @@
+     <string name="add_folders">Добавить папку</string>
+     <string name="percent">%1$d %%</string>
+ 
++
++    <!-- Symbiosis: слой совместимости, режимы, лаунчеры и утилиты -->
++    <string name="actions">Действия</string>
++    <string name="after_slimming">Станет: %1$s (экономия %2$s)</string>
++    <string name="apply_profile">Применить</string>
++    <string name="apply_recommended_mode">Применить рекомендованный режим</string>
++    <string name="auto_mode">Режим</string>
++    <string name="auto_mode_description">Настраивает всё сразу под одну цель. Применяется в момент выбора \u2014 ваши последующие ручные правки сохраняются.</string>
++    <string name="available_profiles">Доступные профили</string>
++    <string name="back_up_now">Создать копию</string>
++    <string name="backed_up">Сохранено %1$s</string>
++    <string name="choose_file">Выбрать файл</string>
++    <string name="color_depth">Глубина цвета: %1$d уровней на канал (%2$d цветов)</string>
++    <string name="color_depth_full">Глубина цвета: полная (без квантования)</string>
++    <string name="compat_note">Только советы. Коммерческие игры не входят в приложение, не скачиваются и не имеют здесь ссылок: дампы своих игр вы делаете сами и добавляете из любой папки на устройстве.</string>
++    <string name="contrast_pct">Контраст: %1$d%%</string>
++    <string name="conversion_failed">Конвертация не удалась.</string>
++    <string name="convert_to_nsp">Конвертировать в NSP</string>
++    <string name="converted_to">Записано %1$s</string>
++    <string name="converting">Конвертация…</string>
++    <string name="could_not_inspect">Не удалось прочитать этот файл.</string>
++    <string name="custom_retro_hint">Каждое значение напрямую идёт в шейдер вывода. Поставьте разрешение 0, чтобы оставить исходное.</string>
++    <string name="custom_retro_settings">Свой рендеринг</string>
++    <string name="detected_hardware">Обнаружено оборудование</string>
++    <string name="diagnostics">Диагностика</string>
++    <string name="diagnostics_description">Проверка драйверов, памяти и ключей на этом устройстве</string>
++    <string name="diagnostics_intro">Выполняет те же проверки, что и тестовый homebrew, не выходя из приложения.</string>
++    <string name="dithering_pct">Дизеринг: %1$d%%</string>
++    <string name="driver_topology">Схема драйверов</string>
++    <string name="firmware_help">Справка по ключам и прошивке</string>
++    <string name="firmware_installed">Установлена</string>
++    <string name="firmware_installed_version">Установлена (%1$s)</string>
++    <string name="firmware_missing">Не установлена</string>
++    <string name="fps_tuning">Настройка ФПС</string>
++    <string name="fps_tuning_description">Профили производительности под устройство и драйвер</string>
++    <string name="freed_space">Освобождено %1$s</string>
++    <string name="hardware_not_detected_yet">Пока не определено</string>
++    <string name="homebrew_and_compat">Homebrew и совместимость</string>
++    <string name="homebrew_description">Бесплатный homebrew для проверки и чего ждать от игр</string>
++    <string name="homebrew_note">Программы со свободной лицензией, опубликованные их авторами. Ключи шифрования им не нужны, поэтому это самый быстрый способ убедиться, что эмулятор работает на устройстве. Открывает официальную страницу релиза — ничего не скачивается автоматически.</string>
++    <string name="intent_all">Все</string>
++    <string name="intent_balanced">Баланс</string>
++    <string name="intent_battery">Батарея</string>
++    <string name="intent_max_fps">Максимум ФПС</string>
++    <string name="intent_quality">Качество</string>
++    <string name="keep_applets">Оставить апплеты (браузер, альбом, интерфейс контроллера)</string>
++    <string name="keep_extra_fonts">Оставить все шрифты (иероглифические занимают много)</string>
++    <string name="keep_extra_languages">Оставить дополнительные языки</string>
++    <string name="keys_and_firmware">Ключи и прошивка</string>
++    <string name="keys_and_firmware_description">Установка и проверка ключей шифрования и прошивки</string>
++    <string name="keys_install_failed">Не удалось скопировать файл</string>
++    <string name="launch_game_to_detect">Запустите игру один раз, чтобы определить GPU и драйвер.</string>
++    <string name="launcher_custom_selected">Свой режим — настройте ползунки ниже</string>
++    <string name="launcher_retro_selected">Выбран: %1$s — вывод в %2$dx%3$d</string>
++    <string name="launcher_selected">Выбран: %1$s</string>
++    <string name="launchers">Лаунчеры</string>
++    <string name="launchers_description">Оформление и ретро-пресеты рендеринга</string>
++    <string name="launchers_intro">Лаунчер меняет внешний вид приложения, а для ретро-пресетов — и то, как выводится игра: меньше разрешение, меньше цветов и дизеринг как на старом железе.</string>
++    <string name="layer_log">Журнал слоя</string>
++    <string name="lcd_grid_pct">Сетка ЖК: %1$d%%</string>
++    <string name="mali_report">Отчёт по Mali GPU</string>
++    <string name="memory_heavy">требовательна к памяти</string>
++    <string name="memory_state">Состояние памяти</string>
++    <string name="mode_applied_for">Режим применён для %1$s</string>
++    <string name="mode_balanced">Сбалансированный (рекомендуется)</string>
++    <string name="mode_compatibility">Совместимость</string>
++    <string name="mode_custom">Свой (настройки задаёте сами)</string>
++    <string name="mode_performance">Производительность</string>
++    <string name="mode_quality">Качество</string>
++    <string name="mode_stability">Стабильность</string>
++    <string name="mode_turbo">Турбо (сильно греется)</string>
++    <string name="n_failed">ошибок: %1$d</string>
++    <string name="n_passed">успешно: %1$d</string>
++    <string name="n_warnings">предупреждений: %1$d</string>
++    <string name="needs_custom_driver_short">Нужен свой драйвер</string>
++    <string name="no_backups">Копий пока нет.</string>
++    <string name="no_browser">Браузер не найден</string>
++    <string name="no_firmware_installed">Прошивка не установлена.</string>
++    <string name="no_keys_needed">ключи не нужны</string>
++    <string name="no_saves_found">Сейвы для копирования не найдены.</string>
++    <string name="nothing_to_trim">Обрезать нечего.</string>
++    <string name="open_release_page">Открыть страницу релиза</string>
++    <string name="path_not_accessible">Файл лежит там, куда утилиты не могут обратиться напрямую. Перенесите его во внутреннюю память или в корень SD-карты и попробуйте снова.</string>
++    <string name="performance_mode_desc">Разрешает более высокую длительную нагрузку и предупреждает, когда устройству пора дать отдохнуть.</string>
++    <string name="prod_keys">Ключи шифрования</string>
++    <string name="profile_applied">Применено настроек: %1$d</string>
++    <string name="profile_applied_nothing">Ничего не изменилось — эти настройки уже активны</string>
++    <string name="profiles_matched_note">Профили ниже отфильтрованы под этот GPU и драйвер.</string>
++    <string name="reload_keys">Перезагрузить ключи</string>
++    <string name="requires_custom_driver">Требует сторонний драйвер, который это устройство установить не может</string>
++    <string name="reset_to_native">Сбросить к исходному</string>
++    <string name="restore">Восстановить</string>
++    <string name="restored_ok">Восстановлено. Копия предыдущего состояния сохранена.</string>
++    <string name="safe_mode_active">Безопасный режим</string>
++    <string name="safe_mode_cleared">Слой заработает при следующем запуске игры</string>
++    <string name="safe_mode_explain">Прошлый сеанс завершился аварийно, поэтому слой Symbiosis отключён на этот запуск. Эмулятор работает в стандартном режиме.</string>
++    <string name="safe_mode_reenable">Включить слой снова</string>
++    <string name="saturation_pct">Насыщенность: %1$d%%</string>
++    <string name="scanlines_pct">Строки развёртки: %1$d%%</string>
++    <string name="show_advanced_settings">Показать все настройки</string>
++    <string name="show_advanced_settings_description">Открывает полный список от разработчиков оригинала, включая хаки точности и отладку. Выбранный режим перезапишет большинство из них.</string>
++    <string name="show_details">Показать подробности</string>
++    <string name="show_profiles_all_hardware">Показать профили для другого железа</string>
++    <string name="slim_down">Урезать</string>
++    <string name="slim_down_warning">Это безвозвратно удалит снятое галочками содержимое прошивки. Игры, которым оно нужно, перестанут работать, пока вы не установите прошивку заново. Ключи и сейвы не затрагиваются.</string>
++    <string name="symbol_borrowing">Заимствование символов</string>
++    <string name="tab_compatibility">Совместимость</string>
++    <string name="tab_homebrew">Homebrew</string>
++    <string name="tests_gpu">проверяет GPU</string>
++    <string name="thermal_state">Температура</string>
++    <string name="trim_padding">Обрезать пустоту</string>
++    <string name="util_crash">4. Разбор крашей</string>
++    <string name="util_crash_desc">Читает журнал слоя и объясняет простыми словами, почему прошлый сеанс скорее всего завершился аварийно.</string>
++    <string name="util_firmware">1. Урезание прошивки</string>
++    <string name="util_rom">2. Проверка и конвертация дампов</string>
++    <string name="util_rom_desc">Проверяет дамп до того, как он потратит ваше время, и возвращает место от заполнения картриджа. XCI можно обрезать или конвертировать в NSP.</string>
++    <string name="util_saves">3. Хранилище сейвов</string>
++    <string name="util_saves_desc">Хранит копии сейвов вне памяти приложения, поэтому очистка данных их не уничтожит.</string>
++    <string name="utilities">Утилиты</string>
++    <string name="utilities_description">Урезание прошивки, проверка дампов, копии сейвов, разбор крашей</string>
++    <string name="verify_keys">Проверить, что установлено</string>
++    <string name="virtual_resolution">Виртуальное разрешение: %1$d x %2$d</string>
++    <string name="virtual_resolution_native">Виртуальное разрешение: исходное (без пикселизации)</string>
++    <string name="what_to_optimise">Что оптимизируем?</string>
++    <string name="why_did_it_crash">Почему произошёл сбой?</string>
++    <string name="why_no_compression">Почему нет .tar.xz?</string>
++
++    <!-- Symbiosis: тексты нативного слоя -->
++    <string name="compat_broken">Не работает</string>
++    <string name="compat_intro">Только заставка</string>
++    <string name="compat_perfect">Отлично</string>
++    <string name="compat_playable">Играбельно</string>
++    <string name="compat_runs">Работает с проблемами</string>
++    <string name="compat_unknown">Неизвестно</string>
++    <string name="launcher_desc_custom">Все параметры ваши: разрешение, глубина цвета, дизеринг, строки развёртки, сетка, насыщенность и контраст.</string>
++    <string name="launcher_desc_dendy">256x240, палитра из 64 цветов и заметные строки развёртки. Вид 8 бит.</string>
++    <string name="launcher_desc_eden">Стандартный вид Symbiosis. Без обработки изображения.</string>
++    <string name="launcher_desc_gba">240x160, тусклый ЖК-экран и видимая сетка пикселей.</string>
++    <string name="launcher_desc_nds">256x192, 18-битная палитра и слабая сетка ЖК.</string>
++    <string name="launcher_desc_ps1">320x240, 15-битный цвет и сильный дизеринг. Мягко, мутно, узнаваемо PS1.</string>
++    <string name="launcher_desc_ps2">640x448, 24-битный цвет и лёгкий дизеринг.</string>
++    <string name="launcher_desc_ps3">Вид эпохи 720p с холодным оттенком. Почти без ухудшения.</string>
++    <string name="launcher_desc_ps4">Исходный вывод, синий акцент, без обработки изображения.</string>
++    <string name="launcher_desc_ps5">Исходный вывод, крупные карточки и светлое чистое оформление.</string>
++    <string name="launcher_desc_steam">Тёмно-синяя библиотека с широкими обложками и плотной сеткой.</string>
++    <string name="launcher_desc_switch">Светлая тема с квадратными иконками и знакомым красным акцентом.</string>
++    <string name="perf_note_almost_free">Практически бесплатно.</string>
++    <string name="perf_note_depends">Полностью зависит от ваших настроек.</string>
++    <string name="perf_note_dramatically_faster">Кратно быстрее исходного.</string>
++    <string name="perf_note_faster">Быстрее исходного.</string>
++    <string name="perf_note_free">Бесплатно по производительности.</string>
++    <string name="perf_note_much_faster">Намного быстрее исходного.</string>
++    <string name="rep_applets">  апплеты:</string>
++    <string name="rep_backups">  копии:</string>
++    <string name="rep_budget">  бюджет:</string>
++    <string name="rep_cores">  ядра:</string>
++    <string name="rep_device">  устройство:</string>
++    <string name="rep_driver_topology">Схема драйверов Symbiosis:</string>
++    <string name="rep_essential">  необходимое:</string>
++    <string name="rep_firmware_contents">Содержимое прошивки:</string>
++    <string name="rep_fonts">  шрифты:</string>
++    <string name="rep_generation">  поколение:</string>
++    <string name="rep_languages">  языки:</string>
++    <string name="rep_location">  папка:</string>
++    <string name="rep_mali_tuning">Настройка Mali:</string>
++    <string name="rep_memory_state">Состояние памяти Symbiosis:</string>
++    <string name="rep_pressure">  нагрузка:</string>
++    <string name="rep_save_vault">Хранилище сейвов:</string>
++    <string name="rep_total">  всего:</string>
++    <string name="rep_used">  занято:</string>
++
++    <!-- Symbiosis: общая папка данных -->
++    <string name="choose_folder">Выбрать папку</string>
++    <string name="confirm_shared_dir">Использовать эту папку?</string>
++    <string name="found_firmware">Прошивка: файлов %1$d</string>
++    <string name="found_keys_no">Ключи: не найдены</string>
++    <string name="found_keys_yes">Ключи: найдены</string>
++    <string name="found_saves_no">Сейвы: пока нет</string>
++    <string name="found_saves_yes">Сейвы: найдены</string>
++    <string name="need_all_files_access">Android требует доступ ко всем файлам, чтобы использовать папку другого приложения. Выдайте его в настройках системы и выберите папку заново.</string>
++    <string name="open_settings">Открыть настройки</string>
++    <string name="restart_required">Нужен перезапуск</string>
++    <string name="restart_required_desc">Папка данных читается один раз при старте. Полностью закройте Eden Symbiosis и откройте снова, чтобы изменение вступило в силу.</string>
++    <string name="shared_dir_active">Общая папка: %1$s</string>
++    <string name="shared_dir_private">Своя память: %1$s</string>
++    <string name="shared_dir_unreachable">Android не разрешает прямой доступ к этой папке. Android 11 и новее блокируют Android/data чужих приложений даже при доступе ко всем файлам.\n\nПеренесите данные Eden в нейтральную папку, например:\n%1$s\nи выберите её. Обе сборки смогут её использовать.</string>
++    <string name="shared_dir_warning">Не запускайте оба эмулятора одновременно при общей папке. Два процесса, пишущие одни сейвы и один кэш шейдеров, повредят их.</string>
++    <string name="shared_not_a_dir">Это не папка.</string>
++    <string name="shared_not_writable">В эту папку нельзя писать.</string>
++    <string name="shared_same_as_private">Это и есть собственная папка приложения.</string>
++    <string name="use_private_storage">Своя память</string>
++    <string name="use_this_folder">Использовать</string>
++    <string name="util_shared_dir">5. Общая папка данных</string>
++    <string name="util_shared_dir_desc">Использовать папку другой установки Eden вместо второй копии прошивки, ключей, игр и сейвов.</string>
++    <string name="show_mode_overlay">Показывать режим на экране</string>
++    <string name="show_mode_overlay_description">Выводит активный режим и масштаб отрисовки в игровом оверлее.</string>
++
++    <!-- Symbiosis: справочник, кнопка, настройка -->
++    <string name="floating_button">Меню</string>
++    <string name="floating_button_alpha">Прозрачность кнопки</string>
++    <string name="floating_button_corner">Положение кнопки</string>
++    <string name="guide_advice">Совет</string>
++    <string name="guide_all">Все</string>
++    <string name="guide_cost">Цена</string>
++    <string name="guide_search_hint">Поиск по настройкам</string>
++    <string name="pause_on_menu">Пауза при открытии меню</string>
++    <string name="pause_on_menu_description">Останавливает эмуляцию, пока вы в меню. Выключите, чтобы таймеры и сетевые сессии продолжали идти.</string>
++    <string name="settings_guide">Справочник настроек</string>
++    <string name="settings_guide_description">Что делает каждая настройка, чего стоит и когда её лучше не трогать</string>
++    <string name="setup_choose_folder_description">Использовать существующую папку Eden вместо второй копии</string>
++    <string name="setup_data_folder">Папка данных</string>
++    <string name="setup_data_folder_description">Выберите, где хранить прошивку, ключи, игры и сейвы. Если Eden уже установлен, укажите его папку — дубликатов не будет.</string>
++    <string name="show_floating_button">Плавающая кнопка меню</string>
++    <string name="show_floating_button_description">Кнопка на экране, открывающая игровое меню. Долгое нажатие переключает экранные кнопки.</string>
++
++    <!-- Launch audit -->
++    <string name="audit_title">Отчёт о запуске</string>
++    <string name="audit_summary_line">Применено: %1$d, изменено драйвером: %2$d, проигнорировано: %3$d</string>
++    <string name="audit_became">запрошено %1$s, получено %2$s</string>
++    <string name="audit_fix">Исправить</string>
++    <string name="audit_fix_n">Исправить настроек: %1$d</string>
++    <string name="audit_fixed_n">Исправлено настроек: %1$d. Перезапустите игру, чтобы применить.</string>
++    <string name="audit_copy">Копировать</string>
++    <string name="audit_copied">Отчёт скопирован в буфер обмена.</string>
++    <string name="audit_no_data">Пока нечего показать</string>
++    <string name="audit_no_data_detail">Большая часть проверок возможна только после создания устройства GPU, поэтому отчёт заполнится после запуска игры.</string>
++    <string name="symbiosis_audit_button">Кнопка отчёта о запуске</string>
++    <string name="symbiosis_audit_button_description">Показывает рядом со счётчиком кадров небольшую кнопку, объясняющую, какие настройки действительно подействовали.</string>
++
++    <!-- Shared data folder, first run -->
++    <string name="emulator_data_description_symbiosis">Либо укажите Eden уже существующую папку, либо установите ключи и прошивку здесь. Оба пути на этой странице; нужен только один.</string>
++    <string name="shared_dir_adopted">Используется:\n%1$s\n\nПрошивка: файлов — %2$d\nКлючи: %3$s\nСейвы: %4$s\n\nВсё, что там уже есть, готово к работе — шаги ниже можно пропустить.</string>
++    <string name="shared_redirect_failed">Папка принята, но переключиться на неё во время работы приложения не удалось. Перезапустите Eden — она будет использована.</string>
++    <string name="yes">да</string>
++    <string name="no">нет</string>
++
+ </resources>
+diff --git a/src/android/app/src/main/res/values/arrays.xml b/src/android/app/src/main/res/values/arrays.xml
+index 1bad110..4f8b8d9 100644
+--- a/src/android/app/src/main/res/values/arrays.xml
++++ b/src/android/app/src/main/res/values/arrays.xml
+@@ -654,4 +654,36 @@
+         <item>3</item>
+         <item>4</item>
+     </integer-array>
++    <string-array name="autoModeNames">
++        <item>@string/mode_quality</item>
++        <item>@string/mode_balanced</item>
++        <item>@string/mode_performance</item>
++        <item>@string/mode_stability</item>
++        <item>@string/mode_compatibility</item>
++        <item>@string/mode_turbo</item>
++        <item>@string/mode_custom</item>
++    </string-array>
++
++    <integer-array name="autoModeValues">
++        <item>0</item>
++        <item>1</item>
++        <item>2</item>
++        <item>3</item>
++        <item>4</item>
++        <item>5</item>
++        <item>6</item>
++    </integer-array>
++    <string-array name="floatingCornerNames">
++        <item>Bottom right</item>
++        <item>Bottom left</item>
++        <item>Top right</item>
++        <item>Top left</item>
++    </string-array>
++
++    <integer-array name="floatingCornerValues">
++        <item>0</item>
++        <item>1</item>
++        <item>2</item>
++        <item>3</item>
++    </integer-array>
+ </resources>
+diff --git a/src/android/app/src/main/res/values/colors.xml b/src/android/app/src/main/res/values/colors.xml
+index 472567b..eeb9412 100644
+--- a/src/android/app/src/main/res/values/colors.xml
++++ b/src/android/app/src/main/res/values/colors.xml
+@@ -1 +1 @@
+-<?xml version='1.0' encoding='utf-8'?><resources><color name='ic_launcher_background'>#1F143C</color></resources>
++<?xml version='1.0' encoding='utf-8'?><resources><color name='ic_launcher_background'>#0E1116</color></resources>
+diff --git a/src/android/app/src/main/res/values/strings.xml b/src/android/app/src/main/res/values/strings.xml
+index bb1d85d..1254f09 100644
+--- a/src/android/app/src/main/res/values/strings.xml
++++ b/src/android/app/src/main/res/values/strings.xml
+@@ -3,7 +3,7 @@
+ 
+     <!-- General application strings -->
+     <string name="app_name" translatable="false">Eden</string>
+-    <string name="app_disclaimer">This software will run games for the Nintendo Switch game console. No game titles or keys are included.&lt;br /&gt;&lt;br /&gt;Before you begin, please locate your <![CDATA[<b> prod.keys </b>]]> file on your device storage.&lt;br /&gt;&lt;br /&gt;<![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">Learn more</a>]]></string>
++    <string name="app_disclaimer">Eden Symbiosis runs Nintendo Switch games and is tuned for devices that only have their system GPU driver.&lt;br /&gt;&lt;br /&gt;It composes a working graphics stack out of drivers that are individually incomplete, keeps memory inside what the OS actually grants the app, watches the temperature, and can render games with the colour depth and resolution of older machines.&lt;br /&gt;&lt;br /&gt;No game titles or keys are included. Locate your <![CDATA[<b> prod.keys </b>]]> file before you begin.</string>
+     <string name="notice_notification_channel_name">Notices and errors</string>
+     <string name="notice_notification_channel_id" translatable="false">noticesAndErrors</string>
+     <string name="notice_notification_channel_description">Shows notifications when something goes wrong.</string>
+@@ -259,7 +259,7 @@
+     <string name="install_prod_keys_warning_help">https://yuzu-mirror.github.io/help/quickstart/#guide-introduction</string>
+     <string name="install_firmware_warning">Skip adding firmware?</string>
+     <string name="emulator_data">Setup Emulator Data</string>
+-    <string name="emulator_data_description">Keys are required in order for the emulator to work and firmware is recommended and required for using the QLaunch applet</string>
++    <string name="emulator_data_description">Choose where data lives, then add your keys. Keys are required; firmware is recommended and needed for the QLaunch applet.</string>
+     <string name="permissions">Grant Permissions</string>
+     <string name="permissions_description">Grant optional permissions to use specific features of the emulator</string>
+     <string name="install_firmware_warning_description">Many games require access to firmware to run properly.</string>
+@@ -1808,4 +1808,276 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+     <string name="add_folders">Add Folder</string>
+     <string name="percent">%1$d%%</string>
+ 
++
++    <!-- Symbiosis: FPS tuning -->
++    <string name="fps_tuning">FPS tuning</string>
++    <string name="fps_tuning_description">Per-device and per-driver performance profiles</string>
++    <string name="detected_hardware">Detected hardware</string>
++    <string name="hardware_not_detected_yet">Not detected yet</string>
++    <string name="profiles_matched_note">Profiles below are filtered to this GPU and driver.</string>
++    <string name="launch_game_to_detect">Launch a game once so the GPU and driver can be identified.</string>
++    <string name="what_to_optimise">What do you want to optimise?</string>
++    <string name="intent_all">All</string>
++    <string name="intent_max_fps">Max FPS</string>
++    <string name="intent_balanced">Balanced</string>
++    <string name="intent_quality">Quality</string>
++    <string name="intent_battery">Battery</string>
++    <string name="show_profiles_all_hardware">Show profiles for other hardware</string>
++    <string name="available_profiles">Available profiles</string>
++    <string name="apply_profile">Apply</string>
++    <string name="needs_custom_driver_short">Needs a custom driver</string>
++    <string name="requires_custom_driver">Requires a custom driver, which this device cannot install</string>
++    <string name="show_details">Show details</string>
++    <string name="profile_applied">Applied %1$d setting(s)</string>
++    <string name="profile_applied_nothing">Nothing changed \u2014 these settings are already active</string>
++
++    <!-- Symbiosis: diagnostics -->
++    <string name="diagnostics">Diagnostics</string>
++    <string name="diagnostics_description">Verify drivers, memory and keys on this device</string>
++    <string name="diagnostics_intro">Runs the checks a homebrew test ROM would perform, without leaving the app.</string>
++    <string name="run_self_test">Run self-test</string>
++    <string name="driver_topology">Driver topology</string>
++    <string name="memory_state">Memory state</string>
++    <string name="symbol_borrowing">Symbol borrowing</string>
++    <string name="copy_report">Copy report</string>
++    <string name="report_copied">Report copied to clipboard</string>
++    <string name="nothing_to_copy">Run a check first</string>
++    <string name="no_data_yet">No data yet. Launch a game so the layer can inspect the driver.</string>
++    <string name="n_passed">%1$d passed</string>
++    <string name="n_warnings">%1$d warnings</string>
++    <string name="n_failed">%1$d failed</string>
++
++    <!-- Symbiosis: keys and firmware -->
++    <string name="keys_and_firmware">Keys &amp; firmware</string>
++    <string name="keys_and_firmware_description">Install and verify encryption keys and firmware</string>
++    <string name="prod_keys">Encryption keys</string>
++    <string name="actions">Actions</string>
++    <string name="verify_keys">Verify what is installed</string>
++    <string name="reload_keys">Reload keys</string>
++    <string name="keys_installed_ok">Installed and loaded</string>
++    <string name="keys_invalid">Keys present but could not be loaded</string>
++    <string name="keys_install_failed">Could not copy the file</string>
++    <string name="keys_dir_missing">The keys folder does not exist yet</string>
++    <string name="firmware_installed">Installed</string>
++    <string name="firmware_installed_version">Installed (%1$s)</string>
++    <string name="firmware_missing">Not installed</string>
++    <string name="keys_legal_note">Keys and firmware must be dumped from a console you own. They are not distributed with this app.</string>
++    <string name="thermal_state">Thermal state</string>
++
++    <!-- Symbiosis: launchers -->
++    <string name="launchers">Launchers</string>
++    <string name="launchers_description">Skins and retro rendering presets</string>
++    <string name="launchers_intro">A launcher changes how the app looks and, for the retro presets, how the game is rendered: lower effective resolution, fewer colours and period-accurate dithering.</string>
++    <string name="launcher_selected">%1$s selected</string>
++    <string name="launcher_retro_selected">%1$s selected — rendering at %2$dx%3$d</string>
++    <string name="launcher_custom_selected">Custom mode — adjust the sliders below</string>
++    <string name="custom_retro_settings">Custom rendering</string>
++    <string name="custom_retro_hint">Every value feeds the presentation shader directly. Set resolution to 0 to keep native output.</string>
++    <string name="virtual_resolution">Virtual resolution: %1$d x %2$d</string>
++    <string name="virtual_resolution_native">Virtual resolution: native (no pixelation)</string>
++    <string name="color_depth">Colour depth: %1$d levels per channel (%2$d colours)</string>
++    <string name="color_depth_full">Colour depth: full (no quantisation)</string>
++    <string name="dithering_pct">Dithering: %1$d%%</string>
++    <string name="scanlines_pct">Scanlines: %1$d%%</string>
++    <string name="lcd_grid_pct">LCD grid: %1$d%%</string>
++    <string name="saturation_pct">Saturation: %1$d%%</string>
++    <string name="contrast_pct">Contrast: %1$d%%</string>
++    <string name="reset_to_native">Reset to native</string>
++
++    <!-- Symbiosis: logs -->
++    <string name="layer_log">Layer log</string>
++    <string name="log_all_areas">All</string>
++    <string name="log_copy">Copy log</string>
++    <string name="log_clear">Clear</string>
++    <string name="log_cleared">Log cleared</string>
++    <string name="log_entries">%1$d entries</string>
++
++    <!-- Symbiosis: thermal policy -->
++    <string name="performance_mode">Performance mode</string>
++    <string name="performance_mode_desc">Allow higher sustained load, and warn you when it is time to rest the device.</string>
++    <string name="temp_ceiling">Temperature ceiling: %1$d°C</string>
++    <string name="temp_warning_at">Warn me at: %1$d°C</string>
++    <string name="take_a_break">Take a break</string>
++    <string name="rest_minutes">Suggested rest: about %1$d minutes</string>
++    <string name="safe_mode_active">Safe mode</string>
++    <string name="safe_mode_explain">The previous session ended unexpectedly, so the Symbiosis layer was switched off for this run. The emulator is running on stock behaviour.</string>
++    <string name="safe_mode_reenable">Re-enable the layer</string>
++    <string name="safe_mode_cleared">The layer will run again next time you start a game</string>
++    <!-- Symbiosis: auto modes -->
++    <string name="auto_mode">Mode</string>
++    <string name="auto_mode_description">Configures everything at once for one goal. Applied when you pick it \u2014 your later manual changes are kept.</string>
++    <string name="mode_quality">Quality</string>
++    <string name="mode_balanced">Balanced (recommended)</string>
++    <string name="mode_performance">Performance</string>
++    <string name="mode_stability">Stability</string>
++    <string name="mode_compatibility">Compatibility</string>
++    <string name="mode_turbo">Turbo (runs hot)</string>
++    <string name="mode_custom">Custom (manage settings yourself)</string>
++    <string name="show_advanced_settings">Show all settings</string>
++    <string name="show_advanced_settings_description">Reveals the full upstream list, including accuracy hacks and debug options. The mode you pick will overwrite most of them.</string>
++    <!-- Symbiosis: homebrew and compatibility -->
++    <string name="homebrew_and_compat">Homebrew &amp; compatibility</string>
++    <string name="homebrew_description">Free homebrew to test with, and what to expect from games</string>
++    <string name="tab_homebrew">Homebrew</string>
++    <string name="tab_compatibility">Compatibility</string>
++    <string name="homebrew_note">Freely licensed programs published by their authors. None of these need encryption keys, so they are the quickest way to confirm the emulator works on this device. Opens the official release page — nothing is downloaded automatically.</string>
++    <string name="compat_note">Advice only. Commercial games are never bundled, linked or downloaded: dump the titles you own yourself and add them from any folder on your device.</string>
++    <string name="open_release_page">Open release page</string>
++    <string name="apply_recommended_mode">Apply recommended mode</string>
++    <string name="mode_applied_for">Mode applied for %1$s</string>
++    <string name="no_keys_needed">no keys needed</string>
++    <string name="tests_gpu">tests GPU</string>
++    <string name="memory_heavy">memory heavy</string>
++    <string name="no_browser">No browser available</string>
++    <string name="mali_report">Mali GPU report</string>
++    <string name="driver_suggestions">Driver options</string>
++    <string name="firmware_help">Keys &amp; firmware help</string>
++    <!-- Symbiosis: utilities -->
++    <string name="utilities">Utilities</string>
++    <string name="utilities_description">Firmware slimming, dump repair, save backups, crash analysis</string>
++    <string name="util_firmware">1. Firmware slimmer</string>
++    <string name="no_firmware_installed">No firmware installed.</string>
++    <string name="keep_applets">Keep applets (browser, album, controller UI)</string>
++    <string name="keep_extra_fonts">Keep all fonts (CJK is large)</string>
++    <string name="keep_extra_languages">Keep extra languages</string>
++    <string name="after_slimming">After: %1$s (saves %2$s)</string>
++    <string name="slim_down">Slim down</string>
++    <string name="slim_down_warning">This permanently deletes the firmware content you unticked. Games that need it will stop working until you reinstall firmware. Your keys and saves are not touched.</string>
++    <string name="why_no_compression">Why no .tar.xz?</string>
++    <string name="freed_space">Freed %1$s</string>
++
++    <string name="util_rom">2. Dump doctor and converter</string>
++    <string name="util_rom_desc">Checks a dump before it wastes your time, and reclaims cartridge padding. XCI can be trimmed or converted to NSP.</string>
++    <string name="choose_file">Choose a file</string>
++    <string name="trim_padding">Trim padding</string>
++    <string name="convert_to_nsp">Convert to NSP</string>
++    <string name="nothing_to_trim">Nothing to trim.</string>
++    <string name="converting">Converting…</string>
++    <string name="converted_to">Wrote %1$s</string>
++    <string name="conversion_failed">Conversion failed.</string>
++    <string name="could_not_inspect">Could not read this file.</string>
++    <string name="path_not_accessible">This file is in a location the tools cannot open directly. Move it to internal storage or an SD card root and try again.</string>
++
++    <string name="util_saves">3. Save vault</string>
++    <string name="util_saves_desc">Keeps copies of your saves outside app storage, so clearing app data does not destroy them.</string>
++    <string name="back_up_now">Back up now</string>
++    <string name="restore">Restore</string>
++    <string name="backed_up">Backed up %1$s</string>
++    <string name="no_saves_found">No save data found to back up.</string>
++    <string name="no_backups">No backups yet.</string>
++    <string name="restored_ok">Restored. A copy of the previous state was kept.</string>
++
++    <string name="util_crash">4. Crash analyst</string>
++    <string name="util_crash_desc">Reads the layer log and explains, in plain terms, why the last session probably failed.</string>
++    <string name="why_did_it_crash">Why did it crash?</string>
++
++    <!-- Symbiosis: native-layer text mapped to resources -->
++    <string name="compat_broken">Broken</string>
++    <string name="compat_intro">Intro only</string>
++    <string name="compat_perfect">Perfect</string>
++    <string name="compat_playable">Playable</string>
++    <string name="compat_runs">Runs with issues</string>
++    <string name="compat_unknown">Unknown</string>
++    <string name="launcher_desc_custom">Every parameter is yours: resolution, colour depth, dithering, scanlines, grid, saturation and contrast.</string>
++    <string name="launcher_desc_dendy">256x240 with a 64-colour palette and strong scanlines. 8-bit look.</string>
++    <string name="launcher_desc_eden">The default Symbiosis look. No image processing.</string>
++    <string name="launcher_desc_gba">240x160 with a washed-out LCD and a visible pixel grid.</string>
++    <string name="launcher_desc_nds">256x192 with an 18-bit palette and a faint LCD grid.</string>
++    <string name="launcher_desc_ps1">320x240 with 15-bit colour and heavy dithering. Soft, muddy, unmistakably PS1.</string>
++    <string name="launcher_desc_ps2">640x448 with 24-bit colour and light dithering.</string>
++    <string name="launcher_desc_ps3">720p-era look with a cool tint. Almost no degradation.</string>
++    <string name="launcher_desc_ps4">Native output, blue accent, no image processing.</string>
++    <string name="launcher_desc_ps5">Native output with large cards and a bright, clean layout.</string>
++    <string name="launcher_desc_steam">Dark blue library with wide capsule art and a dense grid.</string>
++    <string name="launcher_desc_switch">Light theme with square icons and the familiar red accent.</string>
++    <string name="perf_note_almost_free">Roughly free.</string>
++    <string name="perf_note_depends">Depends entirely on your settings.</string>
++    <string name="perf_note_dramatically_faster">Dramatically faster than native.</string>
++    <string name="perf_note_faster">Faster than native.</string>
++    <string name="perf_note_free">No cost.</string>
++    <string name="perf_note_much_faster">Much faster than native.</string>
++    <string name="rep_applets">  applets:</string>
++    <string name="rep_backups">  backups:</string>
++    <string name="rep_budget">  budget:</string>
++    <string name="rep_cores">  cores:</string>
++    <string name="rep_device">  device:</string>
++    <string name="rep_driver_topology">Symbiosis driver topology:</string>
++    <string name="rep_essential">  essential:</string>
++    <string name="rep_firmware_contents">Firmware contents:</string>
++    <string name="rep_fonts">  fonts:</string>
++    <string name="rep_generation">  generation:</string>
++    <string name="rep_languages">  languages:</string>
++    <string name="rep_location">  location:</string>
++    <string name="rep_mali_tuning">Mali tuning:</string>
++    <string name="rep_memory_state">Symbiosis memory state:</string>
++    <string name="rep_pressure">  pressure:</string>
++    <string name="rep_save_vault">Save vault:</string>
++    <string name="rep_total">  total:</string>
++    <string name="rep_used">  used:</string>
++
++    <!-- Symbiosis: shared data folder -->
++    <string name="choose_folder">Choose folder</string>
++    <string name="confirm_shared_dir">Use this folder?</string>
++    <string name="found_firmware">Firmware: %1$d file(s)</string>
++    <string name="found_keys_no">Keys: not found</string>
++    <string name="found_keys_yes">Keys: found</string>
++    <string name="found_saves_no">Saves: none yet</string>
++    <string name="found_saves_yes">Saves: found</string>
++    <string name="need_all_files_access">Android needs All Files Access before another app\'s folder can be used. Grant it in system settings, then pick the folder again.</string>
++    <string name="open_settings">Open settings</string>
++    <string name="restart_required">Restart required</string>
++    <string name="restart_required_desc">The data folder is read once when the app starts. Close Eden Symbiosis completely and open it again for the change to take effect.</string>
++    <string name="shared_dir_active">Sharing: %1$s</string>
++    <string name="shared_dir_private">Own storage: %1$s</string>
++    <string name="shared_dir_unreachable">Android does not allow direct access to that folder. Android 11 and newer block Android/data of other apps even with All Files Access.\n\nMove your Eden data to a neutral folder such as:\n%1$s\nand pick that one instead. Both builds can use it.</string>
++    <string name="shared_dir_warning">Do not run both emulators at the same time while sharing a folder. Two processes writing the same saves and shader cache will corrupt them.</string>
++    <string name="shared_not_a_dir">That is not a folder.</string>
++    <string name="shared_not_writable">This folder cannot be written to.</string>
++    <string name="shared_same_as_private">That is already this app\'s own folder.</string>
++    <string name="use_private_storage">Use own storage</string>
++    <string name="use_this_folder">Use this folder</string>
++    <string name="util_shared_dir">5. Shared data folder</string>
++    <string name="util_shared_dir_desc">Use another Eden installation\'s folder instead of keeping a second copy of firmware, keys, games and saves.</string>
++    <string name="show_mode_overlay">Show mode on screen</string>
++    <string name="show_mode_overlay_description">Displays the active mode and render scale in the in-game overlay.</string>
++
++    <!-- Symbiosis: guide, floating button, setup -->
++    <string name="floating_button">Menu</string>
++    <string name="floating_button_alpha">Button transparency</string>
++    <string name="floating_button_corner">Button position</string>
++    <string name="guide_advice">Advice</string>
++    <string name="guide_all">All</string>
++    <string name="guide_cost">Cost</string>
++    <string name="guide_search_hint">Search settings</string>
++    <string name="pause_on_menu">Pause when the menu opens</string>
++    <string name="pause_on_menu_description">Stops emulation while you are in the menu. Turn it off to keep timers and online sessions running.</string>
++    <string name="settings_guide">Settings guide</string>
++    <string name="settings_guide_description">What every setting does, what it costs, when to leave it alone</string>
++    <string name="setup_choose_folder_description">Use an existing Eden folder instead of a second copy</string>
++    <string name="setup_data_folder">Data folder</string>
++    <string name="setup_data_folder_description">Choose where firmware, keys, games and saves live. If you already have Eden installed, point this at its folder and nothing is duplicated.</string>
++    <string name="show_floating_button">Floating menu button</string>
++    <string name="show_floating_button_description">On-screen button that opens the in-game menu. Long-press it to toggle the touch controls.</string>
++
++    <!-- Launch audit -->
++    <string name="audit_title">Launch report</string>
++    <string name="audit_summary_line">%1$d applied, %2$d changed by the driver, %3$d ignored</string>
++    <string name="audit_became">asked for %1$s, got %2$s</string>
++    <string name="audit_fix">Fix</string>
++    <string name="audit_fix_n">Fix %1$d setting(s)</string>
++    <string name="audit_fixed_n">Corrected %1$d setting(s). Restart the game to apply.</string>
++    <string name="audit_copy">Copy</string>
++    <string name="audit_copied">Report copied to the clipboard.</string>
++    <string name="audit_no_data">Nothing to report yet</string>
++    <string name="audit_no_data_detail">Most of these checks only exist once the GPU device has been created, so the report fills in after a game has started.</string>
++    <string name="symbiosis_audit_button">Launch report button</string>
++    <string name="symbiosis_audit_button_description">Shows a small button next to the frame counter that explains which settings actually took effect.</string>
++
++    <!-- Shared data folder, first run -->
++    <string name="emulator_data_description_symbiosis">Either point Eden at a folder you already have, or install keys and firmware here. Both routes are on this page; you do not need both.</string>
++    <string name="shared_dir_adopted">Now using:\n%1$s\n\nFirmware: %2$d files\nKeys: %3$s\nSaves: %4$s\n\nAnything already there is ready to use, so you can skip the steps below.</string>
++    <string name="shared_redirect_failed">The folder was accepted but could not be switched to while the app is running. Restart Eden and it will be used.</string>
++    <string name="yes">yes</string>
++    <string name="no">no</string>
++
+ </resources>
+diff --git a/src/android/app/src/main/res/values/themes.xml b/src/android/app/src/main/res/values/themes.xml
+index 8e3200a..9a4c5d2 100644
+--- a/src/android/app/src/main/res/values/themes.xml
++++ b/src/android/app/src/main/res/values/themes.xml
+@@ -2,8 +2,9 @@
+ <resources>
+ 
+     <style name="Theme.Yuzu.Splash.Main" parent="Theme.SplashScreen">
+-        <item name="windowSplashScreenBackground">@color/eden_background</item>
+-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_yuzu_splash</item>
++        <item name="windowSplashScreenBackground">@color/symbiosis_splash_bg</item>
++        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_symbiosis_splash</item>
++        <item name="windowSplashScreenAnimationDuration">600</item>
+         <item name="postSplashScreenTheme">@style/Theme.Yuzu.Main</item>
+     </style>
+ 
+diff --git a/src/android/app/src/main/res/values/yuzu_colors.xml b/src/android/app/src/main/res/values/yuzu_colors.xml
+index 3bb98e5..6c03cc5 100644
+--- a/src/android/app/src/main/res/values/yuzu_colors.xml
++++ b/src/android/app/src/main/res/values/yuzu_colors.xml
+@@ -321,4 +321,5 @@
+     <color name="yuzu_onSecondary_gray">#FFFFFF</color>
+     <color name="yuzu_onTertiary_gray">#FFFFFF</color>
+ 
++    <color name="symbiosis_splash_bg">#0E1116</color>
+ </resources>
+diff --git a/src/android/gradle.properties b/src/android/gradle.properties
+index 151f737..85e1167 100644
+--- a/src/android/gradle.properties
++++ b/src/android/gradle.properties
+@@ -9,7 +9,7 @@
+ # http://www.gradle.org/docs/current/userguide/build_environment.html
+ # Specifies the JVM arguments used for the daemon process.
+ # The setting is particularly useful for tweaking memory settings.
+-org.gradle.jvmargs=-Xms512m -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
++org.gradle.jvmargs=-Xms256m -Xmx1200m -XX:MaxMetaspaceSize=384m -Dfile.encoding=UTF-8
+ android.useAndroidX=true
+ # Kotlin code style for this project: "official" or "obsolete":
+ kotlin.code.style=official
+@@ -18,4 +18,7 @@ android.defaults.buildfeatures.buildconfig=true
+ 
+ # Android Gradle plugin 8.0.2
+ android.suppressUnsupportedCompileSdk=34
+-android.native.buildOutput=verbose
+\ No newline at end of file
++android.native.buildOutput=verbose
++org.gradle.workers.max=1
++org.gradle.parallel=false
++kotlin.compiler.execution.strategy=in-process
+diff --git a/src/common/CMakeLists.txt b/src/common/CMakeLists.txt
+index 10e8cd0..d813694 100644
+--- a/src/common/CMakeLists.txt
++++ b/src/common/CMakeLists.txt
+@@ -45,6 +45,40 @@ add_library(
+     div_ceil.h
+     dynamic_library.cpp
+     dynamic_library.h
++    symbiosis/abi_shim.cpp
++    symbiosis/abi_shim.h
++    symbiosis/device_profiles.cpp
++    symbiosis/device_profiles.h
++    symbiosis/selftest.cpp
++    symbiosis/selftest.h
++    symbiosis/thermal_monitor.cpp
++    symbiosis/thermal_monitor.h
++    symbiosis/auto_modes.cpp
++    symbiosis/auto_modes.h
++    symbiosis/settings_guide.cpp
++    symbiosis/settings_guide.h
++    symbiosis/settings_audit.cpp
++    symbiosis/settings_audit.h
++    symbiosis/firmware_vault.cpp
++    symbiosis/firmware_vault.h
++    symbiosis/rom_tools.cpp
++    symbiosis/rom_tools.h
++    symbiosis/save_guard.cpp
++    symbiosis/save_guard.h
++    symbiosis/game_catalogue.cpp
++    symbiosis/game_catalogue.h
++    symbiosis/mali_tuning.cpp
++    symbiosis/mali_tuning.h
++    symbiosis/launcher_profiles.cpp
++    symbiosis/launcher_profiles.h
++    symbiosis/symbiosis_log.cpp
++    symbiosis/symbiosis_log.h
++    symbiosis/driver_broker.cpp
++    symbiosis/driver_broker.h
++    symbiosis/memory_governor.cpp
++    symbiosis/memory_governor.h
++    symbiosis/symbiosis_types.cpp
++    symbiosis/symbiosis_types.h
+     elf.h
+     error.cpp
+     error.h
+@@ -252,6 +286,12 @@ endif()
+ if(ANDROID)
+     # For ASharedMemory_create
+     target_link_libraries(common PRIVATE android)
++
++    # Symbiosis driver broker opens vendor/user Vulkan blobs through
++    # adrenotools so that per-driver file redirection keeps working.
++    if (ARCHITECTURE_arm64)
++        target_link_libraries(common PRIVATE adrenotools)
++    endif()
+ endif()
+ 
+ create_target_directory_groups(common)
+diff --git a/src/common/settings.h b/src/common/settings.h
+index 0f35045..7e644b2 100644
+--- a/src/common/settings.h
++++ b/src/common/settings.h
+@@ -469,6 +469,101 @@ struct Values {
+                                                             "accelerate_astc",
+                                                             Category::RendererAdvanced};
+ 
++    // Symbiosis compatibility layer.
++    // 0 = Off (stock behaviour), 1 = Safe, 2 = Cooperative, 3 = Desperate.
++    // Ranged so a corrupt config can never select an undefined mode.
++    SwitchableSetting<u32, true> symbiosis_mode{
++        linkage, 2, 0, 3, "symbiosis_mode", Category::RendererAdvanced};
++
++    // Let the memory governor cap caches and veto oversized allocations on
++    // devices where the OS keeps a large slice of RAM to itself.
++    SwitchableSetting<bool> symbiosis_memory_governor{
++        linkage, true, "symbiosis_memory_governor", Category::RendererAdvanced};
++
++    // --- Symbiosis: launcher skins and retro rendering -------------------
++    // Index into the launcher catalogue (0 = Eden, 11 = Custom).
++    SwitchableSetting<u32, true> symbiosis_launcher{
++        linkage, 0, 0, 11, "symbiosis_launcher", Category::RendererAdvanced};
++
++    // Custom retro parameters. Only consulted when the Custom launcher is
++    // selected; every other launcher supplies its own values.
++    // Percent-based settings are stored as integers so they survive the
++    // frontend config round-trip without float formatting issues.
++    SwitchableSetting<u32, true> retro_width{
++        linkage, 0, 0, 3840, "retro_width", Category::RendererAdvanced};
++    SwitchableSetting<u32, true> retro_height{
++        linkage, 0, 0, 2160, "retro_height", Category::RendererAdvanced};
++    SwitchableSetting<u32, true> retro_color_levels{
++        linkage, 0, 0, 256, "retro_color_levels", Category::RendererAdvanced};
++    SwitchableSetting<u32, true> retro_dither{
++        linkage, 0, 0, 100, "retro_dither", Category::RendererAdvanced};
++    SwitchableSetting<u32, true> retro_scanline{
++        linkage, 0, 0, 100, "retro_scanline", Category::RendererAdvanced};
++    SwitchableSetting<u32, true> retro_lcd_grid{
++        linkage, 0, 0, 100, "retro_lcd_grid", Category::RendererAdvanced};
++    SwitchableSetting<u32, true> retro_saturation{
++        linkage, 100, 0, 300, "retro_saturation", Category::RendererAdvanced};
++    SwitchableSetting<u32, true> retro_contrast{
++        linkage, 100, 10, 300, "retro_contrast", Category::RendererAdvanced};
++
++    // --- Symbiosis: thermal policy ---------------------------------------
++    // Performance mode trades heat for frame rate. The ceiling is the
++    // temperature at which we stop pushing; the warning threshold is where the
++    // user is told to take a break. Both are user-visible and clamped to
++    // values that stay inside typical SoC specifications.
++    SwitchableSetting<bool> symbiosis_performance_mode{
++        linkage, false, "symbiosis_performance_mode", Category::RendererAdvanced};
++    SwitchableSetting<u32, true> symbiosis_temp_ceiling{
++        linkage, 90, 60, 95, "symbiosis_temp_ceiling", Category::RendererAdvanced};
++    SwitchableSetting<u32, true> symbiosis_temp_warning{
++        linkage, 95, 65, 100, "symbiosis_temp_warning", Category::RendererAdvanced};
++
++    // --- Symbiosis: logging ----------------------------------------------
++    // Verbose tracing of every layer decision. Off by default: it is genuinely
++    // chatty and costs a little performance.
++    SwitchableSetting<bool> symbiosis_verbose_log{
++        linkage, false, "symbiosis_verbose_log", Category::RendererAdvanced};
++
++    // --- Symbiosis: one-tap auto modes -----------------------------------
++    // 0 Quality, 1 Balanced, 2 Performance, 3 Stability, 4 Compatibility,
++    // 5 Turbo, 6 Custom. Balanced is the default because it is the mode that
++    // is right for most people on most titles.
++    SwitchableSetting<u32, true> symbiosis_auto_mode{
++        linkage, 1, 0, 6, "symbiosis_auto_mode", Category::RendererAdvanced};
++
++    // Show every upstream setting, including accuracy hacks and debug options.
++    // Off by default: the long list is what made the app hard to reason about.
++    SwitchableSetting<bool> symbiosis_show_advanced{
++        linkage, false, "symbiosis_show_advanced", Category::RendererAdvanced};
++
++    // Shows the active mode and render scale in the in-game overlay, so it is
++    // possible to confirm a setting took effect without leaving the game.
++    SwitchableSetting<bool> symbiosis_show_mode_overlay{
++        linkage, true, "symbiosis_show_mode_overlay", Category::Overlay};
++
++    // Floating button that opens the in-game menu without reaching for the
++    // system back gesture, which is awkward mid-game and easy to overshoot.
++    SwitchableSetting<bool> symbiosis_floating_button{
++        linkage, true, "symbiosis_floating_button", Category::Overlay};
++    // 0 = bottom right, 1 = bottom left, 2 = top right, 3 = top left.
++    SwitchableSetting<u32, true> symbiosis_floating_button_corner{
++        linkage, 0, 0, 3, "symbiosis_floating_button_corner", Category::Overlay};
++    // Opacity in percent. Low values keep it out of the way without hiding it.
++    SwitchableSetting<u32, true> symbiosis_floating_button_alpha{
++        linkage, 55, 15, 100, "symbiosis_floating_button_alpha", Category::Overlay};
++
++    // Diagnostic button next to the frame counter, opening the launch audit.
++    // On by default: the audit exists because settings fail silently, and a
++    // diagnostic nobody can find does not solve that.
++    SwitchableSetting<bool> symbiosis_audit_button{
++        linkage, true, "symbiosis_audit_button", Category::Overlay};
++
++    // Whether opening the in-game menu pauses emulation.
++    // Pausing is safest, but it breaks online play and any game that dislikes
++    // a stalled frame loop, so it has to be optional.
++    SwitchableSetting<bool> symbiosis_pause_on_menu{
++        linkage, true, "symbiosis_pause_on_menu", Category::Overlay};
++
+     SwitchableSetting<FramePacingMode, true> frame_pacing_mode{linkage,
+                                                                FramePacingMode::Target_Auto,
+                                                                FramePacingMode::Target_Auto,
+diff --git a/src/video_core/host_shaders/CMakeLists.txt b/src/video_core/host_shaders/CMakeLists.txt
+index 0d342c4..49c47b8 100644
+--- a/src/video_core/host_shaders/CMakeLists.txt
++++ b/src/video_core/host_shaders/CMakeLists.txt
+@@ -56,6 +56,7 @@ set(SHADER_FILES
+     ${CMAKE_CURRENT_SOURCE_DIR}/present_lanczos.frag
+     ${CMAKE_CURRENT_SOURCE_DIR}/present_spline1.frag
+     ${CMAKE_CURRENT_SOURCE_DIR}/present_mmpx.frag
++    ${CMAKE_CURRENT_SOURCE_DIR}/present_retro.frag
+     ${CMAKE_CURRENT_SOURCE_DIR}/queries_prefix_scan_sum.comp
+     ${CMAKE_CURRENT_SOURCE_DIR}/queries_prefix_scan_sum_nosubgroups.comp
+     ${CMAKE_CURRENT_SOURCE_DIR}/resolve_conditional_render.comp
+diff --git a/src/video_core/renderer_vulkan/present/filters.cpp b/src/video_core/renderer_vulkan/present/filters.cpp
+index 6203b41..fddb7a9 100644
+--- a/src/video_core/renderer_vulkan/present/filters.cpp
++++ b/src/video_core/renderer_vulkan/present/filters.cpp
+@@ -7,9 +7,13 @@
+ // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include <array>
++#include <string>
+ #include <vulkan/vulkan_core.h>
+ #include "common/assert.h"
+ #include "common/common_types.h"
++#include "common/symbiosis/launcher_profiles.h"
++#include "common/symbiosis/symbiosis_log.h"
+ 
+ #include "video_core/host_shaders/present_area_frag_spv.h"
+ #include "video_core/host_shaders/present_bicubic_frag_spv.h"
+@@ -20,6 +24,7 @@
+ #include "video_core/host_shaders/present_bspline_frag_spv.h"
+ #include "video_core/host_shaders/present_zero_tangent_frag_spv.h"
+ #include "video_core/host_shaders/present_mmpx_frag_spv.h"
++#include "video_core/host_shaders/present_retro_frag_spv.h"
+ #include "video_core/host_shaders/vulkan_present_frag_spv.h"
+ #include "video_core/host_shaders/vulkan_present_scaleforce_fp16_frag_spv.h"
+ #include "video_core/host_shaders/vulkan_present_scaleforce_fp32_frag_spv.h"
+@@ -98,4 +103,53 @@ std::unique_ptr<WindowAdaptPass> MakeMmpx(const Device& device, VkFormat frame_f
+                                              BuildShader(device, PRESENT_MMPX_FRAG_SPV));
+ }
+ 
++std::unique_ptr<WindowAdaptPass> MakeRetro(const Device& device, VkFormat frame_format) {
++    // Pull the live preset from the active launcher. Every parameter becomes a
++    // specialization constant, so one shader module covers every look and the
++    // driver can fold the disabled branches away entirely.
++    const auto preset = Symbiosis::GetLauncherCatalogue().ActiveRetroPreset();
++
++    const std::array<float, 8> values{{
++        preset.virtual_width,
++        preset.virtual_height,
++        preset.color_levels,
++        preset.dither,
++        preset.scanline,
++        preset.lcd_grid,
++        preset.saturation,
++        preset.contrast,
++    }};
++
++    std::array<VkSpecializationMapEntry, values.size()> entries{};
++    for (u32 i = 0; i < static_cast<u32>(values.size()); ++i) {
++        entries[i] = VkSpecializationMapEntry{
++            .constantID = i,
++            .offset = i * static_cast<u32>(sizeof(float)),
++            .size = sizeof(float),
++        };
++    }
++
++    const VkSpecializationInfo spec{
++        .mapEntryCount = static_cast<u32>(entries.size()),
++        .pMapEntries = entries.data(),
++        .dataSize = values.size() * sizeof(float),
++        .pData = values.data(),
++    };
++
++    Symbiosis::LogInfo(Symbiosis::LogArea::Render,
++                       "retro filter: " + std::to_string(static_cast<int>(preset.virtual_width)) +
++                           "x" + std::to_string(static_cast<int>(preset.virtual_height)) +
++                           ", levels/channel " +
++                           std::to_string(static_cast<int>(preset.color_levels)) +
++                           ", dither " + std::to_string(static_cast<int>(preset.dither * 100)) +
++                           "%, scanline " +
++                           std::to_string(static_cast<int>(preset.scanline * 100)) + "%");
++
++    // Nearest sampling: any smoothing here would undo the pixelation the
++    // shader just performed.
++    return std::make_unique<WindowAdaptPass>(device, frame_format,
++                                             CreateNearestNeighborSampler(device),
++                                             BuildShader(device, PRESENT_RETRO_FRAG_SPV), &spec);
++}
++
+ } // namespace Vulkan
+diff --git a/src/video_core/renderer_vulkan/present/filters.h b/src/video_core/renderer_vulkan/present/filters.h
+index afc3ba2..216677d 100644
+--- a/src/video_core/renderer_vulkan/present/filters.h
++++ b/src/video_core/renderer_vulkan/present/filters.h
+@@ -25,4 +25,8 @@ std::unique_ptr<WindowAdaptPass> MakeScaleForce(const Device& device, VkFormat f
+ std::unique_ptr<WindowAdaptPass> MakeArea(const Device& device, VkFormat frame_format);
+ std::unique_ptr<WindowAdaptPass> MakeMmpx(const Device& device, VkFormat frame_format);
+ 
++/// Retro presentation filter: pixelation, colour quantisation, dithering and
++/// display artefacts driven by the active launcher preset.
++std::unique_ptr<WindowAdaptPass> MakeRetro(const Device& device, VkFormat frame_format);
++
+ } // namespace Vulkan
+diff --git a/src/video_core/renderer_vulkan/present/util.cpp b/src/video_core/renderer_vulkan/present/util.cpp
+index 2b83902..f3d879a 100644
+--- a/src/video_core/renderer_vulkan/present/util.cpp
++++ b/src/video_core/renderer_vulkan/present/util.cpp
+@@ -369,7 +369,8 @@ vk::PipelineLayout CreateWrappedPipelineLayout(const Device& device,
+ static vk::Pipeline CreateWrappedPipelineImpl(
+     const Device& device, vk::RenderPass& renderpass, vk::PipelineLayout& layout,
+     std::tuple<vk::ShaderModule&, vk::ShaderModule&> shaders,
+-    VkPipelineColorBlendAttachmentState blending) {
++    VkPipelineColorBlendAttachmentState blending,
++    const VkSpecializationInfo* fragment_specialization = nullptr) {
+     const std::array<VkPipelineShaderStageCreateInfo, 2> shader_stages{{
+         {
+             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+@@ -387,7 +388,7 @@ static vk::Pipeline CreateWrappedPipelineImpl(
+             .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+             .module = *std::get<1>(shaders),
+             .pName = "main",
+-            .pSpecializationInfo = nullptr,
++            .pSpecializationInfo = fragment_specialization,
+         },
+     }};
+ 
+@@ -496,7 +497,8 @@ static vk::Pipeline CreateWrappedPipelineImpl(
+ 
+ vk::Pipeline CreateWrappedPipeline(const Device& device, vk::RenderPass& renderpass,
+                                    vk::PipelineLayout& layout,
+-                                   std::tuple<vk::ShaderModule&, vk::ShaderModule&> shaders) {
++                                   std::tuple<vk::ShaderModule&, vk::ShaderModule&> shaders,
++                                   const VkSpecializationInfo* fragment_specialization) {
+     constexpr VkPipelineColorBlendAttachmentState color_blend_attachment_disabled{
+         .blendEnable = VK_FALSE,
+         .srcColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+@@ -510,7 +512,7 @@ vk::Pipeline CreateWrappedPipeline(const Device& device, vk::RenderPass& renderp
+     };
+ 
+     return CreateWrappedPipelineImpl(device, renderpass, layout, shaders,
+-                                     color_blend_attachment_disabled);
++                                     color_blend_attachment_disabled, fragment_specialization);
+ }
+ 
+ vk::Pipeline CreateWrappedPremultipliedBlendingPipeline(
+diff --git a/src/video_core/renderer_vulkan/present/util.h b/src/video_core/renderer_vulkan/present/util.h
+index 38cc620..f698654 100644
+--- a/src/video_core/renderer_vulkan/present/util.h
++++ b/src/video_core/renderer_vulkan/present/util.h
+@@ -43,9 +43,13 @@ vk::DescriptorSets CreateWrappedDescriptorSets(vk::DescriptorPool& pool,
+                                                vk::Span<VkDescriptorSetLayout> layouts);
+ vk::PipelineLayout CreateWrappedPipelineLayout(const Device& device,
+                                                vk::DescriptorSetLayout& layout);
++/// @param fragment_specialization Optional specialization constants for the
++///        fragment stage; used by the retro presentation filter so one shader
++///        serves every launcher preset without a pipeline permutation per look.
+ vk::Pipeline CreateWrappedPipeline(const Device& device, vk::RenderPass& renderpass,
+                                    vk::PipelineLayout& layout,
+-                                   std::tuple<vk::ShaderModule&, vk::ShaderModule&> shaders);
++                                   std::tuple<vk::ShaderModule&, vk::ShaderModule&> shaders,
++                                   const VkSpecializationInfo* fragment_specialization = nullptr);
+ vk::Pipeline CreateWrappedPremultipliedBlendingPipeline(
+     const Device& device, vk::RenderPass& renderpass, vk::PipelineLayout& layout,
+     std::tuple<vk::ShaderModule&, vk::ShaderModule&> shaders);
+diff --git a/src/video_core/renderer_vulkan/present/window_adapt_pass.cpp b/src/video_core/renderer_vulkan/present/window_adapt_pass.cpp
+index 549b066..27bb7a2 100644
+--- a/src/video_core/renderer_vulkan/present/window_adapt_pass.cpp
++++ b/src/video_core/renderer_vulkan/present/window_adapt_pass.cpp
+@@ -18,10 +18,31 @@
+ 
+ namespace Vulkan {
+ 
+-WindowAdaptPass::WindowAdaptPass(const Device& device, VkFormat frame_format, vk::Sampler&& sampler_, vk::ShaderModule&& fragment_shader_)
++WindowAdaptPass::WindowAdaptPass(const Device& device, VkFormat frame_format, vk::Sampler&& sampler_, vk::ShaderModule&& fragment_shader_,
++                                 const VkSpecializationInfo* fragment_spec)
+     : sampler(std::move(sampler_))
+     , fragment_shader(std::move(fragment_shader_))
+ {
++    // Take our own copy of the specialization data: Vulkan reads it during
++    // pipeline creation, which happens below, but keeping it alive for the
++    // lifetime of the pass costs nothing and avoids a dangling-pointer trap if
++    // pipelines are ever recreated.
++    if (fragment_spec != nullptr && fragment_spec->mapEntryCount > 0) {
++        spec_entries.assign(fragment_spec->pMapEntries,
++                            fragment_spec->pMapEntries + fragment_spec->mapEntryCount);
++        const auto* raw = static_cast<const u8*>(fragment_spec->pData);
++        const std::size_t words = (fragment_spec->dataSize + sizeof(u32) - 1) / sizeof(u32);
++        spec_data.resize(words, 0);
++        std::memcpy(spec_data.data(), raw, fragment_spec->dataSize);
++        spec_info = VkSpecializationInfo{
++            .mapEntryCount = static_cast<u32>(spec_entries.size()),
++            .pMapEntries = spec_entries.data(),
++            .dataSize = fragment_spec->dataSize,
++            .pData = spec_data.data(),
++        };
++        has_spec = true;
++    }
++
+     CreateDescriptorSetLayout(device);
+     CreatePipelineLayout(device);
+     CreateVertexShader(device);
+@@ -147,8 +168,9 @@ void WindowAdaptPass::CreateRenderPass(const Device& device, VkFormat frame_form
+ }
+ 
+ void WindowAdaptPass::CreatePipelines(const Device& device) {
++    const VkSpecializationInfo* spec = has_spec ? &spec_info : nullptr;
+     opaque_pipeline = CreateWrappedPipeline(device, render_pass, pipeline_layout,
+-                                            std::tie(vertex_shader, fragment_shader));
++                                            std::tie(vertex_shader, fragment_shader), spec);
+     premultiplied_pipeline = CreateWrappedPremultipliedBlendingPipeline(
+         device, render_pass, pipeline_layout, std::tie(vertex_shader, fragment_shader));
+     coverage_pipeline = CreateWrappedCoverageBlendingPipeline(
+diff --git a/src/video_core/renderer_vulkan/present/window_adapt_pass.h b/src/video_core/renderer_vulkan/present/window_adapt_pass.h
+index 58d6fc0..95e814e 100644
+--- a/src/video_core/renderer_vulkan/present/window_adapt_pass.h
++++ b/src/video_core/renderer_vulkan/present/window_adapt_pass.h
+@@ -6,6 +6,8 @@
+ 
+ #pragma once
+ 
++#include <vector>
++
+ #include <list>
+ 
+ #include "common/math_util.h"
+@@ -29,8 +31,12 @@ class RasterizerVulkan;
+ 
+ class WindowAdaptPass final {
+ public:
++    /// @param fragment_spec Optional specialization constants for the fragment
++    ///        stage. Copied internally, so the caller's storage need not
++    ///        outlive the call.
+     explicit WindowAdaptPass(const Device& device, VkFormat frame_format, vk::Sampler&& sampler,
+-                             vk::ShaderModule&& fragment_shader);
++                             vk::ShaderModule&& fragment_shader,
++                             const VkSpecializationInfo* fragment_spec = nullptr);
+     ~WindowAdaptPass();
+ 
+     void Draw(const Device& device, RasterizerVulkan& rasterizer, Scheduler& scheduler, size_t image_index,
+@@ -52,6 +58,12 @@ private:
+     vk::Sampler sampler;
+     vk::ShaderModule vertex_shader;
+     vk::ShaderModule fragment_shader;
++    /// Owned copies backing the VkSpecializationInfo handed to pipeline
++    /// creation; Vulkan does not take ownership of these.
++    std::vector<VkSpecializationMapEntry> spec_entries;
++    std::vector<u32> spec_data;
++    VkSpecializationInfo spec_info{};
++    bool has_spec{false};
+     vk::RenderPass render_pass;
+     vk::Pipeline opaque_pipeline;
+     vk::Pipeline premultiplied_pipeline;
+diff --git a/src/video_core/renderer_vulkan/vk_blit_screen.cpp b/src/video_core/renderer_vulkan/vk_blit_screen.cpp
+index 05314fe..562565a 100644
+--- a/src/video_core/renderer_vulkan/vk_blit_screen.cpp
++++ b/src/video_core/renderer_vulkan/vk_blit_screen.cpp
+@@ -12,6 +12,7 @@
+ #include "video_core/present.h"
+ #include "video_core/renderer_vulkan/present/filters.h"
+ #include "video_core/renderer_vulkan/present/layer.h"
++#include "common/symbiosis/launcher_profiles.h"
+ #include "video_core/renderer_vulkan/vk_blit_screen.h"
+ #include "video_core/renderer_vulkan/vk_present_manager.h"
+ #include "video_core/renderer_vulkan/vk_scheduler.h"
+@@ -38,8 +39,29 @@ void BlitScreen::WaitIdle(const Device& device) {
+ }
+ 
+ void BlitScreen::SetWindowAdaptPass(const Device& device) {
++    // The active launcher can override the scaling filter entirely: a retro
++    // preset has to run its own shader to pixelate and quantise, and no stock
++    // filter can do that. Checked first so the user's launcher choice always
++    // wins over the generic filter setting.
++    // Layers hold descriptor sets built against the *current* window_adapt
++    // pass. Replacing the pass without clearing them leaves those descriptors
++    // pointing at a destroyed pipeline and render pass, which the driver
++    // reports as a lost device the moment the next frame is submitted.
++    //
++    // This was the cause of "changing any setting throws me back to the game
++    // list": ApplySettings -> RefreshBaseSettings -> SetWindowAdaptPass, and
++    // the retro branch returned early without clearing. Clear first, for every
++    // path, before anything is rebuilt.
+     layers.clear();
+     scaling_filter = filters.get_scaling_filter();
++    retro_generation = Symbiosis::RetroGeneration();
++
++    if (!Symbiosis::GetLauncherCatalogue().ActiveRetroPreset().IsIdentity()) {
++        window_adapt = MakeRetro(device, swapchain_view_format);
++        retro_active = true;
++        return;
++    }
++    retro_active = false;
+ 
+     switch (scaling_filter) {
+     case Settings::ScalingFilter::NearestNeighbor:
+@@ -93,7 +115,18 @@ void BlitScreen::DrawToFrame(const Device& device, RasterizerVulkan& rasterizer,
+     bool resource_update_required = false;
+     bool presentation_recreate_required = false;
+ 
+-    if (!window_adapt || scaling_filter != filters.get_scaling_filter()) {
++    // Sample the retro state once per frame. Reading it repeatedly is both
++    // wasteful (nine setting lookups per call) and inconsistent: the UI thread
++    // can change a slider between two calls, so two checks in the same frame
++    // could disagree with each other.
++    // One sample per frame, reused by every check below. Each call walks nine
++    // settings, and this runs on the presentation path: repeating it was
++    // measurable overhead for no benefit.
++    const auto retro_preset = Symbiosis::GetLauncherCatalogue().ActiveRetroPreset();
++    const u64 retro_now = Symbiosis::RetroGeneration();
++    const bool retro_wanted = !retro_preset.IsIdentity();
++    if (!window_adapt || scaling_filter != filters.get_scaling_filter() ||
++        retro_wanted != retro_active || retro_generation != retro_now) {
+         resource_update_required = true;
+     }
+ 
+@@ -147,7 +180,12 @@ vk::Framebuffer BlitScreen::CreateFramebuffer(const Device& device, const Layout
+     bool format_updated = swapchain_view_format != current_view_format;
+     swapchain_view_format = current_view_format;
+ 
+-    if (!window_adapt || scaling_filter != filters.get_scaling_filter() || format_updated) {
++    const u64 retro_now2 = Symbiosis::RetroGeneration();
++    const bool retro_wanted2 = retro_active || retro_now2 != retro_generation
++                                   ? !Symbiosis::GetLauncherCatalogue().ActiveRetroPreset().IsIdentity()
++                                   : false;
++    if (!window_adapt || scaling_filter != filters.get_scaling_filter() || format_updated ||
++        retro_wanted2 != retro_active || retro_generation != retro_now2) {
+         WaitIdle(device);
+         SetWindowAdaptPass(device);
+         image_index = 0;
+diff --git a/src/video_core/renderer_vulkan/vk_blit_screen.h b/src/video_core/renderer_vulkan/vk_blit_screen.h
+index e50f0bc..62d7d2a 100644
+--- a/src/video_core/renderer_vulkan/vk_blit_screen.h
++++ b/src/video_core/renderer_vulkan/vk_blit_screen.h
+@@ -80,6 +80,11 @@ private:
+     VkFormat swapchain_view_format{};
+ 
+     Settings::ScalingFilter scaling_filter{};
++    /// True when the retro presentation filter owns the window adapt pass.
++    bool retro_active{false};
++    /// Snapshot of the retro settings generation, so moving a slider forces
++    /// the pipeline to be rebuilt with new specialization constants.
++    u64 retro_generation{0};
+     std::unique_ptr<WindowAdaptPass> window_adapt{};
+     std::list<Layer> layers{};
+ };
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+index 785602b..6e366ff 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -18,6 +18,7 @@
+ #include "common/fs/fs.h"
+ #include "common/fs/path_util.h"
+ #include "common/thread_worker.h"
++#include "common/symbiosis/settings_audit.h"
+ #include "core/core.h"
+ #include "shader_recompiler/backend/spirv/emit_spirv.h"
+ #include "shader_recompiler/environment.h"
+@@ -316,6 +317,21 @@ size_t GetTotalPipelineWorkers() {
+ #endif
+ }
+ 
++/**
++ * @brief Worker count, recorded on the way past.
++ *
++ * The count is decided here and then never exposed, so the settings audit had
++ * no way to tell "asynchronous shaders, four threads" from "asynchronous
++ * shaders, one thread because this driver miscompiles in parallel" - which are
++ * very different experiences for the user.
++ */
++size_t ReportedPipelineWorkers(const Device& device) {
++    const size_t count =
++        device.HasBrokenParallelShaderCompiling() ? 1ULL : GetTotalPipelineWorkers();
++    Symbiosis::SettingsAudit::ReportPipelineWorkers(static_cast<u32>(count));
++    return count;
++}
++
+ } // Anonymous namespace
+ 
+ size_t ComputePipelineCacheKey::Hash() const noexcept {
+@@ -350,8 +366,8 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
+       texture_cache{texture_cache_}, shader_notify{shader_notify_},
+       use_asynchronous_shaders{Settings::values.use_asynchronous_shaders.GetValue()},
+       use_vulkan_pipeline_cache{Settings::values.use_vulkan_driver_pipeline_cache.GetValue()},
+-      workers(device.HasBrokenParallelShaderCompiling() ? 1ULL : GetTotalPipelineWorkers(),
+-              "VkPipelineBuilder", {}, Common::ThreadPlacement::Background),
++      workers(ReportedPipelineWorkers(device), "VkPipelineBuilder", {},
++              Common::ThreadPlacement::Background),
+       serialization_thread(1, "VkPipelineSerialization", {},
+                            Common::ThreadPlacement::Background) {
+     const auto& float_control{device.FloatControlProperties()};
+diff --git a/src/video_core/renderer_vulkan/vk_scheduler.cpp b/src/video_core/renderer_vulkan/vk_scheduler.cpp
+index 3601a3e..776f588 100644
+--- a/src/video_core/renderer_vulkan/vk_scheduler.cpp
++++ b/src/video_core/renderer_vulkan/vk_scheduler.cpp
+@@ -19,6 +19,7 @@
+ #include "video_core/renderer_vulkan/vk_command_pool.h"
+ #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
+ #include "video_core/renderer_vulkan/vk_master_semaphore.h"
++#include "common/symbiosis/driver_broker.h"
+ #include "video_core/renderer_vulkan/vk_scheduler.h"
+ #include "video_core/renderer_vulkan/vk_state_tracker.h"
+ #include "video_core/renderer_vulkan/vk_texture_cache.h"
+@@ -362,6 +363,12 @@ u64 Scheduler::SubmitExecution(VkSemaphore signal_semaphore, VkSemaphore wait_se
+             break;
+         case VK_ERROR_DEVICE_LOST:
+             device.ReportLoss();
++            // Charge the loss to the driver that owns this queue. After
++            // kQuarantineThreshold faults the broker demotes it and reroutes
++            // capabilities to a healthier provider instead of the session
++            // simply dying again on the next submit.
++            Symbiosis::GetDriverBroker().ReportFault(
++                Symbiosis::GetDriverBroker().Primary(), "VK_ERROR_DEVICE_LOST on queue submit");
+             [[fallthrough]];
+         default:
+             vk::Check(result);
+diff --git a/src/video_core/renderer_vulkan/vk_swapchain.cpp b/src/video_core/renderer_vulkan/vk_swapchain.cpp
+index fdbad16..aa596a1 100644
+--- a/src/video_core/renderer_vulkan/vk_swapchain.cpp
++++ b/src/video_core/renderer_vulkan/vk_swapchain.cpp
+@@ -16,6 +16,7 @@
+ #include "common/logging.h"
+ #include "common/settings.h"
+ #include "common/settings_enums.h"
++#include "common/symbiosis/settings_audit.h"
+ #include "video_core/renderer_vulkan/vk_scheduler.h"
+ #include "video_core/renderer_vulkan/vk_swapchain.h"
+ #include "video_core/vulkan_common/vk_enum_string_helper.h"
+@@ -262,6 +263,18 @@ void Swapchain::CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities) {
+     surface_format = ChooseSwapSurfaceFormat(formats);
+     present_mode = ChooseSwapPresentMode(has_imm, has_mailbox, has_fifo_relaxed);
+ 
++    // Record what the surface offered against what was requested. The
++    // negotiation above is silent, so a user who selects Mailbox on a surface
++    // that only has FIFO sees a frame rate cap with no explanation anywhere.
++    {
++        Symbiosis::SettingsAudit::PresentFacts facts;
++        facts.has_immediate = has_imm;
++        facts.has_mailbox = has_mailbox;
++        facts.has_fifo_relaxed = has_fifo_relaxed;
++        facts.chosen_mode = static_cast<u32>(present_mode);
++        Symbiosis::SettingsAudit::ReportPresent(facts);
++    }
++
+     u32 requested_image_count{capabilities.minImageCount + 1};
+     // Ensure Triple buffering if possible.
+     if (capabilities.maxImageCount > 0) {
+diff --git a/src/video_core/texture_cache/texture_cache.h b/src/video_core/texture_cache/texture_cache.h
+index 98a5e05..1a5d152 100644
+--- a/src/video_core/texture_cache/texture_cache.h
++++ b/src/video_core/texture_cache/texture_cache.h
+@@ -22,6 +22,10 @@
+ #include "video_core/host1x/gpu_device_memory_manager.h"
+ #include "video_core/texture_cache/image_view_base.h"
+ #include "video_core/texture_cache/samples_helper.h"
++#include <thread>
++
++#include "common/symbiosis/mali_tuning.h"
++#include "common/symbiosis/memory_governor.h"
+ #include "video_core/texture_cache/texture_cache_base.h"
+ #include "video_core/texture_cache/util.h"
+ #include "video_core/textures/decoders.h"
+@@ -77,6 +81,82 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
+         minimum_memory = 0;
+     }
+ 
++    // --- Symbiosis -------------------------------------------------------
++    // The thresholds above are derived from the GPU's *reported* memory. On a
++    // unified-memory Android device that number is the whole system RAM, which
++    // the app will never be allowed to use: on an 8 GB phone roughly 3 GB is
++    // held by the OS, the HAL stack and the GPU driver's own shadow copies.
++    //
++    // Left alone, the cache happily grows past what the lowmemorykiller
++    // tolerates and the app is killed mid-game instead of evicting a texture.
++    // Clamp every threshold to the governor's honest budget.
++    // Respect the user's kill switch. If the governor is disabled the cache
++    // keeps upstream's own thresholds and registers no donor, so this file
++    // behaves exactly like stock Eden.
++    if (Settings::values.symbiosis_memory_governor.GetValue()) {
++        auto& governor = Symbiosis::GetMemoryGovernor();
++        governor.Initialise();
++        const u64 budget = governor.Budget();
++        if (budget > 0) {
++            // Textures may claim at most a fraction of the budget: the rest
++            // belongs to guest RAM, the buffer cache and the shader cache.
++            // The exact share depends on the GPU: an old Bifrost part with two
++            // cores cannot make use of as much texture memory as an Immortalis,
++            // and taking it anyway just starves everything else.
++            const auto mali = Symbiosis::MaliTuning::Current();
++            const float share = mali.generation == Symbiosis::MaliGeneration::NotMali
++                                    ? 0.5f
++                                    : Symbiosis::MaliTuning::Advise(mali).texture_budget_fraction;
++            const u64 texture_ceiling = static_cast<u64>(static_cast<double>(budget) * share);
++            const u64 clamped_critical = (std::min)(critical_memory, texture_ceiling);
++            const u64 clamped_expected =
++                (std::min)(expected_memory, (clamped_critical * 8) / 10);
++
++            if (clamped_critical < critical_memory || clamped_expected < expected_memory) {
++                LOG_INFO(HW_GPU,
++                         "[Symbiosis] clamping texture cache: expected {} -> {} MiB, "
++                         "critical {} -> {} MiB (budget {} MiB)",
++                         expected_memory / 1048576, clamped_expected / 1048576,
++                         critical_memory / 1048576, clamped_critical / 1048576,
++                         budget / 1048576);
++            }
++            expected_memory = clamped_expected;
++            critical_memory = clamped_critical;
++            minimum_memory = (std::min)(minimum_memory, clamped_expected / 2);
++        }
++
++        // Register the texture cache as a memory donor. Under pressure the
++        // governor asks the caches that can rebuild themselves cheaply to give
++        // memory back before anything gets killed.
++        symbiosis_donor = governor.RegisterDonor(Symbiosis::Donor{
++            .name = "texture cache",
++            .release =
++                [this](u64 wanted) -> u64 {
++                    // The garbage collector walks and mutates cache structures
++                    // that are not thread-safe. Only run it from the thread
++                    // that owns the cache; a reclaim requested from elsewhere
++                    // simply reports that it freed nothing rather than
++                    // corrupting state.
++                    if (std::this_thread::get_id() != owner_thread) {
++                        return 0;
++                    }
++                    if (symbiosis_collecting) {
++                        return 0; // never re-enter the collector
++                    }
++                    symbiosis_collecting = true;
++                    const u64 before = total_used_memory;
++                    const u64 saved_critical = critical_memory;
++                    critical_memory = 0;
++                    RunGarbageCollector();
++                    critical_memory = saved_critical;
++                    symbiosis_collecting = false;
++                    const u64 after = total_used_memory;
++                    return before > after ? before - after : 0;
++                },
++            .priority = 10,
++        });
++    }
++
+     const bool gpu_unswizzle_enabled = Settings::values.gpu_unswizzle_enabled.GetValue();
+ 
+     if (gpu_unswizzle_enabled) {
+@@ -167,11 +247,39 @@ void TextureCache<P>::RunGarbageCollector() {
+     }
+ }
+ 
++template <class P>
++TextureCache<P>::~TextureCache() {
++    // Critical: the governor is a process-wide singleton and outlives this
++    // cache. Leaving the donor registered means the next memory reclaim -- for
++    // example when the user starts another game -- calls a lambda bound to
++    // freed memory. That is a use-after-free that reliably kills the process.
++    Symbiosis::GetMemoryGovernor().UnregisterDonor(symbiosis_donor);
++    symbiosis_donor = Symbiosis::kInvalidDonor;
++
++    // Our share of the GPU budget goes away with us.
++    Symbiosis::GetMemoryGovernor().NoteGpuAllocation(
++        -static_cast<s64>(last_reported_gpu_memory));
++    last_reported_gpu_memory = 0;
++}
++
+ template <class P>
+ void TextureCache<P>::TickFrame() {
+     // If we can obtain the memory info, use it instead of the estimate.
+     if (runtime.CanReportMemoryUsage()) {
+         total_used_memory = runtime.GetDeviceMemoryUsage();
++
++        // Feed the real GPU-side figure to the governor. Device memory does
++        // not appear in the process RSS, so without this the budget check
++        // would be blind to the largest consumer on a unified-memory device.
++        if (symbiosis_donor != Symbiosis::kInvalidDonor) {
++            auto& governor = Symbiosis::GetMemoryGovernor();
++            governor.NoteGpuAllocation(static_cast<s64>(total_used_memory) -
++                                       static_cast<s64>(last_reported_gpu_memory));
++            last_reported_gpu_memory = total_used_memory;
++
++            // Cheap: only acts when pressure is Critical or worse.
++            governor.Tick();
++        }
+     }
+     if (total_used_memory > minimum_memory) {
+         RunGarbageCollector();
+diff --git a/src/video_core/texture_cache/texture_cache_base.h b/src/video_core/texture_cache/texture_cache_base.h
+index fafc331..dbcb1d6 100644
+--- a/src/video_core/texture_cache/texture_cache_base.h
++++ b/src/video_core/texture_cache/texture_cache_base.h
+@@ -38,6 +38,9 @@
+ #include "video_core/texture_cache/image_info.h"
+ #include "video_core/texture_cache/image_view_base.h"
+ #include "video_core/texture_cache/render_targets.h"
++#include <thread>
++
++#include "common/symbiosis/memory_governor.h"
+ #include "video_core/texture_cache/types.h"
+ #include "video_core/textures/texture.h"
+ 
+@@ -151,6 +154,8 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
+ public:
+     explicit TextureCache(Runtime&, Tegra::MaxwellDeviceMemoryManager&);
+ 
++    ~TextureCache();
++
+     /// Notify the cache that a new frame has been queued
+     void TickFrame();
+ 
+@@ -451,6 +456,19 @@ private:
+     bool has_deleted_images = false;
+     bool is_rescaling = false;
+     u64 total_used_memory = 0;
++    /// Last value handed to the Symbiosis memory governor, so we can report a
++    /// delta rather than double-counting every frame.
++    u64 last_reported_gpu_memory = 0;
++    /// Handle for the Symbiosis memory donor registered in the constructor.
++    /// The governor is a process-wide singleton that outlives this cache, so
++    /// the registration MUST be removed in the destructor or the next reclaim
++    /// will call into freed memory.
++    Symbiosis::DonorHandle symbiosis_donor{Symbiosis::kInvalidDonor};
++    /// Thread that constructed the cache. The garbage collector is not
++    /// thread-safe, so a reclaim arriving on any other thread is declined.
++    std::thread::id owner_thread{std::this_thread::get_id()};
++    /// Re-entrancy guard: the collector must never call itself.
++    bool symbiosis_collecting{false};
+     u64 minimum_memory;
+     u64 expected_memory;
+     u64 critical_memory;
+diff --git a/src/video_core/vulkan_common/vulkan_device.cpp b/src/video_core/vulkan_common/vulkan_device.cpp
+index 8c41a7e..d95ce63 100644
+--- a/src/video_core/vulkan_common/vulkan_device.cpp
++++ b/src/video_core/vulkan_common/vulkan_device.cpp
+@@ -22,6 +22,9 @@
+ #include "common/settings_enums.h"
+ #include "video_core/vulkan_common/nsight_aftermath_tracker.h"
+ #include "video_core/vulkan_common/vma.h"
++#include "common/symbiosis/driver_broker.h"
++#include "common/symbiosis/mali_tuning.h"
++#include "common/symbiosis/settings_audit.h"
+ #include "video_core/vulkan_common/vulkan_device.h"
+ #include "video_core/vulkan_common/vulkan_wrapper.h"
+ #include "video_core/gpu_logging/gpu_logging.h"
+@@ -503,6 +506,84 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR
+     CollectPhysicalMemoryInfo();
+     CollectToolingInfo();
+ 
++    // --- Symbiosis -------------------------------------------------------
++    // Driver probing at load time can only look at exported symbols. Format
++    // and feature support is a property of the *device*, so it is only knowable
++    // here. Feed the ground truth back to the broker so capabilities it had to
++    // guess conservatively are corrected, which stops the layer routing work to
++    // a CPU fallback the GPU could have done natively.
++    // Identify the Mali part. Eden carries a large quirk block for Qualcomm but
++    // nothing for ARM, even though a Bifrost G71 and an Immortalis G720 differ
++    // enormously in compute throughput, driver reliability and how much memory
++    // the texture cache may safely take.
++    {
++        const bool is_arm_driver = driver_id == VK_DRIVER_ID_ARM_PROPRIETARY;
++        const auto traits = Symbiosis::MaliTuning::Identify(
++            properties.properties.deviceName, is_arm_driver,
++            properties.subgroup_properties.subgroupSize, properties.properties.apiVersion);
++        Symbiosis::MaliTuning::Publish(traits);
++
++        if (traits.generation != Symbiosis::MaliGeneration::NotMali) {
++            const auto advice = Symbiosis::MaliTuning::Advise(traits);
++            LOG_INFO(Render_Vulkan, "\n{}", Symbiosis::MaliTuning::Describe(traits, advice));
++
++            // Older Mali drivers miscompile or hang when shaders are built on
++            // several threads. Upstream only sets this for a handful of known
++            // parts; extend it to the generations that need it.
++            if (traits.fragile_parallel_compile) {
++                has_broken_parallel_compiling = true;
++                LOG_WARNING(Render_Vulkan,
++                            "Mali generation with unreliable parallel shader compilation; "
++                            "forcing single-threaded pipeline builds.");
++            }
++        }
++    }
++
++    // Recompression targets a BC format, and nothing downstream checks that
++    // the device can sample one. Three separate places consume this setting -
++    // format selection (maxwell_to_vk.cpp:248), the size calculation
++    // (texture_cache/util.cpp:611) and the compressor itself
++    // (texture_cache/util.cpp:943) - so correcting it at the point of use would
++    // desynchronise them and corrupt the upload buffer. Correcting the setting
++    // once, here, keeps all three in agreement.
++    if (Settings::values.astc_recompression.GetValue() !=
++            Settings::AstcRecompression::Uncompressed &&
++        !IsOptimalBcnSupported()) {
++        LOG_WARNING(Render_Vulkan,
++                    "ASTC recompression requested but this GPU cannot sample BC formats; "
++                    "falling back to uncompressed.");
++        Settings::values.astc_recompression.SetValue(
++            Settings::AstcRecompression::Uncompressed);
++    }
++
++    // Hand the settings audit the facts only this object can know. Several
++    // settings are silently discarded further down (ASTC recompression behind
++    // IsOptimalAstcSupported, clock boosting behind ShouldBoostClocks) and
++    // without these values the audit would have to guess.
++    {
++        Symbiosis::SettingsAudit::DeviceFacts facts;
++        facts.astc_native = IsOptimalAstcSupported();
++        facts.bcn_native = IsOptimalBcnSupported();
++        facts.should_boost_clocks = ShouldBoostClocks();
++        facts.broken_parallel_compile = has_broken_parallel_compiling;
++        facts.float16 = IsFloat16Supported();
++        facts.int8 = IsInt8Supported();
++        facts.driver_id = static_cast<u32>(driver_id);
++        facts.device_name = properties.properties.deviceName;
++        Symbiosis::SettingsAudit::ReportDevice(facts);
++    }
++
++    if (auto* provider = Symbiosis::GetDriverBroker().Primary()) {
++        Symbiosis::CapabilitySet observed = provider->caps;
++        observed.Set(Symbiosis::Capability::AstcDecode, IsOptimalAstcSupported());
++        observed.Set(Symbiosis::Capability::BcnDecode, IsOptimalBcnSupported());
++        observed.Set(Symbiosis::Capability::Etc2Decode, IsOptimalEtc2Supported());
++        observed.Set(Symbiosis::Capability::Float16, IsFloat16Supported());
++        observed.Set(Symbiosis::Capability::Int8, IsInt8Supported());
++        Symbiosis::GetDriverBroker().UpdateObservedCapabilities(provider, observed,
++                                                                properties.properties.apiVersion);
++    }
++
+     if (is_qualcomm) {
+         must_emulate_scaled_formats = true;
+         LOG_WARNING(Render_Vulkan, "Qualcomm drivers require scaled vertex format emulation.");

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Adaptive-icon foreground. The safe zone for an adaptive icon is the middle
+66dp of the 108dp canvas, so the artwork is kept well inside that. Launchers
+mask this to circles, squircles and rounded squares, and anything near the edge
+would be clipped on some devices.
+
+The mark matches the splash: two interlocking rings whose overlap forms a
+single shared core: two incomplete components forming one working whole.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Left ring -->
+    <path
+        android:pathData="M46,54m-19,0a19,19 0,1 1,38 0a19,19 0,1 1,-38 0"
+        android:strokeColor="#4DD8C0"
+        android:strokeWidth="5.5"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+
+    <!-- Right ring -->
+    <path
+        android:pathData="M62,54m-19,0a19,19 0,1 1,38 0a19,19 0,1 1,-38 0"
+        android:strokeColor="#7C6CF0"
+        android:strokeWidth="5.5"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+
+    <!-- Shared core -->
+    <path
+        android:pathData="M54,38 C59,42 62,48 62,54 C62,60 59,66 54,70 C49,66 46,60 46,54 C46,48 49,42 54,38 Z"
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.95" />
+
+</vector>

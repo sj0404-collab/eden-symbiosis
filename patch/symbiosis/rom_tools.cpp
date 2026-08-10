@@ -1,0 +1,459 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+
+#include "common/logging.h"
+#include "common/symbiosis/rom_tools.h"
+#include "common/symbiosis/symbiosis_log.h"
+
+namespace Symbiosis {
+
+namespace {
+
+constexpr u64 kMiB = 1024ULL * 1024ULL;
+
+/// Gamecard header layout, as far as this tool needs it. Offsets are from the
+/// start of the file; the magic sits at 0x100.
+constexpr u64 kGamecardMagicOffset = 0x100;
+constexpr u32 kGamecardMagic = 0x44414548;      // "HEAD"
+constexpr u64 kValidDataEndOffset = 0x118;      // u64, in 0x200-byte media units
+constexpr u64 kMediaUnit = 0x200;
+
+constexpr u32 kPfs0Magic = 0x30534650; // "PFS0"
+constexpr u32 kHfs0Magic = 0x30534648; // "HFS0"
+constexpr u32 kNca3Magic = 0x3341434E; // "NCA3"
+constexpr u32 kNca2Magic = 0x3241434E; // "NCA2"
+constexpr u32 kNroMagic  = 0x304F524E; // "NRO0"
+
+bool ReadAt(std::ifstream& file, u64 offset, void* out, std::size_t size) {
+    file.clear();
+    file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    if (!file) {
+        return false;
+    }
+    file.read(static_cast<char*>(out), static_cast<std::streamsize>(size));
+    return static_cast<std::size_t>(file.gcount()) == size;
+}
+
+std::string LowerExtension(const std::string& path) {
+    const auto dot = path.find_last_of('.');
+    if (dot == std::string::npos) {
+        return {};
+    }
+    std::string ext = path.substr(dot + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext;
+}
+
+} // Anonymous namespace
+
+const char* ToString(DumpFormat format) {
+    switch (format) {
+    case DumpFormat::Xci:
+        return "XCI";
+    case DumpFormat::Nsp:
+        return "NSP";
+    case DumpFormat::Nca:
+        return "NCA";
+    case DumpFormat::Nro:
+        return "NRO";
+    case DumpFormat::Nsz:
+        return "NSZ";
+    case DumpFormat::Xcz:
+        return "XCZ";
+    case DumpFormat::Unknown:
+        break;
+    }
+    return "Unknown";
+}
+
+const char* ToString(DumpHealth health) {
+    switch (health) {
+    case DumpHealth::Good:
+        return "Good";
+    case DumpHealth::Trimmed:
+        return "Trimmed";
+    case DumpHealth::Truncated:
+        return "Truncated";
+    case DumpHealth::Padded:
+        return "Has padding";
+    case DumpHealth::Corrupt:
+        return "Corrupt";
+    case DumpHealth::Unknown:
+        break;
+    }
+    return "Unknown";
+}
+
+DumpFormat RomTools::DetectFormat(const std::string& path) {
+    std::ifstream file{path, std::ios::binary};
+    if (!file.is_open()) {
+        return DumpFormat::Unknown;
+    }
+
+    // Community compressed formats have no distinct magic; the extension is
+    // the only signal, and being honest about that is better than guessing.
+    const std::string ext = LowerExtension(path);
+    if (ext == "nsz") {
+        return DumpFormat::Nsz;
+    }
+    if (ext == "xcz") {
+        return DumpFormat::Xcz;
+    }
+
+    u32 magic = 0;
+    if (ReadAt(file, kGamecardMagicOffset, &magic, sizeof(magic)) && magic == kGamecardMagic) {
+        return DumpFormat::Xci;
+    }
+    if (ReadAt(file, 0, &magic, sizeof(magic))) {
+        if (magic == kPfs0Magic || magic == kHfs0Magic) {
+            return DumpFormat::Nsp;
+        }
+    }
+    if (ReadAt(file, 0x200, &magic, sizeof(magic))) {
+        if (magic == kNca3Magic || magic == kNca2Magic) {
+            return DumpFormat::Nca;
+        }
+    }
+    if (ReadAt(file, 0x10, &magic, sizeof(magic)) && magic == kNroMagic) {
+        return DumpFormat::Nro;
+    }
+
+    if (ext == "xci") {
+        return DumpFormat::Xci;
+    }
+    if (ext == "nsp") {
+        return DumpFormat::Nsp;
+    }
+    if (ext == "nca") {
+        return DumpFormat::Nca;
+    }
+    if (ext == "nro") {
+        return DumpFormat::Nro;
+    }
+    return DumpFormat::Unknown;
+}
+
+DumpReport RomTools::Inspect(const std::string& path) {
+    DumpReport report{};
+    report.path = path;
+
+    std::error_code ec;
+    const std::filesystem::path fs_path{path};
+    report.filename = fs_path.filename().string();
+
+    if (!std::filesystem::is_regular_file(fs_path, ec)) {
+        report.health = DumpHealth::Corrupt;
+        report.summary = "Not a readable file.";
+        return report;
+    }
+    report.file_size = static_cast<u64>(std::filesystem::file_size(fs_path, ec));
+    report.format = DetectFormat(path);
+
+    std::ifstream file{path, std::ios::binary};
+    if (!file.is_open()) {
+        report.health = DumpHealth::Corrupt;
+        report.summary = "Could not open the file.";
+        return report;
+    }
+
+    switch (report.format) {
+    case DumpFormat::Xci: {
+        u64 units = 0;
+        if (!ReadAt(file, kValidDataEndOffset, &units, sizeof(units))) {
+            report.health = DumpHealth::Corrupt;
+            report.summary = "The gamecard header could not be read.";
+            report.advice = "The file is probably incomplete or not really an XCI.";
+            break;
+        }
+        // valid_data_end is the last used media unit, so the content runs one
+        // unit past it.
+        report.valid_data_end = (units + 1) * kMediaUnit;
+
+        // Sanity-check against the largest cartridge that exists (32 GB) rather
+        // than against the file's own size. Comparing to the file size was
+        // wrong: a badly truncated dump then looked "implausible" and was
+        // reported as Corrupt, which tells the user nothing they can act on,
+        // instead of Truncated, which tells them the transfer did not finish.
+        constexpr u64 kMaxCartridgeBytes = 34ULL * 1024 * 1024 * 1024;
+        if (report.valid_data_end == 0 || report.valid_data_end > kMaxCartridgeBytes) {
+            report.health = DumpHealth::Corrupt;
+            report.summary = "The header reports an implausible content size.";
+            report.advice = "Re-dump this cartridge.";
+        } else if (report.file_size < report.valid_data_end) {
+            report.health = DumpHealth::Truncated;
+            const u64 missing = report.valid_data_end - report.file_size;
+            report.summary = "Incomplete: " + std::to_string(missing / kMiB) +
+                             " MiB short of what the header declares.";
+            report.advice = "This will fail to load. The transfer or dump did not finish.";
+        } else if (report.file_size > report.valid_data_end + kMiB) {
+            report.health = DumpHealth::Padded;
+            report.reclaimable = report.file_size - report.valid_data_end;
+            report.summary = "Valid, with " + std::to_string(report.reclaimable / kMiB) +
+                             " MiB of cartridge padding.";
+            report.advice = "Trim or convert to NSP to reclaim that space.";
+        } else {
+            report.health = DumpHealth::Trimmed;
+            report.summary = "Valid and already trimmed.";
+        }
+        break;
+    }
+
+    case DumpFormat::Nsp: {
+        u32 magic = 0;
+        u32 file_count = 0;
+        if (!ReadAt(file, 0, &magic, sizeof(magic)) ||
+            !ReadAt(file, 4, &file_count, sizeof(file_count))) {
+            report.health = DumpHealth::Corrupt;
+            report.summary = "The PFS0 header could not be read.";
+            break;
+        }
+        if (file_count == 0 || file_count > 10000) {
+            report.health = DumpHealth::Corrupt;
+            report.summary = "The archive lists an implausible number of files.";
+            report.advice = "Re-download or re-dump this file.";
+        } else {
+            report.health = DumpHealth::Good;
+            report.summary = "Valid package containing " + std::to_string(file_count) +
+                             " file(s).";
+        }
+        break;
+    }
+
+    case DumpFormat::Nsz:
+    case DumpFormat::Xcz:
+        report.health = DumpHealth::Unknown;
+        report.summary = "Community compressed format.";
+        report.advice = "Eden cannot load these directly. Decompress to NSP or XCI first "
+                        "with an external tool.";
+        break;
+
+    case DumpFormat::Nca:
+        report.health = DumpHealth::Good;
+        report.summary = "Bare content archive.";
+        report.advice = "Usually part of a package rather than something to launch.";
+        break;
+
+    case DumpFormat::Nro:
+        report.health = DumpHealth::Good;
+        report.summary = "Homebrew application. No keys required.";
+        break;
+
+    default:
+        report.health = DumpHealth::Unknown;
+        report.summary = "Not a recognised Switch dump.";
+        break;
+    }
+
+    return report;
+}
+
+u64 RomTools::TrimXci(const std::string& path, std::string& error_out) {
+    const auto report = Inspect(path);
+
+    if (report.format != DumpFormat::Xci) {
+        error_out = "Only XCI files carry cartridge padding.";
+        return 0;
+    }
+    if (report.health == DumpHealth::Truncated) {
+        error_out = "This file is incomplete; trimming it would destroy data.";
+        return 0;
+    }
+    if (report.health != DumpHealth::Padded || report.reclaimable == 0) {
+        error_out = "Nothing to trim.";
+        return 0;
+    }
+
+    std::error_code ec;
+    std::filesystem::resize_file(path, report.valid_data_end, ec);
+    if (ec) {
+        error_out = "Could not resize the file: " + ec.message();
+        return 0;
+    }
+
+    LogInfo(LogArea::General, "trimmed " + report.filename + ": freed " +
+                                  std::to_string(report.reclaimable / kMiB) + " MiB");
+    return report.reclaimable;
+}
+
+u64 RomTools::XciToNsp(const std::string& source, const std::string& destination,
+                       std::string& error_out) {
+    const auto report = Inspect(source);
+    if (report.format != DumpFormat::Xci) {
+        error_out = "The source is not an XCI.";
+        return 0;
+    }
+    if (report.health == DumpHealth::Truncated || report.health == DumpHealth::Corrupt) {
+        error_out = "The source dump is not intact; fix it before converting.";
+        return 0;
+    }
+
+    std::ifstream in{source, std::ios::binary};
+    if (!in.is_open()) {
+        error_out = "Could not open the source file.";
+        return 0;
+    }
+
+    // An XCI holds several HFS0 partitions; the secure partition contains the
+    // content archives that make up the game. Locate it by walking the root
+    // HFS0 rather than assuming a fixed offset, because layouts differ.
+    u64 hfs0_offset = 0;
+    {
+        u64 units = 0;
+        if (!ReadAt(in, 0x130, &units, sizeof(units))) {
+            error_out = "Could not read the partition table offset.";
+            return 0;
+        }
+        hfs0_offset = units * kMediaUnit;
+    }
+
+    u32 magic = 0;
+    if (!ReadAt(in, hfs0_offset, &magic, sizeof(magic)) || magic != kHfs0Magic) {
+        error_out = "The partition table is missing or unreadable. This dump may use a "
+                    "layout this tool does not handle.";
+        return 0;
+    }
+
+    // Copying the secure partition verbatim preserves every content archive
+    // and their hashes. Rebuilding a PFS0 from scratch would risk corrupting
+    // the very thing we are trying to preserve, so the safe path is a byte
+    // copy of the region the header points at.
+    u32 partition_count = 0;
+    u32 string_table_size = 0;
+    if (!ReadAt(in, hfs0_offset + 4, &partition_count, sizeof(partition_count)) ||
+        !ReadAt(in, hfs0_offset + 8, &string_table_size, sizeof(string_table_size))) {
+        error_out = "The partition header is truncated.";
+        return 0;
+    }
+    if (partition_count == 0 || partition_count > 16) {
+        error_out = "Implausible partition count; the dump looks damaged.";
+        return 0;
+    }
+
+    constexpr u64 kHfs0HeaderSize = 0x10;
+    constexpr u64 kHfs0EntrySize = 0x40;
+    const u64 entries_offset = hfs0_offset + kHfs0HeaderSize;
+    const u64 strings_offset = entries_offset + partition_count * kHfs0EntrySize;
+    const u64 data_offset = strings_offset + string_table_size;
+
+    std::vector<char> strings(string_table_size + 1, '\0');
+    if (string_table_size > 0 &&
+        !ReadAt(in, strings_offset, strings.data(), string_table_size)) {
+        error_out = "Could not read the partition name table.";
+        return 0;
+    }
+
+    u64 secure_offset = 0;
+    u64 secure_size = 0;
+    for (u32 i = 0; i < partition_count; ++i) {
+        const u64 entry = entries_offset + i * kHfs0EntrySize;
+        u64 rel_offset = 0;
+        u64 size = 0;
+        u32 name_offset = 0;
+        if (!ReadAt(in, entry, &rel_offset, sizeof(rel_offset)) ||
+            !ReadAt(in, entry + 8, &size, sizeof(size)) ||
+            !ReadAt(in, entry + 16, &name_offset, sizeof(name_offset))) {
+            continue;
+        }
+        if (name_offset >= string_table_size) {
+            continue;
+        }
+        const std::string name{strings.data() + name_offset};
+        if (name == "secure") {
+            secure_offset = data_offset + rel_offset;
+            secure_size = size;
+            break;
+        }
+    }
+
+    if (secure_size == 0) {
+        error_out = "No secure partition found in this XCI.";
+        return 0;
+    }
+    if (secure_offset + secure_size > report.file_size) {
+        error_out = "The secure partition extends past the end of the file; the dump is "
+                    "incomplete.";
+        return 0;
+    }
+
+    std::ofstream out{destination, std::ios::binary | std::ios::trunc};
+    if (!out.is_open()) {
+        error_out = "Could not create the destination file.";
+        return 0;
+    }
+
+    std::vector<char> buffer(4 << 20);
+    u64 remaining = secure_size;
+    in.clear();
+    in.seekg(static_cast<std::streamoff>(secure_offset), std::ios::beg);
+
+    while (remaining > 0 && in) {
+        const auto chunk = static_cast<std::streamsize>(
+            std::min<u64>(remaining, static_cast<u64>(buffer.size())));
+        in.read(buffer.data(), chunk);
+        const auto got = in.gcount();
+        if (got <= 0) {
+            break;
+        }
+        out.write(buffer.data(), got);
+        remaining -= static_cast<u64>(got);
+    }
+
+    out.flush();
+    const bool ok = out.good() && remaining == 0;
+    out.close();
+
+    if (!ok) {
+        std::error_code ec;
+        std::filesystem::remove(destination, ec);
+        error_out = "The copy did not complete; the partial file was removed.";
+        return 0;
+    }
+
+    LogInfo(LogArea::General, "converted " + report.filename + " to NSP (" +
+                                  std::to_string(secure_size / kMiB) + " MiB)");
+    return secure_size;
+}
+
+std::string RomTools::Describe(const DumpReport& report) {
+    std::string out;
+    out += report.filename + "\n";
+    out += "  format: ";
+    out += ToString(report.format);
+    out += "\n  status: ";
+    out += ToString(report.health);
+    out += "\n  size:   " + std::to_string(report.file_size / kMiB) + " MiB\n";
+    if (report.valid_data_end > 0) {
+        out += "  content ends at: " + std::to_string(report.valid_data_end / kMiB) + " MiB\n";
+    }
+    if (report.reclaimable > 0) {
+        out += "  reclaimable:     " + std::to_string(report.reclaimable / kMiB) + " MiB\n";
+    }
+    out += "  " + report.summary + "\n";
+    if (!report.advice.empty()) {
+        out += "  -> " + report.advice + "\n";
+    }
+    return out;
+}
+
+std::string RomTools::CompressionNote() {
+    return "About NSZ and XCZ:\n\n"
+           "These community formats compress the *decrypted* contents, which means they "
+           "have to decrypt, recompress and then re-encrypt on the fly. Eden cannot load "
+           "them directly, and producing them here would mean reimplementing that pipeline "
+           "with a real risk of writing a corrupt file.\n\n"
+           "What this tool offers instead is the saving that needs no risk:\n"
+           "  - Trim: removes cartridge padding an XCI does not need. Often several GB.\n"
+           "  - Convert to NSP: keeps the game content and drops the padding and the "
+           "partitions the emulator never reads.\n\n"
+           "Both are byte-exact copies of the content that already exists. Nothing is "
+           "re-encoded, so nothing can be silently corrupted.\n";
+}
+
+} // namespace Symbiosis
