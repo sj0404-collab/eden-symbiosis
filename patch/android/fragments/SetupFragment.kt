@@ -309,14 +309,18 @@ class SetupFragment : Fragment() {
                                     requestSharedFolder()
                                 },
                                 {
-                                    if (SharedDataDirectory.isSharing(requireContext())) {
-                                        ButtonState.BUTTON_ACTION_COMPLETE
-                                    } else {
-                                        // Undefined, not incomplete: private
-                                        // storage is a perfectly good default
-                                        // and this step is optional.
-                                        ButtonState.BUTTON_ACTION_UNDEFINED
-                                    }
+                                    // Always UNDEFINED, never COMPLETE.
+                                    //
+                                    // COMPLETE makes the adapter grey the button
+                                    // out and disable it (SetupAdapter.kt:140).
+                                    // For keys or firmware that is right - once
+                                    // installed there is nothing left to do. For
+                                    // the data folder it is wrong: choosing a
+                                    // *different* folder is valid at any time,
+                                    // and a disabled button looks exactly like a
+                                    // missing one. The status is shown in the
+                                    // dialog after picking instead.
+                                    ButtonState.BUTTON_ACTION_UNDEFINED
                                 },
                                 false,
                                 false

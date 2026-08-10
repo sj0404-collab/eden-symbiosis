@@ -189,6 +189,16 @@ object SharedDataDirectory {
      * @return true when the redirect was applied.
      */
     fun redirectNow(path: String): Boolean = runCatching {
+        // Remember the game folders before touching anything.
+        //
+        // reloadGlobalConfig() re-reads config.ini from the *new* data root,
+        // and AndroidConfig::ReadPathValues() starts with
+        // `AndroidSettings::values.game_dirs.clear()` (android_config.cpp:70).
+        // A shared folder that has no config.ini of its own therefore replaces
+        // the user's game list with an empty one - which is exactly the
+        // reported "yesterday it saw my games, today it does not".
+        val previousDirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: emptyArray()
+
         NativeLibrary.setAppDirectory(path)
         ensureLayout(path)
         // Rebuild the filesystem factories against the new root, then reload
@@ -197,6 +207,29 @@ object SharedDataDirectory {
         // be written back over the shared folder's own config on exit.
         NativeLibrary.initializeSystem(true)
         NativeConfig.reloadGlobalConfig()
+
+        // Restore the list if the new root had nothing to say about it. Merging
+        // rather than overwriting keeps entries the shared folder does define,
+        // so two installations can each contribute a folder.
+        val loadedDirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: emptyArray()
+        if (previousDirs.isNotEmpty()) {
+            val merged = loadedDirs.toMutableList()
+            val known = merged.map { it.uriString }.toMutableSet()
+            for (dir in previousDirs) {
+                if (known.add(dir.uriString)) {
+                    merged.add(dir)
+                }
+            }
+            if (merged.size != loadedDirs.size) {
+                NativeConfig.setGameDirs(merged.toTypedArray())
+                NativeConfig.saveGlobalConfig()
+                Log.info(
+                    "[SharedData] carried over ${merged.size - loadedDirs.size} game folder(s) " +
+                        "that the new data root did not list"
+                )
+            }
+        }
+
         Log.info("[SharedData] data root redirected to $path")
         true
     }.getOrElse {

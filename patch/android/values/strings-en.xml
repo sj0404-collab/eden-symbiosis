@@ -1967,7 +1967,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="no_backups">No backups yet.</string>
     <string name="restored_ok">Restored. A copy of the previous state was kept.</string>
 
-    <string name="util_crash">4. Crash analyst</string>
+    <string name="util_crash">5. Crash analysis</string>
     <string name="util_crash_desc">Reads the layer log and explains, in plain terms, why the last session probably failed.</string>
     <string name="why_did_it_crash">Why did it crash?</string>
 
@@ -2036,7 +2036,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="shared_same_as_private">That is already this app\'s own folder.</string>
     <string name="use_private_storage">Use own storage</string>
     <string name="use_this_folder">Use this folder</string>
-    <string name="util_shared_dir">5. Shared data folder</string>
+    <string name="util_shared_dir">4. Shared data folder</string>
     <string name="util_shared_dir_desc">Use another Eden installation\'s folder instead of keeping a second copy of firmware, keys, games and saves.</string>
     <string name="show_mode_overlay">Show mode on screen</string>
     <string name="show_mode_overlay_description">Displays the active mode and render scale in the in-game overlay.</string>

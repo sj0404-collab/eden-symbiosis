@@ -1286,7 +1286,7 @@
     <string name="tests_gpu">проверяет GPU</string>
     <string name="thermal_state">Температура</string>
     <string name="trim_padding">Обрезать пустоту</string>
-    <string name="util_crash">4. Разбор крашей</string>
+    <string name="util_crash">5. Разбор крашей</string>
     <string name="util_crash_desc">Читает журнал слоя и объясняет простыми словами, почему прошлый сеанс скорее всего завершился аварийно.</string>
     <string name="util_firmware">1. Урезание прошивки</string>
     <string name="util_rom">2. Проверка и конвертация дампов</string>
@@ -1367,7 +1367,7 @@
     <string name="shared_same_as_private">Это и есть собственная папка приложения.</string>
     <string name="use_private_storage">Своя память</string>
     <string name="use_this_folder">Использовать</string>
-    <string name="util_shared_dir">5. Общая папка данных</string>
+    <string name="util_shared_dir">4. Общая папка данных</string>
     <string name="util_shared_dir_desc">Использовать папку другой установки Eden вместо второй копии прошивки, ключей, игр и сейвов.</string>
     <string name="show_mode_overlay">Показывать режим на экране</string>
     <string name="show_mode_overlay_description">Выводит активный режим и масштаб отрисовки в игровом оверлее.</string>

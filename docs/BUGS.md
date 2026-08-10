@@ -113,6 +113,68 @@ so all three consumers agree.
 
 ---
 
+## v18 — the game list vanished after choosing a shared folder
+
+**Reported:** "игру не находит ... вчера видели, сегодня уже не видят", with keys and
+firmware still detected. Screenshots confirm it: Keys/Firmware both green, game list empty.
+
+### Cause (mine)
+
+`SharedDataDirectory.redirectNow()` calls `NativeConfig.reloadGlobalConfig()` so the new
+data root's settings take effect. That chain is:
+
+```
+reloadGlobalConfig() -> AndroidConfig::ReloadAllValues()   android_config.cpp:21
+                     -> ReadAndroidValues() -> ReadPathValues()
+                     -> AndroidSettings::values.game_dirs.clear()   android_config.cpp:70
+```
+
+`game_dirs` lives in `config.ini`, which is **per data root**. Point the emulator at a
+shared folder that has no `config.ini` of its own and the list is cleared and repopulated
+from nothing. Keys and firmware survive because they are files on disk, not config entries -
+which is exactly the asymmetry the screenshots show.
+
+Fixed by capturing the folders before the redirect and merging them back afterwards.
+Merging rather than overwriting lets both installations contribute a folder.
+
+**Proof** — `tests/RedirectTest.kt` models the per-root config and fails on the old logic:
+
+```
+v17 behaviour (the reported bug):
+  ok    game folders are gone after redirect
+fixed - shared folder has no config of its own:
+  ok    the folder was carried over
+fixed - shared folder lists its own folders:
+  ok    both folders present - merged, not replaced
+fixed - no duplicates when both roots list the same folder:
+  ok    listed once, not twice
+```
+
+## v18 — the data-folder button was disabled, not missing
+
+The button never disappeared. It reported `BUTTON_ACTION_COMPLETE` once a shared folder was
+active, and the adapter greys completed buttons out and sets `isEnabled = false`
+(`SetupAdapter.kt:140`). A greyed-out button is indistinguishable from a missing one - the
+screenshot shows it faint above Keys/Firmware/Games.
+
+Wrong state for this button: keys and firmware are done once installed, but *re-picking a
+folder is valid at any time*. It now always reports `UNDEFINED`.
+
+## v18 — Utilities sections numbered out of order
+
+Layout order is firmware, ROM, saves, shared folder, crash analysis; the labels read
+1, 2, 3, **5**, **4**. Renumbered to match what is drawn.
+
+## Tooling added in v18
+
+- `tools/collect_logs.sh` - one-shot ADB capture: logcat, native crash lines, OOM kills,
+  the layer log, and the on-device data root contents.
+- `tools/emulator.sh` - arm64 AVD helper. It states plainly what it cannot verify: with no
+  KVM for a foreign architecture the guest runs under QEMU TCG, and its Vulkan is
+  SwiftShader, so no Mali-specific behaviour can be reproduced there.
+
+---
+
 ## Open / unproven
 
 - **Crash a few seconds into Blade Chimera (NSP).** Not reproduced; no device logs. The
