@@ -105,9 +105,10 @@
   <label>Удалённая сессия</label>
   <div class="row">
     <select id="mode">
+      <option value="web">Рабочий стол в браузере — постоянный адрес</option>
       <option value="ssh">SSH — терминал, работает на плохой связи</option>
-      <option value="rdp">RDP — рабочий стол, нужен ngrok-токен</option>
-      <option value="both">Оба сразу</option>
+      <option value="rdp">RDP — клиент Remote Desktop, адрес меняется</option>
+      <option value="both">Стол и терминал сразу</option>
     </select>
     <input id="label" placeholder="имя сессии" value="session-1">
   </div>
@@ -122,9 +123,18 @@
   <h2>Сессии <button class="ghost" style="float:right;padding:6px 10px;min-height:0"
       onclick="refresh()">Обновить</button></h2>
   <div id="sessions"><span class="note">загрузка…</span></div>
+  <div class="row" style="margin-top:10px">
+    <button class="ghost" onclick="window.open(DESKTOP,'_blank')">Открыть рабочий стол</button>
+  </div>
+  <div class="note">
+    Постоянный адрес: <code>filly-above-terrapin.ngrok-free.app</code> — не
+    меняется между запусками. Пароль печатается в сводке запуска; ссылка из
+    сводки подставляет его сама.
+  </div>
   <div class="note">
     Несколько сессий работают одновременно — переключайтесь, открывая нужную
-    строку. Для RDP свободный ngrok даёт только один туннель за раз.
+    строку. Свободный ngrok даёт один туннель за раз, поэтому рабочий стол
+    активен только у одной сессии.
   </div>
 </div>
 
@@ -144,8 +154,12 @@
     <tr><td>SSH</td><td>Termux (<code>pkg install openssh</code>), JuiceSSH или
       ConnectBot. В логе шага есть и веб-ссылка — открывается в браузере без
       клиента.</td></tr>
-    <tr><td>RDP</td><td>Microsoft Remote Desktop или aFreeRDP. Адрес, логин
-      <code>runner</code> и пароль — в сводке запуска.</td></tr>
+    <tr><td>Рабочий стол</td><td>Просто ссылка в браузере, ставить нечего.
+      Адрес постоянный: <code>filly-above-terrapin.ngrok-free.app</code>.
+      Рекомендуется.</td></tr>
+    <tr><td>RDP</td><td>Microsoft Remote Desktop или aFreeRDP. Адрес меняется
+      при каждом запуске: на бесплатном ngrok постоянный домен работает только
+      по HTTP, а RDP — это TCP.</td></tr>
     <tr><td>Мышь</td><td>По OTG работает в обоих режимах. В RDP касание
       экрана тоже действует как мышь.</td></tr>
   </table>
@@ -163,6 +177,8 @@
 
 <script>
 const REPO = 'sj0404-collab/eden-symbiosis';
+// Reserved ngrok domain: constant across runs, unlike a TCP tunnel's address.
+const DESKTOP = 'https://filly-above-terrapin.ngrok-free.app/vnc.html?autoconnect=1&resize=remote';
 const API  = 'https://api.github.com/repos/' + REPO;
 
 const tok = () => localStorage.getItem('gh_token') || '';

@@ -33,8 +33,8 @@ on:
       mode:
         description: "Session type"
         type: choice
-        options: [ssh, rdp, both]
-        default: ssh
+        options: [web, ssh, rdp, both]
+        default: web
       prepare_build:
         description: "Check out Eden and apply the patch first"
         type: boolean
@@ -114,6 +114,90 @@ jobs:
           cp "$HOME/README-session.txt" "$HOME/Desktop/" 2>/dev/null || true
           cat "$HOME/README-session.txt"
 
+      - name: Desktop in the browser, on the fixed domain
+        if: inputs.mode == 'web' || inputs.mode == 'both'
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+          NGROK_DOMAIN: filly-above-terrapin.ngrok-free.app
+        run: |
+          if [ -z "$NGROK_TOKEN" ]; then
+            echo "::error::NGROK_AUTH_TOKEN is not set."
+            echo "Add it: Settings -> Secrets and variables -> Actions -> New repository secret."
+            echo "Token: https://dashboard.ngrok.com/get-started/your-authtoken"
+            echo "Or re-run with mode: ssh, which needs no token."
+            exit 1
+          fi
+
+          # Why a browser desktop rather than RDP on this domain:
+          #
+          # A free ngrok account gets one *static* domain, and it serves HTTP
+          # only. RDP is raw TCP, which on the free tier lands on a random
+          # 0.tcp.ngrok.io:PORT that changes every run - exactly the thing a
+          # fixed address is meant to avoid. Serving the desktop over HTTP
+          # keeps the address constant, and a browser needs no client app on
+          # the phone at all.
+          sudo apt-get update -qq
+          sudo apt-get install -y xfce4 xfce4-terminal xfce4-goodies dbus-x11 \
+                                  thunar mousepad tigervnc-standalone-server \
+                                  novnc websockify tmux htop >/dev/null
+
+          mkdir -p "$HOME/.vnc"
+          # printf, not a heredoc: this run: block is indented inside the YAML,
+          # and an indented heredoc writes those leading spaces into the file,
+          # which leaves xstartup unrunnable and the desktop grey.
+          printf '%s\n%s\n%s\n' \
+            '#!/bin/sh' \
+            'unset SESSION_MANAGER DBUS_SESSION_BUS_ADDRESS' \
+            'exec dbus-launch startxfce4' > "$HOME/.vnc/xstartup"
+          chmod +x "$HOME/.vnc/xstartup"
+
+          PASS="$(openssl rand -hex 4)"
+          printf '%s\n%s\n\n' "$PASS" "$PASS" | vncpasswd "$HOME/.vnc/passwd" >/dev/null 2>&1
+          chmod 600 "$HOME/.vnc/passwd"
+
+          # -localhost: the VNC port is never exposed directly. Everything goes
+          # through websockify, which is what ngrok forwards.
+          vncserver :1 -geometry 1280x720 -depth 24 -localhost yes >/dev/null 2>&1
+          sleep 4
+
+          websockify --web=/usr/share/novnc 6080 localhost:5901 \
+            > /tmp/novnc.log 2>&1 &
+          sleep 3
+
+          curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
+            | sudo tar xz -C /usr/local/bin
+          ngrok config add-authtoken "$NGROK_TOKEN"
+          nohup ngrok http 6080 --domain="$NGROK_DOMAIN" --log stdout \
+            > /tmp/ngrok.log 2>&1 &
+          sleep 6
+
+          if ! grep -q "started tunnel" /tmp/ngrok.log; then
+            echo "::warning::ngrok may not have started; log follows."
+            tail -20 /tmp/ngrok.log
+          fi
+
+          URL="https://$NGROK_DOMAIN/vnc.html?autoconnect=1&resize=remote&password=$PASS"
+          {
+            echo ""
+            echo "## Desktop in the browser"
+            echo ""
+            echo "**[Open the desktop]($URL)**"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Address | \`https://$NGROK_DOMAIN\` (always the same) |"
+            echo "| VNC password | \`$PASS\` |"
+            echo ""
+            echo "The link carries the password, so it connects on its own. No app"
+            echo "to install: touch drives the pointer, and an OTG mouse and"
+            echo "keyboard behave as they would on a desktop."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "=================================================="
+          echo " Desktop: $URL"
+          echo " Password: $PASS"
+          echo "=================================================="
+
       - name: Set up the desktop and RDP
         if: inputs.mode == 'rdp' || inputs.mode == 'both'
         env:
@@ -190,7 +274,7 @@ jobs:
           detached: ${{ inputs.mode == 'both' }}
 
       - name: Hold the session open
-        if: inputs.mode == 'rdp'
+        if: inputs.mode == 'rdp' || inputs.mode == 'web'
         run: |
           # Without this the job would end the moment the RDP step returned,
           # taking the desktop with it.
