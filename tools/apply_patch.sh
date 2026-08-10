@@ -66,9 +66,17 @@ J="$A/java/org/yuzu/yuzu_emu"
 cp "$P"/android/fragments/*.kt "$J/fragments/"
 cp "$P"/android/adapters/*.kt  "$J/adapters/"
 cp "$P"/android/utils/*.kt     "$J/utils/"
+# ui/ holds upstream screens this fork modifies wholesale rather than by diff.
+if [ -d "$P/android/ui" ]; then
+  cp "$P"/android/ui/*.kt "$J/ui/"
+fi
 
 # Resources
 cp "$P"/android/layout/*.xml   "$A/res/layout/"
+# navigation/ is only present once a screen has been added to the graph.
+if [ -d "$P/android/navigation" ]; then
+  cp "$P"/android/navigation/*.xml "$A/res/navigation/"
+fi
 cp "$P"/android/drawable/*.xml "$A/res/drawable/"
 cp "$P"/android/values/strings-en.xml "$A/res/values/strings.xml"
 cp "$P"/android/values/strings-ru.xml "$A/res/values-ru/strings.xml"

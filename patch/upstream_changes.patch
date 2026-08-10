@@ -1,8 +1,40 @@
 diff --git a/src/android/app/build.gradle.kts b/src/android/app/build.gradle.kts
-index 0cef7e7..3f3cae7 100644
+index 0cef7e7..94de124 100644
 --- a/src/android/app/build.gradle.kts
 +++ b/src/android/app/build.gradle.kts
-@@ -219,8 +219,8 @@ android {
+@@ -178,6 +178,31 @@ android {
+             applicationIdSuffix = ".debug"
+ 
+             manifestPlaceholders += mapOf("appNameSuffix" to " Debug")
++
++            // A debug build ships an 80 MB libyuzu-android.so and a 24 MB
++            // Vulkan validation layer - 175 MB once installed. Neither is of
++            // any use to someone playing games, and the validation layer costs
++            // frame rate as well as space.
++            //
++            // The size is native, not Java: AGP maps the debug build type to
++            // CMAKE_BUILD_TYPE=Debug, so the emulator core is compiled -O0 with
++            // full DWARF. Building it RelWithDebInfo and stripping at package
++            // time keeps this variant debuggable on the Java side - which is
++            // what .debug and isDebuggable are for - while shipping optimised
++            // native code. It is also simply faster to run.
++            externalNativeBuild {
++                cmake {
++                    arguments += listOf("-DCMAKE_BUILD_TYPE=RelWithDebInfo")
++                }
++            }
++            ndk {
++                // Strip the .so in the APK; the unstripped copy is kept beside
++                // the build output for symbolising a crash later.
++                debugSymbolLevel = "SYMBOL_TABLE"
++            }
++            packaging {
++                jniLibs.excludes += setOf("**/libVkLayer_*.so")
++            }
+         }
+     }
+ 
+@@ -219,8 +244,8 @@ android {
          create("legacy") {
              dimension = "version"
              minSdk = 29
@@ -512,87 +544,21 @@ index 5b93c88..c52b7fd 100644
          if (this::emulationState.isInitialized) {
              emulationState.stop()
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt
-index 37eda22..e7c5163 100644
+index 37eda22..26517f8 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/HomeSettingsFragment.kt
-@@ -170,6 +170,83 @@ class HomeSettingsFragment : Fragment() {
+@@ -170,6 +170,17 @@ class HomeSettingsFragment : Fragment() {
                      )
                  )
              }
 +            add(
 +                HomeSetting(
-+                    R.string.settings_guide,
-+                    R.string.settings_guide_description,
-+                    R.drawable.ic_verified,
-+                    {
-+                        binding.root.findNavController()
-+                            .navigate(R.id.action_global_guideFragment)
-+                    }
-+                )
-+            )
-+            add(
-+                HomeSetting(
-+                    R.string.utilities,
-+                    R.string.utilities_description,
++                    R.string.tools,
++                    R.string.tools_description,
 +                    R.drawable.ic_tune,
 +                    {
 +                        binding.root.findNavController()
-+                            .navigate(R.id.action_global_utilitiesFragment)
-+                    }
-+                )
-+            )
-+            add(
-+                HomeSetting(
-+                    R.string.homebrew_and_compat,
-+                    R.string.homebrew_description,
-+                    R.drawable.ic_verified,
-+                    {
-+                        binding.root.findNavController()
-+                            .navigate(R.id.action_global_homebrewFragment)
-+                    }
-+                )
-+            )
-+            add(
-+                HomeSetting(
-+                    R.string.launchers,
-+                    R.string.launchers_description,
-+                    R.drawable.ic_palette,
-+                    {
-+                        binding.root.findNavController()
-+                            .navigate(R.id.action_global_launchersFragment)
-+                    }
-+                )
-+            )
-+            add(
-+                HomeSetting(
-+                    R.string.fps_tuning,
-+                    R.string.fps_tuning_description,
-+                    R.drawable.ic_speed,
-+                    {
-+                        binding.root.findNavController()
-+                            .navigate(R.id.action_global_fpsTuningFragment)
-+                    }
-+                )
-+            )
-+            add(
-+                HomeSetting(
-+                    R.string.keys_and_firmware,
-+                    R.string.keys_and_firmware_description,
-+                    R.drawable.ic_key,
-+                    {
-+                        binding.root.findNavController()
-+                            .navigate(R.id.action_global_keysFirmwareFragment)
-+                    }
-+                )
-+            )
-+            add(
-+                HomeSetting(
-+                    R.string.diagnostics,
-+                    R.string.diagnostics_description,
-+                    R.drawable.ic_verified,
-+                    {
-+                        binding.root.findNavController()
-+                            .navigate(R.id.action_global_diagnosticsFragment)
++                            .navigate(R.id.action_global_toolsFragment)
 +                    }
 +                )
 +            )
@@ -851,6 +817,25 @@ index 41f2da0..d42a82f 100644
              }
          }
      }
+diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/ui/GamesFragment.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/ui/GamesFragment.kt
+index 6931a1f..3295219 100644
+--- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/ui/GamesFragment.kt
++++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/ui/GamesFragment.kt
+@@ -184,6 +184,14 @@ class GamesFragment : Fragment() {
+             getGamesDirectory.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).data)
+         }
+ 
++        // Long press opens the folder view: which folders are configured, how
++        // many games each holds and what they weigh. A flat list of titles
++        // answers none of those, and storage is the scarce resource here.
++        binding.addDirectory.setOnLongClickListener {
++            findNavController().navigate(R.id.action_global_symbiosisGameFoldersFragment)
++            true
++        }
++
+         binding.launchQlaunch?.setOnClickListener {
+             launchQLaunch()
+         }
 diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt b/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
 index f961c5e..ba1ece6 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
@@ -1124,10 +1109,10 @@ index 5ed0a2d..10bc7a5 100644
 +    <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>
  </adaptive-icon>
 diff --git a/src/android/app/src/main/res/navigation/home_navigation.xml b/src/android/app/src/main/res/navigation/home_navigation.xml
-index dd567ab..11e587e 100644
+index dd567ab..39c285b 100644
 --- a/src/android/app/src/main/res/navigation/home_navigation.xml
 +++ b/src/android/app/src/main/res/navigation/home_navigation.xml
-@@ -99,6 +99,59 @@
+@@ -99,6 +99,73 @@
          android:id="@+id/installableFragment"
          android:name="org.yuzu.yuzu_emu.fragments.InstallableFragment"
          android:label="InstallableFragment" />
@@ -1151,6 +1136,20 @@ index dd567ab..11e587e 100644
 +    <action
 +        android:id="@+id/action_global_guideFragment"
 +        app:destination="@id/guideFragment" />
++    <fragment
++        android:id="@+id/toolsFragment"
++        android:name="org.yuzu.yuzu_emu.fragments.ToolsFragment"
++        android:label="ToolsFragment" />
++    <action
++        android:id="@+id/action_global_toolsFragment"
++        app:destination="@id/toolsFragment" />
++    <fragment
++        android:id="@+id/symbiosisGameFoldersFragment"
++        android:name="org.yuzu.yuzu_emu.fragments.GameFoldersFragment"
++        android:label="SymbiosisGameFoldersFragment" />
++    <action
++        android:id="@+id/action_global_symbiosisGameFoldersFragment"
++        app:destination="@id/symbiosisGameFoldersFragment" />
 +    <fragment
 +        android:id="@+id/utilitiesFragment"
 +        android:name="org.yuzu.yuzu_emu.fragments.UtilitiesFragment"

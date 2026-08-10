@@ -1411,4 +1411,21 @@
     <string name="yes">да</string>
     <string name="no">нет</string>
 
+
+    <!-- Game folders -->
+    <string name="game_folders">Папки с играми</string>
+    <string name="game_folders_description">Ваши папки: сколько в каждой игр и сколько они занимают</string>
+    <string name="folders_summary">Папок: %1$d · игр: %2$d · %3$s</string>
+    <string name="no_game_folders">Папок с играми пока нет. Добавьте на главном экране.</string>
+    <string name="folder_unreadable">Не читается — проверьте разрешение на доступ к памяти</string>
+    <string name="folder_empty">В этой папке нет игр.</string>
+    <plurals name="folder_game_count">
+        <item quantity="one">%d игра</item>
+        <item quantity="few">%d игры</item>
+        <item quantity="many">%d игр</item>
+        <item quantity="other">%d игр</item>
+    </plurals>
+
+    <string name="tools">Инструменты</string>
+    <string name="tools_description">Диагностика, настройка ФПС, работа с дампами и совместимость</string>
 </resources>

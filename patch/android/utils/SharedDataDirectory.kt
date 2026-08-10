@@ -56,6 +56,49 @@ object SharedDataDirectory {
         runCatching { context.getExternalFilesDir(null)?.canonicalPath }.getOrNull()
 
     /**
+     * A visible folder for this build's data: /sdcard/Eden Debug.
+     *
+     * The default lives at Android/data/dev.legacy.eden_emulator.debug/files,
+     * which Android 11+ hides from every file manager and which is deleted
+     * with the app. A plain folder at the top of shared storage can be opened,
+     * backed up and copied to a PC without ADB.
+     *
+     * Note on what this can and cannot move: the *data* - firmware, keys,
+     * saves, shader cache - follows this path, because the native layer
+     * derives all of it from the one root. The APK's own native libraries
+     * cannot: Android extracts those into /data/app itself, and no application
+     * is permitted to relocate them. Anything claiming otherwise would need
+     * root.
+     */
+    fun visibleDefaultPath(): String =
+        File(Environment.getExternalStorageDirectory(), "Eden Debug").absolutePath
+
+    /**
+     * Uses the visible folder when it is writable, otherwise private storage.
+     *
+     * Called only when the user has not chosen a folder of their own, so an
+     * explicit choice always wins.
+     */
+    fun preferredDefault(context: Context): String {
+        if (!hasAllFilesAccess()) {
+            // Without All Files Access a folder outside Android/data cannot be
+            // written to, and failing there would mean the emulator does not
+            // start at all. Private storage is the safe answer.
+            return privatePath(context) ?: visibleDefaultPath()
+        }
+        val visible = File(visibleDefaultPath())
+        val usable = runCatching {
+            if (!visible.exists()) visible.mkdirs()
+            val probe = File(visible, ".eden_write_probe")
+            probe.writeText("1")
+            val ok = probe.exists()
+            probe.delete()
+            ok
+        }.getOrDefault(false)
+        return if (usable) visible.absolutePath else (privatePath(context) ?: visible.absolutePath)
+    }
+
+    /**
      * Resolves the directory to hand to the native layer.
      *
      * Falls back to private storage whenever the configured directory is
@@ -72,7 +115,10 @@ object SharedDataDirectory {
             // Do not clear the preference: the volume may simply be unmounted
             // and the user would silently lose their choice.
         }
-        return privatePath(context)
+        // No explicit choice: prefer the visible /sdcard/Eden Debug folder over
+        // the hidden Android/data one, so saves and firmware can be reached
+        // with a file manager and survive uninstalling the app.
+        return preferredDefault(context)
     }
 
     /** True when a directory other than the private one is active. */
