@@ -4672,13 +4672,13 @@ async function handleToolCall(text, writtenFiles) {
   if (spinner) spinner.start();
   const telemetryTimer = startTelemetryTicker(spinner);
   const t0 = Date.now();
-  webRunEvent('tool_started', { tool: toolName });
+  webRunEvent('tool_started', { tool: toolName, args: JSON.stringify(args || {}).slice(0, 600), index: String(TELEMETRY.toolCalls) });
   const result = await useTool(toolName, args);
   await pluginHook('afterTool', { name: toolName, args, result });
   TELEMETRY.outputChars += String(result || '').length;
   const ms = Date.now() - t0;
   auditEvent('tool_finished', { tool: toolName, durationMs: ms, result: String(result || '').slice(0, 500) });
-  webRunEvent('tool_finished', { tool: toolName, durationMs: ms, result: String(result || '').slice(0, 1000) });
+  webRunEvent('tool_finished', { tool: toolName, ms: String(ms), durationMs: String(ms), ok: String(!/^(Ошибка|Error|Permission denied)/i.test(String(result || ''))), preview: String(result || '').slice(0, 700) });
   stopTelemetryTicker(telemetryTimer);
   if (spinner) spinner.stop();
 
@@ -4763,7 +4763,7 @@ async function handleNativeToolCalls(toolCalls, writtenFiles) {
     const t0 = Date.now();
     webRunEvent('tool_started', { tool: toolName, native: 'true' });
     const result = await useTool(toolName, args);
-    webRunEvent('tool_finished', { tool: toolName, durationMs: Date.now() - t0, result: String(result || '').slice(0, 1000), native: 'true' });
+    webRunEvent('tool_finished', { tool: toolName, ms: String(Date.now() - t0), durationMs: String(Date.now() - t0), ok: String(!/^(Ошибка|Error|Permission denied)/i.test(String(result || ''))), preview: String(result || '').slice(0, 700), native: 'true' });
     await pluginHook('afterTool', { name: toolName, args, result });
     TELEMETRY.outputChars += String(result || '').length;
     auditEvent('native_tool_finished', { tool: toolName, durationMs: Date.now() - t0, result: String(result || '').slice(0, 500) });
@@ -4798,6 +4798,13 @@ async function agentLoop(userInput) {
 
   for (let step = 0; step < agentStepLimit(); step++) {
     TELEMETRY.step = step + 1;
+    webRunEvent('round_started', {
+      step: String(TELEMETRY.step),
+      limit: String(agentStepLimit()),
+      model: String(currentModel),
+      toolCalls: String(TELEMETRY.toolCalls),
+      elapsedMs: String(TELEMETRY.startedAt ? Date.now() - TELEMETRY.startedAt : 0)
+    });
     if (abortRequested) { finalAnswer = 'Задача остановлена пользователем.'; setRunPhase('stopped', 'пользователь'); break; }
     if (correctionQueue.length) {
       const correction = correctionQueue.splice(0).join('\n');
@@ -4823,6 +4830,14 @@ ${correction}` });
         else { stopTelemetryTicker(telemetryTimer); if (spinner) spinner.stop(); throw firstError; }
       }
       recordProviderResult(res);
+      webRunEvent('model_reply', {
+        step: String(TELEMETRY.step),
+        chars: String(String(res.text || '').length),
+        promptTokens: String(res.usage?.prompt_tokens ?? TELEMETRY.estimatedInputTokens ?? 0),
+        completionTokens: String(res.usage?.completion_tokens ?? 0),
+        totalTokens: String(res.usage?.total_tokens ?? 0),
+        preview: String(res.text || '').slice(0, 400)
+      });
       auditEvent('model_response', { step: TELEMETRY.step, model: res.model || currentModel, outputChars: String(res.text || '').length, usage: res.usage || {}, toolCalls: Array.isArray(res.toolCalls) ? res.toolCalls.length : 0 });
       stopTelemetryTicker(telemetryTimer);
       if (spinner) spinner.stop();

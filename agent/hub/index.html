@@ -5,219 +5,357 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Zen Agent</title>
 <!--
-  Web hub for the agent. The upstream file expects hub/index.html but ships
-  without it, so /hub answered 500 with ENOENT - the whole web interface was
-  missing rather than broken.
+  Web hub for the agent.
 
-  Written as one file with no CDN, no framework and no build step: it is opened
-  from a phone over a tunnel, where every extra request is a chance to hang.
+  The first version posted to /api/chat, which is a bare proxy to the model: it
+  returned the literal text "TOOL_JSON:{...}" because nothing on either side
+  executed the tool. This one drives /api/agent/run, the agent's real loop, and
+  polls the run for events - so rounds, tools, tokens and timing are shown as
+  they happen, and the run can be stopped or approved mid-flight.
+
+  One file, no CDN, no build step: it is opened from a phone over a tunnel,
+  where every extra request is a chance to hang.
 -->
 <style>
-  :root {
-    --bg:#0b0b10; --panel:#14141c; --line:#242430; --text:#e9e9f2;
-    --dim:#8b8b9e; --accent:#22e0d6; --user:#ff2d78; --warn:#ffb020;
-  }
-  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body { height:100%; margin:0; }
-  body {
-    background:var(--bg); color:var(--text); display:flex; flex-direction:column;
-    font:15px/1.55 -apple-system,"Segoe UI",Roboto,sans-serif;
-    padding-bottom:env(safe-area-inset-bottom);
-  }
-  header {
-    display:flex; align-items:center; gap:8px; padding:10px 12px;
-    border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap;
-  }
-  header b { color:var(--accent); letter-spacing:.5px; }
-  select, input, button, textarea {
-    font:inherit; background:#0f0f16; color:var(--text);
-    border:1px solid var(--line); border-radius:9px; padding:9px 10px;
-  }
-  button { background:var(--accent); color:#04202a; border:0; font-weight:700; }
-  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); }
-  button:disabled { opacity:.45; }
-  #log { flex:1; overflow-y:auto; padding:12px; }
-  .msg { margin-bottom:14px; }
-  .who { font-size:12px; color:var(--dim); margin-bottom:3px; }
-  .msg.me .who { color:var(--user); }
-  .body {
-    white-space:pre-wrap; word-wrap:break-word;
-    background:var(--panel); border:1px solid var(--line);
-    border-radius:12px; padding:10px 12px;
-  }
-  .msg.me .body { border-color:#3a1a28; }
-  .tool { border-left:3px solid var(--warn); font-size:13px; color:#ffd79a; }
-  footer {
-    display:flex; gap:8px; padding:10px; border-top:1px solid var(--line);
-    background:var(--panel);
-  }
-  #q { flex:1; resize:none; max-height:130px; }
-  .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-  .status { font-size:12px; color:var(--dim); }
-  .dot { width:8px; height:8px; border-radius:50%; background:var(--warn); display:inline-block; }
-  .dot.ok { background:var(--accent); } .dot.bad { background:#ff4d4d; }
-  code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; }
+  :root{--bg:#0b0b10;--panel:#14141c;--panel2:#191922;--line:#242430;--text:#e9e9f2;
+        --dim:#8b8b9e;--accent:#22e0d6;--user:#ff2d78;--warn:#ffb020;--ok:#3ddc84;--bad:#ff5c5c;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;margin:0;}
+  body{background:var(--bg);color:var(--text);display:flex;flex-direction:column;
+       font:15px/1.55 -apple-system,"Segoe UI",Roboto,sans-serif;
+       padding-bottom:env(safe-area-inset-bottom);}
+  header{display:flex;align-items:center;gap:8px;padding:8px 10px;flex-wrap:wrap;
+         border-bottom:1px solid var(--line);background:var(--panel);}
+  header b{color:var(--accent);letter-spacing:.5px;font-size:15px;}
+  select,input,button,textarea{font:inherit;background:#0f0f16;color:var(--text);
+        border:1px solid var(--line);border-radius:9px;padding:8px 10px;}
+  button{background:var(--accent);color:#04202a;border:0;font-weight:700;}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line);}
+  button.stop{background:var(--bad);color:#fff;}
+  button:disabled{opacity:.4;}
+  .tabs{display:flex;gap:4px;padding:6px 10px 0;background:var(--panel);}
+  .tabs button{flex:1;border-radius:9px 9px 0 0;background:transparent;color:var(--dim);
+               border:1px solid var(--line);border-bottom:0;font-weight:600;padding:7px;}
+  .tabs button.on{background:var(--bg);color:var(--accent);}
+  .pane{flex:1;overflow-y:auto;padding:10px;display:none;}
+  .pane.on{display:block;}
+  /* Status strip: the thing whose absence made the agent look frozen. */
+  #bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:6px 10px;
+       background:var(--panel2);border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim);}
+  #bar .v{color:var(--text);font-weight:600;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);display:inline-block;}
+  .dot.run{background:var(--warn);animation:pulse 1s infinite;}
+  .dot.ok{background:var(--ok);} .dot.bad{background:var(--bad);}
+  @keyframes pulse{50%{opacity:.25}}
+  .msg{margin-bottom:12px;}
+  .who{font-size:12px;color:var(--dim);margin-bottom:3px;}
+  .msg.me .who{color:var(--user);}
+  .body{white-space:pre-wrap;word-wrap:break-word;background:var(--panel);
+        border:1px solid var(--line);border-radius:12px;padding:10px 12px;}
+  .msg.me .body{border-color:#3a1a28;}
+  .body table{border-collapse:collapse;width:100%;margin:6px 0;font-size:13px;}
+  .body th,.body td{border:1px solid var(--line);padding:5px 7px;text-align:left;}
+  .body th{background:var(--panel2);color:var(--accent);}
+  .body pre{background:#0a0a0f;border:1px solid var(--line);border-radius:8px;
+            padding:8px;overflow-x:auto;margin:6px 0;}
+  .body code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;}
+  /* Rounds: one collapsible block per step, so the loop is legible. */
+  .round{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--panel);}
+  .round>summary{cursor:pointer;padding:8px 10px;font-size:13px;color:var(--dim);}
+  .round[open]>summary{border-bottom:1px solid var(--line);color:var(--accent);}
+  .ev{padding:6px 10px;border-bottom:1px solid #1c1c26;font-size:12.5px;}
+  .ev:last-child{border-bottom:0;}
+  .ev .t{color:var(--dim);}
+  .ev.tool .t{color:var(--warn);}
+  .ev.err .t{color:var(--bad);}
+  .ev pre{margin:4px 0 0;white-space:pre-wrap;color:#c9c9d8;font-size:12px;
+          max-height:160px;overflow:auto;}
+  footer{display:flex;gap:8px;padding:8px 10px;border-top:1px solid var(--line);background:var(--panel);}
+  #q{flex:1;resize:none;max-height:120px;}
+  .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  #term{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;
+        white-space:pre-wrap;background:#08080c;border:1px solid var(--line);
+        border-radius:10px;padding:10px;min-height:180px;}
+  .hint{font-size:12px;color:var(--dim);margin-top:6px;}
 </style>
 </head>
 <body>
 
 <header>
   <b>Zen Agent</b>
-  <select id="model" title="Модель"></select>
-  <button class="ghost" id="tools-btn" onclick="toggleTools()">Инструменты</button>
-  <span class="status"><span class="dot" id="dot"></span> <span id="stat">проверяю…</span></span>
+  <select id="model" style="flex:1 1 150px"></select>
+  <button class="stop" id="stop" onclick="abortRun()" disabled>Стоп</button>
 </header>
 
-<div id="log">
-  <div class="msg">
-    <div class="who">агент</div>
-    <div class="body">Готов. Пишите задачу — могу читать и править файлы, выполнять команды, работать с git и открывать страницы.
-
-Работа сохраняется в ветку репозитория каждые 2 минуты, поэтому конец сессии ничего не теряет.</div>
-  </div>
+<div id="bar">
+  <span><span class="dot" id="dot"></span> <span class="v" id="phase">готов</span></span>
+  <span>раунд <span class="v" id="m-step">0</span></span>
+  <span>инстр. <span class="v" id="m-tools">0</span></span>
+  <span>токены <span class="v" id="m-tok">0</span></span>
+  <span>время <span class="v" id="m-time">0с</span></span>
 </div>
 
-<div id="tools" style="display:none; padding:10px 12px; border-top:1px solid var(--line); background:var(--panel)">
+<div class="tabs">
+  <button class="on" onclick="tab('chat')">Чат</button>
+  <button onclick="tab('rounds')">Раунды</button>
+  <button onclick="tab('term')">Терминал</button>
+</div>
+
+<div class="pane on" id="p-chat">
+  <div class="msg"><div class="who">агент</div><div class="body">Готов. Опишите задачу — я работаю раундами: думаю, вызываю инструменты, показываю каждый шаг во вкладке «Раунды».
+
+Кнопка «Стоп» останавливает в любой момент. Работа коммитится в ветку каждые 2 минуты.</div></div>
+</div>
+
+<div class="pane" id="p-rounds">
+  <div class="hint">Живой ход выполнения: раунды, инструменты, токены, время.</div>
+  <div id="rounds"></div>
+</div>
+
+<div class="pane" id="p-term">
   <div class="row">
-    <input id="tool-name" placeholder="инструмент, напр. web_fetch" style="flex:1 1 160px">
-    <input id="tool-args" placeholder='{"url":"example.com"}' style="flex:2 1 220px">
-    <button onclick="callTool()">Вызвать</button>
+    <input id="cmd" placeholder="команда, напр. ls -la" style="flex:1"
+           onkeydown="if(event.key==='Enter')runCmd()">
+    <button onclick="runCmd()">Выполнить</button>
+    <button class="ghost" onclick="document.getElementById('term').textContent=''">Очистить</button>
   </div>
-  <div class="status" style="margin-top:6px">
-    Частые: <code>read_file</code> <code>write_file</code> <code>execute_command</code>
-    <code>git_status</code> <code>web_search</code> <code>web_fetch</code>
-  </div>
+  <div class="hint">Та же оболочка, что использует агент (инструмент <code>execute_command</code>), в его рабочей папке.</div>
+  <div id="term" style="margin-top:8px"></div>
 </div>
 
 <footer>
-  <textarea id="q" rows="1" placeholder="Задача…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}"></textarea>
+  <textarea id="q" rows="1" placeholder="Задача…"
+    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}"></textarea>
   <button id="send" onclick="send()">→</button>
 </footer>
 
 <script>
-// The token arrives as ?token=… and the server turns it into a cookie on first
-// load, so it need not be kept in JavaScript. Reading it here only so a
-// bookmarked link keeps working if the cookie is cleared.
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
-const H = () => {
-  const h = { 'Content-Type': 'application/json' };
-  if (TOKEN) h['X-Zen-Token'] = TOKEN;
-  return h;
-};
+const H = () => { const h={'Content-Type':'application/json'}; if(TOKEN) h['X-Zen-Token']=TOKEN; return h; };
+const $ = id => document.getElementById(id);
 
-const log = document.getElementById('log');
-const dot = document.getElementById('dot');
-const stat = document.getElementById('stat');
-
-// Kept in step with ZEN_MODELS in zen-agent.js: only the three that answered
-// 3/3 when measured. Offering a dead model is what made the agent look broken.
+// Kept in step with ZEN_MODELS in zen-agent.js: only the three measured to
+// answer 3/3. Offering a dead model is what made the agent look broken.
 const MODELS = [
-  ['laguna-s-2.1-free',      'Laguna S 2.1 — быстрая, стабильная'],
-  ['mimo-v2.5-free',         'MiMo V2.5 — самая быстрая'],
-  ['deepseek-v4-flash-free', 'DeepSeek V4 — медленная, 200K контекст']
+  ['laguna-s-2.1-free','Laguna S 2.1 — быстрая, стабильная'],
+  ['mimo-v2.5-free','MiMo V2.5 — самая быстрая'],
+  ['deepseek-v4-flash-free','DeepSeek V4 — медленная, 200K контекст']
 ];
-const sel = document.getElementById('model');
-MODELS.forEach(([id, label]) => {
-  const o = document.createElement('option');
-  o.value = id; o.textContent = label; sel.appendChild(o);
-});
-sel.value = localStorage.getItem('zen_model') || MODELS[0][0];
-sel.onchange = () => localStorage.setItem('zen_model', sel.value);
+MODELS.forEach(([id,label])=>{const o=document.createElement('option');o.value=id;o.textContent=label;$('model').appendChild(o);});
+$('model').value = localStorage.getItem('zen_model') || MODELS[0][0];
+$('model').onchange = () => localStorage.setItem('zen_model', $('model').value);
 
-function add(who, text, cls = '') {
-  const d = document.createElement('div');
-  d.className = 'msg' + (who === 'вы' ? ' me' : '');
-  d.innerHTML = '<div class="who"></div><div class="body ' + cls + '"></div>';
-  d.querySelector('.who').textContent = who;
-  d.querySelector('.body').textContent = text;
-  log.appendChild(d);
-  log.scrollTop = log.scrollHeight;
-  return d.querySelector('.body');
+function tab(name){
+  for (const p of ['chat','rounds','term']) $('p-'+p).classList.toggle('on', p===name);
+  document.querySelectorAll('.tabs button').forEach((b,i)=>
+    b.classList.toggle('on', i === ['chat','rounds','term'].indexOf(name)));
 }
 
-async function ping() {
-  try {
-    const r = await fetch('/mcp/status', { headers: H() });
-    const ok = r.ok;
-    dot.className = 'dot ' + (ok ? 'ok' : 'bad');
-    stat.textContent = ok ? 'на связи' : 'ошибка ' + r.status;
-  } catch (e) {
-    dot.className = 'dot bad';
-    stat.textContent = 'нет связи';
-  }
-}
-
-const history = [];
-
-async function send() {
-  const q = document.getElementById('q');
-  const text = q.value.trim();
-  if (!text) return;
-  q.value = '';
-  add('вы', text);
-  history.push({ role: 'user', content: text });
-
-  const btn = document.getElementById('send');
-  btn.disabled = true;
-  const out = add('агент', '…');
-
-  try {
-    const r = await fetch('/api/chat', {
-      method: 'POST', headers: H(),
-      body: JSON.stringify({ model: sel.value, messages: history.slice(-20) })
-    });
-    const d = await r.json();
-    // The endpoint proxies Zen verbatim, so the payload is OpenAI-shaped and
-    // an upstream failure arrives as an error object rather than an HTTP code.
-    const reply = d?.choices?.[0]?.message?.content
-      ?? d?.error?.message
-      ?? (typeof d === 'string' ? d : JSON.stringify(d).slice(0, 400));
-    out.textContent = reply;
-    if (d?.choices?.[0]?.message?.content) {
-      history.push({ role: 'assistant', content: reply });
+/* Minimal Markdown: tables, fenced code, inline code, bold, headings.
+   Written by hand because a CDN parser is one more thing to fail on a phone. */
+function md(src){
+  const esc = t => t.replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+  const blocks = String(src||'').split(/```/);
+  return blocks.map((b,i)=>{
+    if (i % 2) return '<pre><code>' + esc(b.replace(/^\w*\n/,'')) + '</code></pre>';
+    const lines = esc(b).split('\n');
+    let out = '', table = [];
+    const flush = () => {
+      if (!table.length) return;
+      const cells = r => r.trim().replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+      const head = cells(table[0]);
+      const rows = table.slice(table[1] && /^[\s|:-]+$/.test(table[1]) ? 2 : 1).map(cells);
+      out += '<table><tr>' + head.map(h=>'<th>'+h+'</th>').join('') + '</tr>'
+           + rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('') + '</table>';
+      table = [];
+    };
+    for (const line of lines){
+      if (/^\s*\|.*\|\s*$/.test(line)) { table.push(line); continue; }
+      flush();
+      out += line
+        .replace(/^### (.*)$/, '<b>$1</b>')
+        .replace(/^## (.*)$/, '<b>$1</b>')
+        .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>') + '\n';
     }
-  } catch (e) {
-    out.textContent = 'Ошибка: ' + e.message;
-  } finally {
-    btn.disabled = false;
-    q.focus();
+    flush();
+    return out;
+  }).join('');
+}
+
+function add(who, html, isHtml){
+  const d = document.createElement('div');
+  d.className = 'msg' + (who==='вы' ? ' me' : '');
+  d.innerHTML = '<div class="who"></div><div class="body"></div>';
+  d.querySelector('.who').textContent = who;
+  const body = d.querySelector('.body');
+  if (isHtml) body.innerHTML = html; else body.textContent = html;
+  $('p-chat').appendChild(d);
+  $('p-chat').scrollTop = $('p-chat').scrollHeight;
+  return body;
+}
+
+let runId = null, timer = null, seen = new Set(), startedAt = 0, rounds = {};
+
+function setBusy(on){
+  $('send').disabled = on; $('stop').disabled = !on;
+  $('dot').className = 'dot ' + (on ? 'run' : 'ok');
+}
+
+function roundBox(step){
+  if (rounds[step]) return rounds[step];
+  const d = document.createElement('details');
+  d.className = 'round'; d.open = true;
+  d.innerHTML = '<summary>Раунд ' + step + '</summary>';
+  $('rounds').appendChild(d);
+  rounds[step] = d;
+  return d;
+}
+
+function evLine(step, cls, title, detail){
+  const box = roundBox(step);
+  const e = document.createElement('div');
+  e.className = 'ev ' + (cls||'');
+  e.innerHTML = '<span class="t"></span>';
+  e.querySelector('.t').textContent = title;
+  if (detail){ const pre = document.createElement('pre'); pre.textContent = detail; e.appendChild(pre); }
+  box.appendChild(e);
+  $('p-rounds').scrollTop = $('p-rounds').scrollHeight;
+}
+
+let curStep = 1;
+
+function applyEvent(ev){
+  if (seen.has(ev.id)) return;
+  seen.add(ev.id);
+  const t = ev.type;
+
+  if (t === 'round_started'){
+    curStep = parseInt(ev.step,10) || curStep;
+    $('m-step').textContent = ev.step + '/' + (ev.limit||'?');
+    $('m-tools').textContent = ev.toolCalls || '0';
+    $('phase').textContent = 'думает';
+    evLine(curStep, '', 'Раунд ' + ev.step + ' начат · модель ' + (ev.model||''));
+  } else if (t === 'model_reply'){
+    const tok = ev.totalTokens && ev.totalTokens !== '0'
+      ? ev.totalTokens
+      : String((+ev.promptTokens||0) + (+ev.completionTokens||0));
+    $('m-tok').textContent = tok;
+    evLine(curStep, '', 'Ответ модели · ' + tok + ' токенов', ev.preview || '');
+  } else if (t === 'tool_started'){
+    $('phase').textContent = 'инструмент: ' + ev.tool;
+    evLine(curStep, 'tool', '▶ ' + ev.tool, ev.args || '');
+  } else if (t === 'tool_finished'){
+    const ok = ev.ok !== 'false';
+    evLine(curStep, ok ? 'tool' : 'err',
+      (ok?'✓ ':'✕ ') + ev.tool + ' · ' + (ev.ms || ev.durationMs || '?') + ' мс',
+      ev.preview || ev.result || '');
+  } else if (t === 'approval_required'){
+    $('phase').textContent = 'ждёт подтверждения';
+    evLine(curStep, 'err', '⚠ Нужно подтверждение: ' + ev.tool, ev.args || '');
+    askApproval(ev.tool);
+  } else if (t === 'tool_denied'){
+    evLine(curStep, 'err', '✕ Отклонено: ' + ev.tool);
+  } else if (t === 'task_started'){
+    evLine(curStep, '', 'Задача принята', ev.input || '');
+  } else {
+    evLine(curStep, '', t, JSON.stringify(ev).slice(0,300));
   }
 }
 
-function toggleTools() {
-  const t = document.getElementById('tools');
-  t.style.display = t.style.display === 'none' ? 'block' : 'none';
+function askApproval(tool){
+  const box = add('агент', '', true);
+  box.innerHTML = 'Инструмент <b>' + tool + '</b> требует подтверждения. ';
+  const yes = document.createElement('button'); yes.textContent = 'Разрешить';
+  const no  = document.createElement('button'); no.textContent = 'Отклонить'; no.className='ghost';
+  const decide = async d => {
+    yes.disabled = no.disabled = true;
+    await fetch('/api/agent/run/' + runId + '/approve', {
+      method:'POST', headers:H(), body: JSON.stringify({ decision: d }) });
+  };
+  yes.onclick = () => decide('allow'); no.onclick = () => decide('deny');
+  box.appendChild(yes); box.appendChild(no);
 }
 
-async function callTool() {
-  const name = document.getElementById('tool-name').value.trim();
-  if (!name) return;
-  let args = {};
-  const raw = document.getElementById('tool-args').value.trim();
-  if (raw) {
-    try { args = JSON.parse(raw); }
-    catch (e) { add('инструмент', 'Аргументы должны быть JSON: ' + e.message, 'tool'); return; }
-  }
-  const out = add('инструмент', name + ' …', 'tool');
-  try {
-    const r = await fetch('/mcp/call', {
-      method: 'POST', headers: H(),
-      body: JSON.stringify({ tool: name, args })
+async function poll(){
+  if (!runId) return;
+  try{
+    const r = await fetch('/api/agent/run/' + runId, { headers:H() });
+    const d = await r.json();
+    const run = d.run || d;
+    (run.events||[]).forEach(applyEvent);
+    $('m-time').textContent = Math.round((Date.now()-startedAt)/1000) + 'с';
+
+    if (run.status === 'completed' || run.status === 'failed' || run.status === 'aborted'){
+      clearInterval(timer); timer = null;
+      setBusy(false);
+      $('phase').textContent = run.status === 'completed' ? 'готово' : run.status;
+      $('dot').className = 'dot ' + (run.status === 'completed' ? 'ok' : 'bad');
+      const text = run.answer || run.error || 'Завершено без ответа.';
+      add('агент', md(text), true);
+      runId = null;
+    }
+  }catch(e){ /* a dropped poll is not fatal; the next tick retries */ }
+}
+
+async function send(){
+  const q = $('q'); const text = q.value.trim();
+  if (!text || runId) return;
+  q.value=''; q.style.height='auto';
+  add('вы', text);
+  setBusy(true); startedAt = Date.now();
+  $('m-step').textContent='0'; $('m-tools').textContent='0'; $('m-tok').textContent='0';
+  $('phase').textContent='запуск';
+
+  try{
+    // /api/agent/run, not /api/chat: the latter is a bare model proxy, which is
+    // why the reply used to arrive as the literal text "TOOL_JSON:{...}".
+    const r = await fetch('/api/agent/run', {
+      method:'POST', headers:H(),
+      body: JSON.stringify({ input: text, model: $('model').value })
     });
     const d = await r.json();
-    out.textContent = JSON.stringify(d.result ?? d, null, 2).slice(0, 4000);
-  } catch (e) {
-    out.textContent = 'Ошибка: ' + e.message;
-  }
+    if (!r.ok || !d.run){ setBusy(false); add('агент', 'Ошибка: ' + (d.error||r.status)); return; }
+    runId = d.run.id; seen.clear(); rounds = {}; $('rounds').innerHTML=''; curStep = 1;
+    (d.run.events||[]).forEach(applyEvent);
+    timer = setInterval(poll, 1200);
+    tab('rounds');
+  }catch(e){ setBusy(false); add('агент','Ошибка: '+e.message); }
 }
 
-document.getElementById('q').addEventListener('input', e => {
-  e.target.style.height = 'auto';
-  e.target.style.height = Math.min(e.target.scrollHeight, 130) + 'px';
+async function abortRun(){
+  if (!runId) return;
+  $('phase').textContent = 'останавливаю';
+  try{ await fetch('/api/agent/run/'+runId+'/abort', { method:'POST', headers:H() }); }
+  catch(e){}
+}
+
+async function runCmd(){
+  const c = $('cmd').value.trim(); if(!c) return;
+  const term = $('term');
+  term.textContent += '$ ' + c + '\n';
+  $('cmd').value='';
+  try{
+    const r = await fetch('/mcp/call', { method:'POST', headers:H(),
+      body: JSON.stringify({ tool:'execute_command', args:{ command:c } }) });
+    const d = await r.json();
+    const out = d.result ?? d;
+    term.textContent += (typeof out === 'string' ? out : JSON.stringify(out,null,2)) + '\n';
+  }catch(e){ term.textContent += 'Ошибка: '+e.message+'\n'; }
+  term.scrollTop = term.scrollHeight;
+}
+
+$('q').addEventListener('input', e => {
+  e.target.style.height='auto';
+  e.target.style.height = Math.min(e.target.scrollHeight,120)+'px';
 });
 
-ping();
-setInterval(ping, 20000);
+(async function ping(){
+  try{ const r = await fetch('/mcp/status',{headers:H()});
+       $('dot').className='dot '+(r.ok?'ok':'bad');
+       if(!r.ok) $('phase').textContent='ошибка '+r.status; }
+  catch(e){ $('dot').className='dot bad'; $('phase').textContent='нет связи'; }
+})();
 </script>
 </body>
 </html>
