@@ -57,6 +57,11 @@ jobs:
         # A duplicate that upstream already defines is the usual cause.
         run: python3 fork/tools/check_resources.py eden/src/android/app/src/main/res
 
+      - name: Check string references resolve
+        # aapt2 reports a missing @string only at resource-link time, roughly
+        # twenty minutes into the build. This is the same check in a second.
+        run: python3 fork/tools/check_string_refs.py eden/src/android/app/src/main/res
+
       - name: Install Kotlin
         run: |
           curl -sL -o /tmp/kc.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip

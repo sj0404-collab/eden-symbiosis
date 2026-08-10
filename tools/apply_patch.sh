@@ -14,6 +14,9 @@
 #   bash tools/apply_patch.sh --patch <dir> --eden <dir>
 set -euo pipefail
 
+# Resolved before any cd, otherwise BASH_SOURCE is relative to the new cwd.
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 PATCH_DIR="${PATCH_DIR:-/home/user/symbiosis-patch}"
 EDEN_DIR="${EDEN_DIR:-/work/eden}"
 
@@ -27,9 +30,8 @@ done
 
 # When run from a checkout of this repository, default to its own patch/ dir.
 if [ ! -d "$PATCH_DIR" ]; then
-  self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [ -d "$self_dir/../patch" ]; then
-    PATCH_DIR="$(cd "$self_dir/../patch" && pwd)"
+  if [ -d "$SELF_DIR/../patch" ]; then
+    PATCH_DIR="$(cd "$SELF_DIR/../patch" && pwd)"
   fi
 fi
 
@@ -103,8 +105,13 @@ if [ -d "$P/android/navigation" ]; then
   cp "$P"/android/navigation/*.xml "$A/res/navigation/"
 fi
 cp "$P"/android/drawable/*.xml "$A/res/drawable/"
-cp "$P"/android/values/strings-en.xml "$A/res/values/strings.xml"
-cp "$P"/android/values/strings-ru.xml "$A/res/values-ru/strings.xml"
+# Merge, never replace. A wholesale copy silently drops any upstream string the
+# fork's file predates: build #10 failed on "resource string/off not found"
+# because v0.2.1's arrays.xml references strings my master-derived copy lacked.
+python3 "$SELF_DIR/merge_strings.py" \
+  "$A/res/values/strings.xml"    "$P/android/values/strings-en.xml" "$A/res/values/strings.xml"
+python3 "$SELF_DIR/merge_strings.py" \
+  "$A/res/values-ru/strings.xml" "$P/android/values/strings-ru.xml" "$A/res/values-ru/strings.xml"
 
 # The Kotlin daemon is OOM-killed on a small machine; in-process is slower to
 # start but survives.
