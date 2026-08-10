@@ -70,6 +70,10 @@ jobs:
 
       - name: Run the suite
         run: |
+          # pwsh is on the ubuntu image, so the PowerShell blueprints are
+          # parsed for real rather than skipped. Without it the capability
+          # tests still pass - they just report the skip instead of faking it.
+          command -v pwsh >/dev/null && pwsh --version || echo "pwsh absent"
           export PATH="/tmp/kotlinc/bin:$PATH"
           bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden" --max-skip 3
 

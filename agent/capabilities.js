@@ -41,10 +41,21 @@ const MAX_OUTPUT_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 120000;
 const MAX_TIMEOUT_MS = 3600000;
 
+const IS_WINDOWS = process.platform === 'win32';
+
 const RUNTIMES = {
   python: { file: 'main.py', probe: ['python3', 'python'], args: file => [file], label: 'Python 3' },
   node:   { file: 'main.js', probe: ['node'],               args: file => [file], label: 'Node.js' },
-  bash:   { file: 'main.sh', probe: ['bash', 'sh'],         args: file => [file], label: 'Bash' }
+  bash:   { file: 'main.sh', probe: ['bash', 'sh'],         args: file => [file], label: 'Bash' },
+  // PowerShell is the only runtime that is native on a Windows runner without
+  // installing anything. pwsh (7.x) is preferred and present on GitHub's
+  // windows images; powershell.exe (5.1) is the fallback on a plain desktop.
+  powershell: {
+    file: 'main.ps1',
+    probe: ['pwsh', 'powershell'],
+    args: file => ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file],
+    label: 'PowerShell'
+  }
 };
 
 // ── helpers ────────────────────────────────────────────────────────
@@ -65,6 +76,15 @@ function resolveInterpreter(runtime) {
     if (found) return found;
   }
   return null;
+}
+
+// A capability may declare system packages either as a flat list (one
+// platform) or as {linux:[], windows:[]}. Everything downstream asks through
+// this so a per-platform manifest never leaks an object where a list is due.
+function systemPackagesFor(system, windows = IS_WINDOWS) {
+  if (!system) return [];
+  if (Array.isArray(system)) return system;
+  return (windows ? system.windows : system.linux) || [];
 }
 
 function clip(text) {
@@ -189,6 +209,7 @@ print(json.dumps(report, ensure_ascii=False, indent=2))
   rdp_session: {
     description: 'Поднять RDP-сессию (xrdp + XFCE) на машине агента и вернуть данные для подключения',
     runtime: 'bash',
+    platforms: ['linux'],
     system: ['xrdp', 'xfce4', 'xfce4-terminal'],
     parameters: {
       user: 'имя пользователя для входа (по умолчанию текущий)',
@@ -240,6 +261,7 @@ EOF
   gui_screenshot: {
     description: 'Запустить GUI-программу на виртуальном экране Xvfb и снять скриншоты её работы',
     runtime: 'python',
+    platforms: ['linux'],
     system: ['xvfb', 'x11-utils', 'imagemagick'],
     parameters: {
       command: 'команда запуска программы, например "python3 app.py"',
@@ -396,6 +418,259 @@ print(json.dumps({
     "body_head": body[:1500]
 }, ensure_ascii=False, indent=2))
 `
+  },
+
+  // ── Windows ──────────────────────────────────────────────────────
+  //
+  //  A Windows runner is not Linux with different package names. RDP is a
+  //  built-in service rather than xrdp, there is no Xvfb because the session
+  //  already owns a desktop, and the shell is PowerShell. These four cover the
+  //  same jobs as their Linux counterparts using what Windows actually has.
+
+  windows_rdp: {
+    description: 'Windows: включить встроенный RDP, завести пользователя и открыть правило брандмауэра',
+    runtime: 'powershell',
+    platforms: ['windows'],
+    parameters: {
+      user: 'имя пользователя RDP (по умолчанию zenrdp)',
+      password: 'пароль; если пусто — генерируется',
+      port: 'порт RDP, по умолчанию 3389'
+    },
+    code: `# Enable the RDP service Windows already ships with. No xrdp, no desktop
+# install: the runner session is itself a full desktop.
+$ErrorActionPreference = "Stop"
+$args = $env:CAPABILITY_ARGS | ConvertFrom-Json
+
+$user = if ($args.user) { [string]$args.user } else { "zenrdp" }
+$port = if ($args.port) { [int]$args.port } else { 3389 }
+$password = if ($args.password) { [string]$args.password } else {
+  -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 14 | ForEach-Object { [char]$_ })
+}
+
+$report = [ordered]@{ user = $user; port = $port }
+
+# Turn on Remote Desktop and let it through the firewall.
+Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' \`
+  -Name 'fDenyTSConnections' -Value 0
+Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' \`
+  -Name 'UserAuthentication' -Value 0
+if ($port -ne 3389) {
+  Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' \`
+    -Name 'PortNumber' -Value $port
+}
+Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+New-NetFirewallRule -DisplayName "zen-rdp-$port" -Direction Inbound -Protocol TCP \`
+  -LocalPort $port -Action Allow -ErrorAction SilentlyContinue | Out-Null
+
+# A local admin who is also allowed to log in remotely.
+$secure = ConvertTo-SecureString $password -AsPlainText -Force
+if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
+  Set-LocalUser -Name $user -Password $secure
+  $report.userExisted = $true
+} else {
+  New-LocalUser -Name $user -Password $secure -AccountNeverExpires -PasswordNeverExpires | Out-Null
+  $report.userExisted = $false
+}
+Add-LocalGroupMember -Group "Administrators" -Member $user -ErrorAction SilentlyContinue
+Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user -ErrorAction SilentlyContinue
+
+Restart-Service -Name TermService -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 3
+
+$listening = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue).Count -gt 0
+$report.password = $password
+$report.listening = $listening
+$report.note = "Порт локальный для машины агента. Наружу: ngrok tcp $port (free-план даёт случайный адрес; статический домен работает только по HTTP)."
+
+$report | ConvertTo-Json -Depth 4
+`
+  },
+
+  windows_screenshot: {
+    description: 'Windows: запустить программу и снять скриншоты её окна средствами .NET (без Xvfb)',
+    runtime: 'powershell',
+    platforms: ['windows'],
+    parameters: {
+      command: 'команда запуска, например "python app.py" или "notepad"',
+      seconds: 'сколько ждать прорисовки перед снимком (по умолчанию 4)',
+      shots: 'сколько снимков сделать (по умолчанию 1)',
+      interval: 'пауза между снимками в секундах (по умолчанию 2)',
+      keep_running: 'true — не закрывать программу после съёмки'
+    },
+    code: `# Windows already has a desktop, so screenshots come from System.Drawing
+# against the real screen rather than a virtual X display.
+$ErrorActionPreference = "Stop"
+$a = $env:CAPABILITY_ARGS | ConvertFrom-Json
+$art = $env:CAPABILITY_ARTIFACTS
+$work = if ($env:CAPABILITY_CWD) { $env:CAPABILITY_CWD } else { (Get-Location).Path }
+
+if (-not $a.command) { @{ error = "Нужен параметр command." } | ConvertTo-Json; exit 1 }
+
+$wait     = if ($a.seconds)  { [double]$a.seconds }  else { 4 }
+$shots    = if ($a.shots)    { [int]$a.shots }       else { 1 }
+$interval = if ($a.interval) { [double]$a.interval } else { 2 }
+
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+
+$outLog = Join-Path $art "app-stdout.txt"
+$errLog = Join-Path $art "app-stderr.txt"
+$proc = Start-Process -FilePath "powershell" \`
+  -ArgumentList @("-NoProfile", "-Command", [string]$a.command) \`
+  -WorkingDirectory $work -PassThru \`
+  -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+
+$report = [ordered]@{ command = [string]$a.command; pid = $proc.Id; screenshots = @() }
+Start-Sleep -Seconds $wait
+
+for ($i = 1; $i -le $shots; $i++) {
+  if ($i -gt 1) { Start-Sleep -Seconds $interval }
+  $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $bmp = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+  $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+  $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+  $dest = Join-Path $art ("shot-{0:D2}.png" -f $i)
+  $bmp.Save($dest, [System.Drawing.Imaging.ImageFormat]::Png)
+  $gfx.Dispose(); $bmp.Dispose()
+  $report.screenshots += @{ file = $dest; bytes = (Get-Item $dest).Length }
+}
+
+$report.app_alive = -not $proc.HasExited
+if (-not $a.keep_running -and -not $proc.HasExited) {
+  Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path $outLog) { $report.app_stdout = (Get-Content $outLog -Raw -ErrorAction SilentlyContinue) }
+if (Test-Path $errLog) { $report.app_stderr = (Get-Content $errLog -Raw -ErrorAction SilentlyContinue) }
+$report.hint = "Скриншоты — обычные PNG. Разбирай их через vision_analyze / ocr_image / image_info по указанным путям."
+
+$report | ConvertTo-Json -Depth 5
+`
+  },
+
+  windows_system: {
+    description: 'Windows: инвентарь машины — ОС, CPU, память, диски, GPU, службы, открытые порты',
+    runtime: 'powershell',
+    platforms: ['windows'],
+    parameters: {
+      services: 'true — включить список работающих служб',
+      ports: 'true — включить прослушиваемые порты'
+    },
+    code: `$ErrorActionPreference = "SilentlyContinue"
+$a = $env:CAPABILITY_ARGS | ConvertFrom-Json
+
+$os  = Get-CimInstance Win32_OperatingSystem
+$cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+
+$report = [ordered]@{
+  os = @{
+    caption = $os.Caption
+    version = $os.Version
+    build   = $os.BuildNumber
+    arch    = $os.OSArchitecture
+    uptime_hours = [math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 2)
+  }
+  cpu = @{
+    name    = $cpu.Name
+    cores   = $cpu.NumberOfCores
+    threads = $cpu.NumberOfLogicalProcessors
+  }
+  memory = @{
+    total_mb = [math]::Round($os.TotalVisibleMemorySize / 1KB)
+    free_mb  = [math]::Round($os.FreePhysicalMemory / 1KB)
+  }
+  disks = @(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+    @{ drive = $_.DeviceID
+       total_gb = [math]::Round($_.Size / 1GB, 1)
+       free_gb  = [math]::Round($_.FreeSpace / 1GB, 1) }
+  })
+  gpu = @(Get-CimInstance Win32_VideoController | ForEach-Object {
+    @{ name = $_.Name; driver = $_.DriverVersion; ram_mb = [math]::Round($_.AdapterRAM / 1MB) }
+  })
+  powershell = $PSVersionTable.PSVersion.ToString()
+}
+
+if ($a.services) {
+  $report.services = @(Get-Service | Where-Object { $_.Status -eq 'Running' } |
+    Select-Object -First 60 | ForEach-Object { $_.Name })
+}
+if ($a.ports) {
+  $report.listening_ports = @(Get-NetTCPConnection -State Listen |
+    Select-Object -ExpandProperty LocalPort -Unique | Sort-Object)
+}
+
+$report | ConvertTo-Json -Depth 5
+`
+  },
+
+  windows_adb: {
+    description: 'Windows: ADB через platform-tools — подключение, команды, logcat, скриншот устройства',
+    runtime: 'powershell',
+    platforms: ['windows'],
+    system: { windows: ['adb'], linux: ['android-tools-adb'] },
+    parameters: {
+      host: 'IP[:порт] для adb connect; пусто — уже подключённое по USB',
+      command: 'shell-команда на устройстве',
+      logcat_lines: 'сколько строк logcat забрать (0 — не забирать)',
+      screenshot: 'true — снять скриншот экрана устройства'
+    },
+    code: `$ErrorActionPreference = "Continue"
+$a = $env:CAPABILITY_ARGS | ConvertFrom-Json
+$art = $env:CAPABILITY_ARTIFACTS
+
+# choco puts adb on PATH; a manual platform-tools unpack usually does not.
+$adb = (Get-Command adb -ErrorAction SilentlyContinue).Source
+if (-not $adb) {
+  foreach ($candidate in @(
+      "$env:LOCALAPPDATA\\Android\\Sdk\\platform-tools\\adb.exe",
+      "$env:ProgramData\\chocolatey\\bin\\adb.exe",
+      "C:\\platform-tools\\adb.exe")) {
+    if (Test-Path $candidate) { $adb = $candidate; break }
+  }
+}
+if (-not $adb) {
+  @{ error = "adb не найден. Вызови capability_install для этой capability (choco install adb)." } |
+    ConvertTo-Json; exit 1
+}
+
+$report = [ordered]@{ adb = $adb; steps = @() }
+
+if ($a.host) {
+  $target = [string]$a.host
+  if ($target -notmatch ":") { $target = "\${target}:5555" }
+  $out = & $adb connect $target 2>&1 | Out-String
+  $report.steps += @{ connect = $target; out = $out.Trim() }
+}
+
+$devices = & $adb devices -l 2>&1 | Out-String
+$report.devices = $devices.Trim()
+if ($devices -notmatch "device\\s*$" -and $devices -notmatch "\`tdevice") {
+  $report.error = "Устройство не авторизовано или не подключено. Для Wi-Fi включи отладку по Wi-Fi и передай host."
+  $report | ConvertTo-Json -Depth 5
+  exit 1
+}
+
+if ($a.command) {
+  $out = & $adb shell ([string]$a.command) 2>&1 | Out-String
+  $report.command = @{ cmd = [string]$a.command; stdout = $out.Trim() }
+}
+
+if ($a.logcat_lines -and [int]$a.logcat_lines -gt 0) {
+  $out = & $adb logcat -d -t ([string][int]$a.logcat_lines) 2>&1 | Out-String
+  $dest = Join-Path $art "logcat.txt"
+  $out | Out-File -FilePath $dest -Encoding utf8
+  $report.logcat = @{ file = $dest; lines = ($out -split "\`n").Count }
+}
+
+if ($a.screenshot) {
+  $remote = "/sdcard/_zen_shot.png"
+  & $adb shell screencap -p $remote | Out-Null
+  $dest = Join-Path $art ("screen-{0}.png" -f ([int][double]::Parse((Get-Date -UFormat %s))))
+  & $adb pull $remote $dest | Out-Null
+  & $adb shell rm -f $remote | Out-Null
+  if (Test-Path $dest) { $report.screenshot = $dest }
+}
+
+$report | ConvertTo-Json -Depth 5
+`
   }
 };
 
@@ -414,7 +689,7 @@ function createCapabilities(ctx) {
 
   function runtimeState(manifest) {
     const interpreter = resolveInterpreter(manifest.runtime);
-    const missingSystem = (manifest.system || []).filter(pkg => !which(pkg.replace(/^.*-/, '')) && !which(pkg));
+    const missingSystem = systemPackagesFor(manifest.system).filter(pkg => !which(pkg.replace(/^.*-/, '')) && !which(pkg));
     return { interpreter, interpreterFound: !!interpreter, missingSystem };
   }
 
@@ -428,7 +703,7 @@ function createCapabilities(ctx) {
       template: manifest.template || null,
       background: !!manifest.background,
       directory: store.dirFor(manifest.name),
-      dependencies: { pip: manifest.pip || [], npm: manifest.npm || [], system: manifest.system || [] },
+      dependencies: { pip: manifest.pip || [], npm: manifest.npm || [], system: systemPackagesFor(manifest.system), systemDeclared: manifest.system || [] },
       installed: !!manifest.installedAt,
       interpreterFound: state.interpreterFound,
       lastRun: manifest.lastRun || null,
@@ -459,13 +734,21 @@ function createCapabilities(ctx) {
       if (!bp) return { error: `Шаблон '${id}' не найден. Доступны: ${Object.keys(BLUEPRINTS).join(', ')}` };
       return { template: id, ...bp };
     }
+    const here = IS_WINDOWS ? 'windows' : 'linux';
+    const all = Object.entries(BLUEPRINTS).map(([key, bp]) => ({
+      id: key, runtime: bp.runtime, description: bp.description,
+      parameters: bp.parameters || {},
+      platforms: bp.platforms || ['linux', 'windows'],
+      dependencies: { pip: bp.pip || [], npm: bp.npm || [], system: systemPackagesFor(bp.system) }
+    }));
+    // Default to what actually runs here; the rest is still listed separately
+    // so the model can see it exists without being tempted to use it.
+    const usable = all.filter(t => t.platforms.includes(here));
     return {
-      templates: Object.entries(BLUEPRINTS).map(([key, bp]) => ({
-        id: key, runtime: bp.runtime, description: bp.description,
-        parameters: bp.parameters || {},
-        dependencies: { pip: bp.pip || [], npm: bp.npm || [], system: bp.system || [] }
-      })),
-      usage: 'capability_create({name:"мое_имя", template:"gui_screenshot"}) создаёт capability из шаблона; code можно не передавать.'
+      platform: here,
+      templates: args.all ? all : usable,
+      otherPlatform: args.all ? [] : all.filter(t => !t.platforms.includes(here)).map(t => t.id),
+      usage: `capability_create({name:"мое_имя", template:"${here === 'windows' ? 'windows_screenshot' : 'gui_screenshot'}"}) создаёт capability из шаблона; code можно не передавать. Передай all:true, чтобы увидеть шаблоны других платформ.`
     };
   }
 
@@ -509,7 +792,7 @@ function createCapabilities(ctx) {
       parameters: args.parameters && typeof args.parameters === 'object' ? args.parameters : (blueprint?.parameters || {}),
       pip: Array.isArray(args.pip) ? args.pip : (blueprint?.pip || []),
       npm: Array.isArray(args.npm) ? args.npm : (blueprint?.npm || []),
-      system: Array.isArray(args.system) ? args.system : (blueprint?.system || []),
+      system: (Array.isArray(args.system) || (args.system && typeof args.system === 'object')) ? args.system : (blueprint?.system || []),
       timeoutMs: Math.min(MAX_TIMEOUT_MS, Math.max(1000, Number(args.timeout_ms || args.timeout * 1000 || DEFAULT_TIMEOUT_MS))),
       background: !!args.background,
       createdAt: existing?.createdAt || new Date().toISOString(),
@@ -527,13 +810,26 @@ function createCapabilities(ctx) {
 
     audit('capability_created', { name, runtime, template: templateId || null });
     const state = runtimeState(manifest);
-    const needsInstall = manifest.pip.length || manifest.npm.length || manifest.system.length;
+    const needsInstall = manifest.pip.length || manifest.npm.length || systemPackagesFor(manifest.system).length;
+
+    // A Linux blueprint on Windows (or the reverse) fails deep inside the
+    // script with a confusing error. Say so at creation time instead.
+    const here = IS_WINDOWS ? 'windows' : 'linux';
+    const supported = blueprint?.platforms || manifest.platforms || ['linux', 'windows'];
+    const platformWarning = supported.includes(here)
+      ? null
+      : `Шаблон '${templateId}' рассчитан на ${supported.join('/')}, а агент работает на ${here}. ` +
+        (here === 'windows'
+          ? 'Для Windows возьми windows_rdp / windows_screenshot / windows_adb / windows_system.'
+          : 'Для Linux возьми rdp_session / gui_screenshot / adb_bridge.');
 
     return {
       success: true,
       capability: describe(manifest),
       file: codePath,
       interpreter: state.interpreter || `НЕ НАЙДЕН (${RUNTIMES[runtime].label})`,
+      platform: here,
+      ...(platformWarning ? { platformWarning } : {}),
       nextStep: needsInstall
         ? `Зависимости не установлены. Вызови capability_install({name:"${name}"}), затем capability_run.`
         : `Готово к запуску: capability_run({name:"${name}", args:{...}}).`
@@ -590,16 +886,43 @@ function createCapabilities(ctx) {
     const dir = store.dirFor(name);
     const steps = [];
 
-    if (manifest.system.length) {
-      if (which('sudo') || process.getuid?.() === 0) {
+    if (systemPackagesFor(manifest.system).length || (!Array.isArray(manifest.system) && manifest.system)) {
+      // System packages are named per platform. A manifest may either give a
+      // plain list (Linux names) or an object {linux:[], windows:[]}, so one
+      // capability can declare both and stay portable.
+      const systemPackages = Array.isArray(manifest.system)
+        ? manifest.system
+        : (IS_WINDOWS ? (manifest.system.windows || []) : (manifest.system.linux || []));
+
+      if (!systemPackages.length) {
+        steps.push({
+          command: 'system packages', exit: 0, stdout: '',
+          stderr: `Для ${IS_WINDOWS ? 'Windows' : 'Linux'} системные пакеты не объявлены — пропущено.`
+        });
+      } else if (IS_WINDOWS) {
+        const choco = which('choco');
+        if (choco) {
+          steps.push(runInstall(choco, ['install', '-y', '--no-progress', '--limit-output', ...systemPackages], dir));
+        } else {
+          const winget = which('winget');
+          if (winget) {
+            for (const pkg of systemPackages) {
+              steps.push(runInstall(winget, ['install', '--silent', '--accept-package-agreements',
+                '--accept-source-agreements', '-e', '--id', pkg], dir));
+            }
+          } else {
+            steps.push({ command: 'choco', exit: 1, stdout: '', stderr: 'Ни choco, ни winget не найдены — системные пакеты поставить нельзя.' });
+          }
+        }
+      } else if (which('sudo') || process.getuid?.() === 0) {
         const prefix = process.getuid?.() === 0 ? [] : ['-n'];
         const update = runInstall(process.getuid?.() === 0 ? 'apt-get' : 'sudo',
           process.getuid?.() === 0 ? ['update', '-qq'] : [...prefix, 'apt-get', 'update', '-qq'], dir);
         steps.push(update);
         const install = runInstall(process.getuid?.() === 0 ? 'apt-get' : 'sudo',
           process.getuid?.() === 0
-            ? ['install', '-y', '-qq', ...manifest.system]
-            : [...prefix, 'apt-get', 'install', '-y', '-qq', ...manifest.system], dir);
+            ? ['install', '-y', '-qq', ...systemPackages]
+            : [...prefix, 'apt-get', 'install', '-y', '-qq', ...systemPackages], dir);
         steps.push(install);
       } else {
         steps.push({ command: 'apt-get', exit: 1, stdout: '', stderr: 'sudo недоступен — системные пакеты поставить нельзя.' });
@@ -886,7 +1209,9 @@ const CAPABILITY_PROMPT = `САМОРАСШИРЕНИЕ ЧЕРЕЗ CAPABILITIES 
 - custom_tool_* и plugin_* исполняются в песочнице vm: там ЗАПРЕЩЕНЫ require, process, child_process, import, eval. Они годятся только для чистых вычислений над текстом и файлами.
 - Всё, что требует настоящей системы — adb, RDP, запуск GUI-программы, скриншоты, pip-пакеты, длинные фоновые задачи — делается через capability_*. Capability это папка с manifest.json и main.py/main.js/main.sh, которая запускается настоящим интерпретатором.
 - Порядок: capability_templates() → capability_create({name, template}) → capability_install({name}) если есть зависимости → capability_run({name, args:{...}}).
-- Свой код вместо шаблона: capability_create({name, description, runtime:"python"|"node"|"bash", code, parameters, pip:[], npm:[], system:[]}).
+- Свой код вместо шаблона: capability_create({name, description, runtime:"python"|"node"|"bash"|"powershell", code, parameters, pip:[], npm:[], system:[]}).
+- ПЛАТФОРМА. capability_templates() показывает только то, что работает на текущей ОС; передай all:true, чтобы увидеть остальное. На Windows runtime по умолчанию — powershell (pwsh есть всегда, bash и Xvfb нет). Windows-шаблоны: windows_rdp (встроенный RDP, не xrdp), windows_screenshot (снимок реального экрана через System.Drawing, Xvfb не нужен), windows_adb, windows_system. Linux-шаблоны rdp_session и gui_screenshot на Windows не работают и наоборот.
+- Системные пакеты называются по-разному: передавай system:{linux:["android-tools-adb"], windows:["adb"]} — capability_install сам выберет apt-get, choco или winget.
 - Внутри capability аргументы приходят JSON-ом в переменной окружения CAPABILITY_ARGS и на stdin. Пиши файлы в папку из CAPABILITY_ARTIFACTS — они вернутся в ответе списком путей.
 - Если последняя строка stdout — JSON-объект, он вернётся уже разобранным в поле result. Пользуйся этим вместо печати свободного текста.
 - Скриншоты и любые изображения из artifacts разбирай через vision_analyze / ocr_image / image_info по возвращённому пути — так замыкается цикл «сделал программу → запустил → посмотрел на результат».

@@ -14,6 +14,27 @@ const { createCapabilities, CAPABILITY_TOOLS, CAPABILITY_WRITE_TOOLS, BLUEPRINTS
 let passed = 0, failed = 0;
 const results = [];
 
+// A PowerShell one-liner that parses a file and exits non-zero on a syntax
+// error. PSParser.Tokenize was the obvious choice and is useless here: it
+// leaves $Error empty and reports success on a plainly broken script, so an
+// earlier version of this test passed no matter what. Parser::ParseFile fills
+// an error collection, which is the thing worth checking.
+function psParseScript(file) {
+  const quoted = file.replace(/'/g, "''");
+  return `$e=$null; [System.Management.Automation.Language.Parser]::ParseFile('${quoted}',[ref]$null,[ref]$e) | Out-Null;`
+    + ` if ($e.Count) { $e | ForEach-Object { Write-Host $_.Message }; exit 1 }; exit 0`;
+}
+
+// First of the given binaries that exists on PATH.
+function which0(candidates) {
+  const { spawnSync } = require('child_process');
+  for (const binary of candidates) {
+    const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', [binary], { encoding: 'utf8' });
+    if (probe.status === 0) return binary;
+  }
+  return candidates[0];
+}
+
 function check(name, fn) {
   return Promise.resolve()
     .then(fn)
@@ -200,17 +221,98 @@ const caps = createCapabilities({
   // ── templates ───────────────────────────────────────────────────
   await check('every blueprint is syntactically valid for its runtime', async () => {
     const { spawnSync } = require('child_process');
+    const entryFor = { python: 'main.py', node: 'main.js', bash: 'main.sh', powershell: 'main.ps1' };
+    const pwsh = ['pwsh', 'powershell'].map(bin => spawnSync(bin, ['-Version'], { encoding: 'utf8' }))
+      .some(r => r.status === 0);
+    let checked = 0, skippedPwsh = 0;
+
     for (const [id, bp] of Object.entries(BLUEPRINTS)) {
       const create = await caps.handle('capability_create', { name: `tpl_${id}`, template: id });
       assert.ok(create.success, `${id}: ${create.error}`);
-      const file = path.join(create.capability.directory, create.capability.runtime === 'python' ? 'main.py'
-        : create.capability.runtime === 'node' ? 'main.js' : 'main.sh');
+      const file = path.join(create.capability.directory, entryFor[create.capability.runtime]);
+      assert.ok(fs.existsSync(file), `${id}: entry file missing at ${file}`);
+
       let probe;
       if (bp.runtime === 'python') probe = spawnSync('python3', ['-m', 'py_compile', file], { encoding: 'utf8' });
       else if (bp.runtime === 'node') probe = spawnSync('node', ['--check', file], { encoding: 'utf8' });
-      else probe = spawnSync('bash', ['-n', file], { encoding: 'utf8' });
+      else if (bp.runtime === 'bash') probe = spawnSync('bash', ['-n', file], { encoding: 'utf8' });
+      else {
+        // PowerShell blueprints are parsed by PowerShell itself when it is
+        // available. On a Linux runner without pwsh the check is skipped
+        // rather than faked - the Windows job covers it for real.
+        if (!pwsh) { skippedPwsh++; continue; }
+        probe = spawnSync(which0(['pwsh', 'powershell']), ['-NoProfile', '-Command', psParseScript(file)], { encoding: 'utf8' });
+        // spawnSync merges nothing: surface the parser's own message on failure.
+        if (probe.status !== 0) probe.stderr = (probe.stdout || '') + (probe.stderr || '');
+      }
       assert.strictEqual(probe.status, 0, `${id} has a syntax error:\n${probe.stderr}`);
+      checked++;
     }
+    assert.ok(checked >= 5, 'expected the cross-platform blueprints to be checked');
+    if (skippedPwsh) results.push(`       note: ${skippedPwsh} PowerShell blueprint(s) not parsed - pwsh absent`);
+  });
+
+  await check('the PowerShell syntax check actually rejects a broken script', () => {
+    const { spawnSync } = require('child_process');
+    const bin = which0(['pwsh', 'powershell']);
+    if (spawnSync(bin, ['-Version'], { encoding: 'utf8' }).status !== 0) {
+      results.push('       note: skipped - pwsh absent');
+      return;
+    }
+    const broken = path.join(workspace, 'broken.ps1');
+    fs.writeFileSync(broken, '$x = @{ unclosed = "hello\nif ($x -eq { ) { Write-Host "nope"\n');
+    const bad = spawnSync(bin, ['-NoProfile', '-Command', psParseScript(broken)], { encoding: 'utf8' });
+    assert.strictEqual(bad.status, 1, 'a broken script must fail the check');
+
+    const fine = path.join(workspace, 'fine.ps1');
+    fs.writeFileSync(fine, 'Write-Host "ok"\n');
+    const good = spawnSync(bin, ['-NoProfile', '-Command', psParseScript(fine)], { encoding: 'utf8' });
+    assert.strictEqual(good.status, 0, 'a valid script must pass');
+  });
+
+  await check('windows blueprints are declared windows-only and use PowerShell', () => {
+    for (const id of ['windows_rdp', 'windows_screenshot', 'windows_system', 'windows_adb']) {
+      const bp = BLUEPRINTS[id];
+      assert.ok(bp, `${id} missing`);
+      assert.strictEqual(bp.runtime, 'powershell', `${id} should use PowerShell`);
+      assert.deepStrictEqual(bp.platforms, ['windows'], `${id} should be windows-only`);
+    }
+    assert.deepStrictEqual(BLUEPRINTS.rdp_session.platforms, ['linux']);
+    assert.deepStrictEqual(BLUEPRINTS.gui_screenshot.platforms, ['linux']);
+  });
+
+  await check('templates are filtered to the running platform', async () => {
+    const listed = await caps.handle('capability_templates');
+    const ids = listed.templates.map(t => t.id);
+    const windowsOnly = ['windows_rdp', 'windows_screenshot', 'windows_system', 'windows_adb'];
+    if (process.platform === 'win32') {
+      assert.ok(ids.includes('windows_rdp'), 'windows templates must be offered on Windows');
+      assert.ok(!ids.includes('gui_screenshot'), 'Xvfb template must not be offered on Windows');
+    } else {
+      assert.ok(ids.includes('gui_screenshot'));
+      for (const id of windowsOnly) assert.ok(!ids.includes(id), `${id} must be hidden on Linux`);
+      assert.ok(listed.otherPlatform.includes('windows_rdp'), 'hidden ones should still be named');
+    }
+    const everything = await caps.handle('capability_templates', { all: true });
+    assert.strictEqual(everything.templates.length, Object.keys(BLUEPRINTS).length);
+  });
+
+  await check('creating an off-platform template warns instead of failing silently', async () => {
+    const offPlatform = process.platform === 'win32' ? 'gui_screenshot' : 'windows_rdp';
+    const r = await caps.handle('capability_create', { name: 'off_plat', template: offPlatform });
+    assert.ok(r.success, 'creation should still succeed');
+    assert.ok(r.platformWarning, 'a platform mismatch must be reported');
+    assert.ok(/windows|linux/i.test(r.platformWarning));
+  });
+
+  await check('per-platform system packages resolve to the right list', async () => {
+    const r = await caps.handle('capability_create', {
+      name: 'dual_deps', description: 'per-platform deps', runtime: 'python',
+      code: 'print("{}")', system: { linux: ['android-tools-adb'], windows: ['adb'] }
+    });
+    assert.ok(r.success, JSON.stringify(r));
+    const expected = process.platform === 'win32' ? 'adb' : 'android-tools-adb';
+    assert.deepStrictEqual(r.capability.dependencies.system, [expected]);
   });
 
   await check('templates advertise their dependencies', () => {

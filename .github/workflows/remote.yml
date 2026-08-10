@@ -30,8 +30,13 @@ name: Remote session
 on:
   workflow_dispatch:
     inputs:
+      os:
+        description: "Runner OS"
+        type: choice
+        options: [linux, windows]
+        default: linux
       mode:
-        description: "Session type"
+        description: "Session type (Linux only; a Windows session is always RDP)"
         type: choice
         options: [web, ssh, rdp, both]
         default: web
@@ -49,6 +54,7 @@ permissions:
 
 jobs:
   remote:
+    if: inputs.os == 'linux'
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -450,3 +456,150 @@ jobs:
           else
             echo "Nothing left to save."
           fi
+
+  # ── Windows ────────────────────────────────────────────────────────
+  #
+  #  A Windows runner is not the Linux job with different package names, so it
+  #  gets its own job rather than a pile of `if` branches:
+  #
+  #    * RDP is a built-in service. There is no xrdp to install and no desktop
+  #      to add - the session already has one.
+  #    * There is no noVNC path. Windows RDP over a browser would need a
+  #      gateway we cannot install in six hours of runner time, so this job is
+  #      RDP-only and says so instead of pretending `mode` applies.
+  #    * ngrok must tunnel TCP, and free ngrok gives a random host:port for
+  #      that - the static domain is HTTP-only.
+  #
+  #  The Windows runner has 4 cores and 16 GB, so it is the better machine for
+  #  anything interactive; it just cannot build the Android APK.
+
+  remote-windows:
+    if: inputs.os == 'windows'
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Name this session
+        shell: pwsh
+        run: |
+          "### Windows session: ${{ inputs.label }} (RDP)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Enable RDP and create the session user
+        id: rdp
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $user = "zenrdp"
+          $password = -join ((48..57) + (65..90) + (97..122) |
+            Get-Random -Count 16 | ForEach-Object { [char]$_ })
+
+          # Remote Desktop is present on the image but switched off, and NLA
+          # would reject the fresh local account from most phone clients.
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name 'fDenyTSConnections' -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name 'UserAuthentication' -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+
+          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name $user -Password $secure -AccountNeverExpires -PasswordNeverExpires | Out-Null
+          Add-LocalGroupMember -Group "Administrators" -Member $user
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user
+
+          Restart-Service -Name TermService -Force
+          Start-Sleep -Seconds 5
+
+          $listening = @(Get-NetTCPConnection -State Listen -LocalPort 3389 -ErrorAction SilentlyContinue).Count
+          if ($listening -eq 0) { throw "RDP is not listening on 3389." }
+
+          "user=$user"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "password=$password" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "::add-mask::$password"
+
+      - name: Prepare the workspace and the agent
+        shell: pwsh
+        run: |
+          # Node is already on the image. The agent runs the same file as on
+          # Linux; capabilities pick the PowerShell runtime automatically.
+          node --version
+          pwsh --version
+          Write-Host "capability templates available on this machine:"
+          Set-Location "$env:GITHUB_WORKSPACE\fork"
+          node -e "const m=require('./agent/capabilities.js');const c=m.createCapabilities({workspaceRoot:()=>process.cwd(),commandEnvironment:()=>process.env,resolvePath:p=>({path:p}),auditEvent:()=>{}});c.handle('capability_templates').then?0:0;const r=c.handle('capability_templates');console.log(r.templates.map(t=>t.id+' ('+t.runtime+')').join('\n'))"
+
+      - name: Open the tunnel
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        shell: pwsh
+        run: |
+          if (-not $env:NGROK_TOKEN) {
+            Write-Host "::error::NGROK_AUTH_TOKEN is not set; RDP would only be reachable on the runner."
+            exit 1
+          }
+          choco install ngrok -y --no-progress --limit-output | Out-Null
+          ngrok config add-authtoken $env:NGROK_TOKEN
+
+          # TCP, because RDP is not HTTP. Free ngrok hands out a random
+          # host:port here - the reserved domain only applies to HTTP.
+          Start-Process -FilePath "ngrok" -ArgumentList "tcp 3389 --log stdout --log-format json --log-level info" `
+            -RedirectStandardOutput "$env:TEMP\ngrok.log" -NoNewWindow
+
+          $endpoint = $null
+          foreach ($attempt in 1..30) {
+            Start-Sleep -Seconds 2
+            try {
+              $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
+              $tcp = $tunnels.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
+              if ($tcp) { $endpoint = $tcp.public_url -replace '^tcp://', ''; break }
+            } catch { }
+          }
+          if (-not $endpoint) {
+            Write-Host "::error::ngrok did not report a tunnel."
+            Get-Content "$env:TEMP\ngrok.log" -Tail 30
+            exit 1
+          }
+
+          $host_, $port = $endpoint -split ':'
+          $summary = @"
+          ## Windows RDP session
+
+          | | |
+          |---|---|
+          | Address | ``$endpoint`` |
+          | Host | ``$host_`` |
+          | Port | ``$port`` |
+          | User | ``${{ steps.rdp.outputs.user }}`` |
+          | Password | ``${{ steps.rdp.outputs.password }}`` |
+
+          From a phone: Microsoft Remote Desktop or aFreeRDP, PC name ``$endpoint``.
+          The address is random - free ngrok reserves domains for HTTP only.
+          The runner is destroyed when the job ends; nothing on it survives.
+          "@
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host "RDP ready at $endpoint  user ${{ steps.rdp.outputs.user }}"
+
+      - name: Hold the session open
+        shell: pwsh
+        run: |
+          Write-Host "The desktop stays up until you cancel this run, or for six hours."
+          Start-Sleep -Seconds 21000
+
+      - name: Save work before the runner is destroyed
+        if: always()
+        shell: pwsh
+        run: |
+          Set-Location "$env:GITHUB_WORKSPACE\fork"
+          if (git status --porcelain) {
+            git config user.name "Symbiosis Session"
+            git config user.email "agent@users.noreply.github.com"
+            git add -A
+            git commit -q -m "final autosave $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+            git push -q origin HEAD
+            Write-Host "Pushed the last changes."
+          } else {
+            Write-Host "Nothing left to save."
+          }

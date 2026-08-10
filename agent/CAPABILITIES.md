@@ -65,6 +65,34 @@ if (/\brequire\s*\(|\bprocess\b|child_process|\bimport\s*\(|\beval\s*\(/.test(co
 | `capability_inspect({name})` | код, параметры, артефакты |
 | `capability_delete({name})` | удалить |
 
+## Windows
+
+Windows-раннер — это не Linux с другими именами пакетов, поэтому у него свои
+шаблоны и свой runtime.
+
+| | Linux | Windows |
+|---|---|---|
+| Runtime по умолчанию | `python` / `bash` | `powershell` (pwsh есть всегда) |
+| Пакеты | `apt-get` | `choco`, иначе `winget` |
+| RDP | ставить xrdp + XFCE | встроенная служба, ставить нечего |
+| Скриншот | Xvfb + ImageMagick | `System.Drawing` с реального экрана |
+
+`capability_templates()` показывает только то, что работает на текущей машине;
+`{all:true}` покажет остальные. Если всё же создать чужой шаблон, ответ придёт
+с полем `platformWarning` — молча нерабочего инструмента не будет.
+
+Системные пакеты можно объявить сразу для обеих ОС, и `capability_install`
+выберет нужное:
+
+```
+capability_create({ name: "adb", description: "…", runtime: "powershell",
+                    code: "…", system: { linux: ["android-tools-adb"], windows: ["adb"] } })
+```
+
+Сессия Windows поднимается через `Remote session` → `os: windows`. Это всегда
+RDP: браузерного noVNC там нет, а `mode` к Windows не применяется. Машина
+мощнее linux-раннера (4 ядра, 16 ГБ), но собрать Android-APK на ней нельзя.
+
 ## Готовые шаблоны
 
 * **`adb_bridge`** — `adb connect` по Wi-Fi или уже подключённое USB-устройство,
@@ -76,6 +104,16 @@ if (/\brequire\s*\(|\bprocess\b|child_process|\bimport\s*\(|\beval\s*\(/.test(co
   PNG. Это и есть «создать программу для ПК и снять скрины её работы».
 * **`pytest_runner`** — прогон `pytest`/`unittest` с машинно-читаемым отчётом.
 * **`http_probe`** — код ответа, задержка по нескольким замерам, заголовки.
+
+Только для Windows:
+
+* **`windows_rdp`** — включает встроенный RDP, заводит пользователя, открывает
+  правило брандмауэра, возвращает логин/пароль/порт.
+* **`windows_screenshot`** — запускает программу и снимает реальный экран через
+  `System.Drawing`; виртуальный дисплей не нужен, он уже есть.
+* **`windows_adb`** — ADB через platform-tools, включая поиск `adb.exe` там,
+  куда его кладут choco и Android SDK.
+* **`windows_system`** — инвентарь: ОС, CPU, память, диски, GPU, службы, порты.
 
 Шаблон — стартовая точка: после `capability_create` код лежит на диске, его
 можно читать и править обычными `read_file` / `edit_file`.
@@ -103,7 +141,7 @@ vision_analyze({ path: "…/artifacts/shot-01.png", prompt: "Что на экр�
 
 ## Тесты
 
-`tests/t_capabilities.js`, 20 проверок, запускаются вместе с остальной сюитой
+`tests/t_capabilities.js`, 25 проверок, запускаются вместе с остальной сюитой
 через `tools/run_tests.sh`. Они не мокают процессы: capability реально
 создаётся, реально запускается, у неё проверяются код возврата, таймаут,
 артефакты и то, что PID отличается от PID агента. Отдельный шаг в `tests.yml`
