@@ -183,7 +183,12 @@ class GamesFragment : Fragment() {
         // Tools sits on the game screen itself, next to the filter and the gear.
         // It was previously reachable only from inside Settings, which is the
         // one place it does not belong: none of these are preferences.
-        binding.toolsButton.setOnClickListener {
+        // Safe call, matching how upstream treats launchQlaunch: view binding
+        // types a view as nullable when it is absent from any layout variant,
+        // and there are five here (default, land, ldrtl, w600dp, w1000dp).
+        // Requiring it to be non-null broke the build the moment one variant
+        // lacked the button.
+        binding.toolsButton?.setOnClickListener {
             findNavController().navigate(R.id.action_global_toolsFragment)
         }
 

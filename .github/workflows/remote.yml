@@ -1,0 +1,199 @@
+name: Remote session
+
+# A remote desktop (RDP) or terminal (SSH) on a GitHub runner, reachable from a
+# phone. Both are tunnelled out through ngrok, because a runner has no public
+# address of its own.
+#
+# WHAT YOU NEED ONCE, FOR RDP:
+#   An ngrok authtoken - free from https://dashboard.ngrok.com/get-started/your-authtoken
+#   Save it as a repository secret named NGROK_AUTH_TOKEN:
+#     Settings -> Secrets and variables -> Actions -> New repository secret
+#   Without it, RDP cannot be exposed and the job stops with an explanation
+#   rather than pretending to work. SSH mode needs no token at all.
+#
+# HONEST LIMITS - read before relying on this:
+#   * A job is killed after 6 hours. Nothing on the runner survives it.
+#   * The desktop is XFCE with no GPU. Fine for a file manager, an editor and a
+#     browser; useless for the Android emulator, which would run under software
+#     rendering on two cores.
+#   * A phone on mobile data will find RDP sluggish. SSH mode stays responsive
+#     on a bad connection, which is why it is the default.
+#   * Free ngrok gives one simultaneous TCP tunnel, so one RDP session at a
+#     time. Several SSH sessions can run at once.
+#
+# CONNECTING FROM A PHONE:
+#   RDP - Microsoft Remote Desktop, or aFreeRDP. Host and port are printed in
+#         the log; user "runner", password shown in the same step.
+#   SSH - Termux, JuiceSSH or ConnectBot. The web link works with no client.
+#   A mouse over OTG works in both; RDP also takes touch as a mouse.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Session type"
+        type: choice
+        options: [ssh, rdp, both]
+        default: ssh
+      prepare_build:
+        description: "Check out Eden and apply the patch first"
+        type: boolean
+        default: true
+      label:
+        description: "Name for this session, so several runs are told apart"
+        type: string
+        default: "session-1"
+
+permissions:
+  contents: write
+
+jobs:
+  remote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Name this session
+        run: |
+          echo "### Session: ${{ inputs.label }} (${{ inputs.mode }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "Started $(date -u '+%Y-%m-%d %H:%M UTC'), killed after 6 hours." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare a build environment
+        if: inputs.prepare_build
+        run: |
+          # Done before the session opens so you attach to a runner that can
+          # already build, rather than typing ten minutes of setup on a phone.
+          git clone --branch v0.2.1 https://git.eden-emu.dev/eden-emu/eden.git eden
+          sudo apt-get update -qq
+          sudo apt-get install -y glslang-tools libfmt-dev tmux htop
+          cd eden
+          bash "$GITHUB_WORKSPACE/fork/tools/apply_patch.sh" \
+            --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        if: inputs.prepare_build
+
+      - name: Install NDK and CMake
+        if: inputs.prepare_build
+        run: sdkmanager --install "ndk;28.2.13676358" "cmake;3.31.6" "build-tools;35.0.0" "platforms;android-36"
+
+      - name: Write the cheat sheet
+        run: |
+          cat > "$HOME/README-session.txt" <<'EOF'
+          Eden Symbiosis - runner session
+          ===============================
+          Where things are:
+            ~/work/eden-symbiosis/eden   upstream v0.2.1, patch applied
+            ~/work/eden-symbiosis/fork   this repository
+
+          Build the APK:
+            cd ~/work/eden-symbiosis/eden/src/android
+            ./gradlew assembleLegacyDebug --parallel --max-workers=$(nproc)
+          Result: app/build/outputs/apk/legacy/debug/app-legacy-debug.apk
+
+          Take it off the runner - it dies with the session:
+            curl -F "file=@<apk>" https://store-eu-par-2.gofile.io/contents/uploadfile
+
+          Run the tests:
+            bash ~/work/eden-symbiosis/fork/tools/run_tests.sh \
+              --eden ~/work/eden-symbiosis/eden
+
+          Survive a dropped phone connection:
+            tmux new -s work      # first time
+            tmux attach -t work   # after reconnecting
+          EOF
+          cp "$HOME/README-session.txt" "$HOME/Desktop/" 2>/dev/null || true
+          cat "$HOME/README-session.txt"
+
+      - name: Set up the desktop and RDP
+        if: inputs.mode == 'rdp' || inputs.mode == 'both'
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          if [ -z "$NGROK_TOKEN" ]; then
+            echo "::error::NGROK_AUTH_TOKEN is not set, so RDP cannot be reached."
+            echo "Add it under Settings -> Secrets and variables -> Actions."
+            echo "Get a free token at https://dashboard.ngrok.com/get-started/your-authtoken"
+            echo "Or re-run this workflow with mode: ssh, which needs no token."
+            exit 1
+          fi
+
+          sudo apt-get install -y xrdp xfce4 xfce4-terminal xfce4-goodies \
+                                  dbus-x11 thunar mousepad firefox >/dev/null
+
+          # xrdp defaults to a session type this image does not provide; point
+          # it at XFCE explicitly or the connection opens onto a blank screen.
+          echo "xfce4-session" > "$HOME/.xsession"
+          sudo sed -i 's/^test -x .*/# &/' /etc/xrdp/startwm.sh 2>/dev/null || true
+          echo "startxfce4" | sudo tee -a /etc/xrdp/startwm.sh >/dev/null
+
+          PASS="eden-$(openssl rand -hex 4)"
+          echo "runner:$PASS" | sudo chpasswd
+          sudo systemctl enable --now xrdp
+          sudo systemctl restart xrdp
+          sleep 5
+
+          curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
+            | sudo tar xz -C /usr/local/bin
+          ngrok config add-authtoken "$NGROK_TOKEN"
+          nohup ngrok tcp 3389 --log stdout > /tmp/ngrok.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            URL=$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+                  | python3 -c "import sys,json;t=json.load(sys.stdin).get('tunnels',[]);print(t[0]['public_url'] if t else '')" 2>/dev/null)
+            [ -n "$URL" ] && break
+            sleep 2
+          done
+
+          if [ -z "$URL" ]; then
+            echo "::error::ngrok did not open a tunnel. Log follows."
+            cat /tmp/ngrok.log
+            exit 1
+          fi
+
+          HOSTPORT=${URL#tcp://}
+          {
+            echo ""
+            echo "## RDP"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Address | \`$HOSTPORT\` |"
+            echo "| User | \`runner\` |"
+            echo "| Password | \`$PASS\` |"
+            echo ""
+            echo "Microsoft Remote Desktop on Android: add a PC, paste the address,"
+            echo "then those credentials. Touch acts as a mouse; an OTG mouse and"
+            echo "keyboard work as they would on a desktop."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "=============================================="
+          echo " RDP  $HOSTPORT"
+          echo " user runner"
+          echo " pass $PASS"
+          echo "=============================================="
+
+      - name: Open the SSH session
+        if: inputs.mode == 'ssh' || inputs.mode == 'both'
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: false
+          detached: ${{ inputs.mode == 'both' }}
+
+      - name: Hold the session open
+        if: inputs.mode == 'rdp'
+        run: |
+          # Without this the job would end the moment the RDP step returned,
+          # taking the desktop with it.
+          echo "RDP is up. This job stays alive until you cancel it, or for six"
+          echo "hours - whichever comes first."
+          sleep 21000

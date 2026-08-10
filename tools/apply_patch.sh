@@ -100,6 +100,11 @@ fi
 
 # Resources
 cp "$P"/android/layout/*.xml   "$A/res/layout/"
+# Landscape variants of screens this fork modifies. Missing one made view
+# binding type the view as nullable and failed the Kotlin compile.
+if [ -d "$P/android/layout-land" ]; then
+  cp "$P"/android/layout-land/*.xml "$A/res/layout-land/"
+fi
 # navigation/ is only present once a screen has been added to the graph.
 if [ -d "$P/android/navigation" ]; then
   cp "$P"/android/navigation/*.xml "$A/res/navigation/"

@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eden Symbiosis — панель</title>
+<!--
+  Single-page control panel for the fork. Everything is inline - no CDN, no
+  external font, no build step - so it works from a phone on bad mobile data
+  and keeps working when opened straight from disk.
+
+  It talks to the GitHub REST API from the browser. A token is only needed to
+  start a workflow; reading run status on a public repository needs none, so
+  the page is useful before you paste anything. The token is kept in
+  localStorage on the device and never sent anywhere except api.github.com.
+-->
+<style>
+  :root {
+    --bg: #0d0d12; --panel: #16161f; --line: #262633;
+    --text: #e8e8f0; --dim: #8a8a9e;
+    --pink: #ff2d78; --cyan: #22e0d6; --amber: #ffb020; --red: #ff4d4d;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 12px; padding-bottom: 40px;
+  }
+  h1 { font-size: 22px; margin: 4px 0 2px; letter-spacing: .5px; }
+  h1 span { color: var(--pink); }
+  .sub { color: var(--dim); font-size: 13px; margin-bottom: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px; margin-bottom: 12px;
+  }
+  .card h2 {
+    font-size: 15px; margin: 0 0 10px; color: var(--cyan);
+    text-transform: uppercase; letter-spacing: .8px;
+  }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 10px;
+    padding: 12px 14px; margin: 4px 4px 4px 0; cursor: pointer;
+    background: var(--pink); color: #fff; min-height: 46px;
+  }
+  button.ghost { background: transparent; color: var(--cyan); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; }
+  input, select {
+    font: inherit; width: 100%; padding: 11px; margin: 4px 0 8px;
+    background: #0b0b10; color: var(--text);
+    border: 1px solid var(--line); border-radius: 10px; min-height: 46px;
+  }
+  label { font-size: 13px; color: var(--dim); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 140px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td { padding: 8px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { color: var(--dim); white-space: nowrap; width: 1%; padding-right: 12px; }
+  .pill {
+    display: inline-block; padding: 2px 9px; border-radius: 99px;
+    font-size: 12px; font-weight: 700;
+  }
+  .ok { background: rgba(34,224,214,.15); color: var(--cyan); }
+  .run { background: rgba(255,176,32,.15); color: var(--amber); }
+  .bad { background: rgba(255,77,77,.15); color: var(--red); }
+  .idle { background: #22222e; color: var(--dim); }
+  code, .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.5px; word-break: break-all;
+  }
+  .note { color: var(--dim); font-size: 12.5px; margin-top: 8px; }
+  .warn {
+    border-left: 3px solid var(--amber); padding-left: 10px;
+    color: #ffd79a; font-size: 13px; margin: 10px 0;
+  }
+  a { color: var(--cyan); }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--dim); font-size: 13px; padding: 6px 0; }
+</style>
+</head>
+<body>
+
+<h1>Eden <span>Symbiosis</span></h1>
+<div class="sub">Панель управления сборками и сессиями</div>
+
+<div class="card">
+  <h2>Доступ</h2>
+  <label>Токен GitHub (нужен только чтобы запускать; статус виден и без него)</label>
+  <input id="tok" type="password" placeholder="ghp_…" autocomplete="off">
+  <div class="row">
+    <button onclick="saveTok()">Сохранить</button>
+    <button class="ghost" onclick="clearTok()">Удалить</button>
+  </div>
+  <div class="note">
+    Хранится только в этом браузере (localStorage) и уходит исключительно на
+    api.github.com. Нужны права <code>repo</code> и <code>workflow</code>.
+  </div>
+</div>
+
+<div class="card">
+  <h2>Запустить</h2>
+  <div class="row">
+    <button onclick="run('build.yml',{upload_to_gofile:'true'})">Собрать APK</button>
+    <button class="ghost" onclick="run('tests.yml',{})">Тесты</button>
+  </div>
+  <label>Удалённая сессия</label>
+  <div class="row">
+    <select id="mode">
+      <option value="ssh">SSH — терминал, работает на плохой связи</option>
+      <option value="rdp">RDP — рабочий стол, нужен ngrok-токен</option>
+      <option value="both">Оба сразу</option>
+    </select>
+    <input id="label" placeholder="имя сессии" value="session-1">
+  </div>
+  <button onclick="startSession()">Открыть сессию</button>
+  <div class="warn">
+    Любая сессия убивается через 6 часов — это лимит платформы, не настройка.
+    Всё, что не выгружено с раннера, пропадает вместе с ним.
+  </div>
+</div>
+
+<div class="card">
+  <h2>Сессии <button class="ghost" style="float:right;padding:6px 10px;min-height:0"
+      onclick="refresh()">Обновить</button></h2>
+  <div id="sessions"><span class="note">загрузка…</span></div>
+  <div class="note">
+    Несколько сессий работают одновременно — переключайтесь, открывая нужную
+    строку. Для RDP свободный ngrok даёт только один туннель за раз.
+  </div>
+</div>
+
+<div class="card">
+  <h2>Последние запуски</h2>
+  <div id="runs"><span class="note">загрузка…</span></div>
+</div>
+
+<div class="card">
+  <h2>Последний APK</h2>
+  <div id="apk"><span class="note">загрузка…</span></div>
+</div>
+
+<div class="card">
+  <h2>Как подключиться с телефона</h2>
+  <table>
+    <tr><td>SSH</td><td>Termux (<code>pkg install openssh</code>), JuiceSSH или
+      ConnectBot. В логе шага есть и веб-ссылка — открывается в браузере без
+      клиента.</td></tr>
+    <tr><td>RDP</td><td>Microsoft Remote Desktop или aFreeRDP. Адрес, логин
+      <code>runner</code> и пароль — в сводке запуска.</td></tr>
+    <tr><td>Мышь</td><td>По OTG работает в обоих режимах. В RDP касание
+      экрана тоже действует как мышь.</td></tr>
+  </table>
+  <details>
+    <summary>Что делать внутри сессии</summary>
+    <table>
+      <tr><td>Собрать</td><td class="mono">cd ~/work/eden-symbiosis/eden/src/android &amp;&amp;
+        ./gradlew assembleLegacyDebug --parallel --max-workers=$(nproc)</td></tr>
+      <tr><td>Забрать APK</td><td class="mono">curl -F "file=@app-legacy-debug.apk"
+        https://store-eu-par-2.gofile.io/contents/uploadfile</td></tr>
+      <tr><td>Не терять при обрыве</td><td class="mono">tmux new -s work · tmux attach -t work</td></tr>
+    </table>
+  </details>
+</div>
+
+<script>
+const REPO = 'sj0404-collab/eden-symbiosis';
+const API  = 'https://api.github.com/repos/' + REPO;
+
+const tok = () => localStorage.getItem('gh_token') || '';
+const hdr = () => {
+  const h = { 'Accept': 'application/vnd.github+json' };
+  if (tok()) h['Authorization'] = 'token ' + tok();
+  return h;
+};
+
+function saveTok() {
+  const v = document.getElementById('tok').value.trim();
+  if (!v) return;
+  localStorage.setItem('gh_token', v);
+  document.getElementById('tok').value = '';
+  alert('Сохранено на этом устройстве.');
+  refresh();
+}
+function clearTok() { localStorage.removeItem('gh_token'); alert('Удалено.'); }
+
+async function run(wf, inputs) {
+  if (!tok()) { alert('Сначала вставьте токен — без него запуск невозможен.'); return; }
+  const r = await fetch(`${API}/actions/workflows/${wf}/dispatches`, {
+    method: 'POST', headers: hdr(),
+    body: JSON.stringify({ ref: 'main', inputs })
+  });
+  // 204 is success and carries no body; anything else does, and it explains why.
+  alert(r.status === 204 ? 'Запущено.' : 'Не вышло: ' + r.status + ' ' + await r.text());
+  setTimeout(refresh, 2500);
+}
+
+function startSession() {
+  run('remote.yml', {
+    mode: document.getElementById('mode').value,
+    prepare_build: 'true',
+    label: document.getElementById('label').value || 'session'
+  });
+}
+
+function pill(r) {
+  if (r.status !== 'completed') return '<span class="pill run">идёт</span>';
+  if (r.conclusion === 'success')   return '<span class="pill ok">успех</span>';
+  if (r.conclusion === 'cancelled') return '<span class="pill idle">отменён</span>';
+  return '<span class="pill bad">ошибка</span>';
+}
+
+const mins = iso => Math.round((Date.now() - new Date(iso)) / 60000);
+
+async function refresh() {
+  let runs = [];
+  try {
+    const r = await fetch(`${API}/actions/runs?per_page=15`, { headers: hdr() });
+    runs = (await r.json()).workflow_runs || [];
+  } catch (e) {
+    document.getElementById('runs').innerHTML =
+      '<span class="note">нет связи с GitHub</span>';
+    return;
+  }
+
+  // Sessions: live remote runs, each one attachable independently.
+  const live = runs.filter(r => r.name === 'Remote session' && r.status !== 'completed');
+  document.getElementById('sessions').innerHTML = live.length
+    ? '<table>' + live.map(r => `<tr>
+        <td>#${r.run_number}</td>
+        <td><a href="${r.html_url}" target="_blank">открыть</a> ·
+            ${pill(r)} · ${mins(r.created_at)} мин
+            <div class="note">адрес и пароль — в сводке запуска</div></td>
+      </tr>`).join('') + '</table>'
+    : '<span class="note">активных сессий нет</span>';
+
+  document.getElementById('runs').innerHTML = '<table>' + runs.slice(0, 8).map(r =>
+    `<tr><td>#${r.run_number}</td>
+     <td><a href="${r.html_url}" target="_blank">${r.name}</a> ${pill(r)}
+     <div class="note">${mins(r.updated_at)} мин назад</div></td></tr>`
+  ).join('') + '</table>';
+
+  // Latest successful build, with its artefact.
+  const build = runs.find(r => r.name === 'Build APK' && r.conclusion === 'success');
+  const box = document.getElementById('apk');
+  if (!build) { box.innerHTML = '<span class="note">успешных сборок пока нет</span>'; return; }
+  try {
+    const a = await fetch(`${API}/actions/runs/${build.id}/artifacts`, { headers: hdr() });
+    const arts = (await a.json()).artifacts || [];
+    box.innerHTML = `<table>
+      <tr><td>Сборка</td><td>#${build.run_number}</td></tr>
+      <tr><td>Артефакт</td><td>${arts.length
+        ? (arts[0].size_in_bytes / 1048576).toFixed(1) + ' МБ (сжатый)'
+        : 'истёк'}</td></tr>
+      <tr><td>Ссылка</td><td><a href="${build.html_url}" target="_blank">сводка
+        запуска — там gofile и MD5</a></td></tr></table>
+      <div class="note">Скачивание артефакта требует входа в GitHub;
+      ссылка gofile из сводки работает без него.</div>`;
+  } catch (e) {
+    box.innerHTML = '<span class="note">не удалось прочитать артефакты</span>';
+  }
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

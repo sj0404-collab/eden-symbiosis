@@ -73,6 +73,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # setup-android puts sdkmanager on PATH. Without it the step failed with
+      # "sdkmanager: command not found" and took the whole session with it.
+      - uses: android-actions/setup-android@v3
+        if: inputs.prepare_build
+
       - name: Install NDK and CMake
         if: inputs.prepare_build
         run: sdkmanager --install "ndk;28.2.13676358" "cmake;3.31.6" "build-tools;35.0.0" "platforms;android-36"
