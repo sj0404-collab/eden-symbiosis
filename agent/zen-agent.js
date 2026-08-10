@@ -16,6 +16,13 @@ const { execSync, execFileSync, spawn } = require('child_process');
 const os = require('os');
 const crypto = require('crypto');
 const vm = require('vm');
+// Capabilities: agent-authored tools that run as real processes. Kept in a
+// sibling file because, unlike custom_tool_*/plugin_*, they are deliberately
+// NOT sandboxed - adb, RDP and GUI screenshots cannot exist without spawn().
+// Optional require: a missing file must not stop the agent from starting.
+let capabilitiesModule = null;
+try { capabilitiesModule = require('./capabilities.js'); }
+catch (e) { capabilitiesModule = null; }
 // Optional: this ships as a single file, and ../lib/local-ai is not part of
 // it. A hard require made the agent refuse to start at all with
 // "Cannot find module", which is a poor trade for a feature most runs never
@@ -394,6 +401,7 @@ function formatToolResult(name, result, args) {
     edit_file: '📝', delete_file: '🗑️', append_file: '➕',
     execute_command: '⚙️', web_search: '🔍', download_file: '⬇️',
     image_info: '🖼️', ocr_image: '🔤', vision_analyze: '👁️', analyze_image: '👁️', vision_ui_audit: '🧩', vision_compare: '🆚', custom_tool_list: '🧰', custom_tool_create: '🛠️', custom_tool_inspect: '🔎', custom_tool_run: '▶️', custom_tool_delete: '🗑️', subagent_list: '👥', subagent_create: '👤', subagent_task: '🤝', subagent_delete: '🗑️', plugin_list: '🧩', plugin_create: '🧩', plugin_inspect: '🔎', plugin_delete: '🗑️', plugin_tool_list: '🧰', plugin_tool_run: '▶️', plugin_provider_list: '🔌',
+    ...(capabilitiesModule ? capabilitiesModule.CAPABILITY_ICONS : {}),
     workspace_info: '📍', set_workspace: '📍', project_inspect: '🧭', termux_info: '📱', network_check: '🌐', tree_dir: '🌳', search_text: '🔎', file_info: 'ℹ️', find_files: '🔎',
     file_backup: '💾', file_diff: '🧩', mkdir: '📁', copy_file: '📋', move_file: '🚚', archive_create: '🗜️', archive_extract: '📦',
     process_start: '▶️', process_status: '📊', process_logs: '📜', process_stop: '⏹️', monitor_start: '🩺', monitor_list: '🩺', monitor_logs: '📜', monitor_stop: '⏹️',
@@ -914,8 +922,19 @@ const MCP_TOOLS = {
   plugin_tool_list: 'Показать tools, зарегистрированные plugins',
   plugin_tool_run: 'Запустить tool из подключённого plugin',
   plugin_provider_list: 'Показать providers, зарегистрированные plugins',
+  ...(capabilitiesModule ? capabilitiesModule.CAPABILITY_TOOLS : {}),
   read_image: 'Прочитать изображение как base64 (технический инструмент)'
 };
+
+// Capabilities need the host's workspace resolution, environment and audit
+// trail, so they are wired through a context object rather than importing
+// state across the module boundary.
+const capabilities = capabilitiesModule ? capabilitiesModule.createCapabilities({
+  workspaceRoot: () => WORKSPACE_ROOT,
+  commandEnvironment: () => commandEnvironment(),
+  resolvePath: (input, label) => mcpPathOrError(input, label, true, true),
+  auditEvent: (event, data) => auditEvent(event, data)
+}) : null;
 
 function mcpPathOrError(input, label = 'path', mustExist = false, directoryOnly = false) {
   const resolved = resolveWorkspacePath(input, label);
@@ -2717,7 +2736,10 @@ async function handleMCPTool(tool, args = {}) {
 
     case 'plugin_provider_list':
       return pluginProviderListTool();
-    default: return { error: `Unknown tool: ${tool}` };
+    default:
+      // Capabilities register their own tool names; check before giving up.
+      if (capabilities && capabilities.handles(tool)) return await capabilities.handle(tool, args);
+      return { error: `Unknown tool: ${tool}` };
   }
 }
 
@@ -3465,6 +3487,7 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент с доступом к ф�
 - custom_tool_list(), custom_tool_create(name, description, code), custom_tool_inspect(name), custom_tool_run(name, tool_args), custom_tool_delete(name) — локальные само-созданные plugins
 - subagent_list(), subagent_create(name, description, prompt), subagent_task(agent, prompt), subagent_delete(name) — isolated second-opinion subagents
 - plugin_list(), plugin_create(name, description, code), plugin_inspect(name), plugin_tool_list(), plugin_tool_run(plugin, name, tool_args), plugin_provider_list(), plugin_delete(name) — lifecycle plugins
+- capability_templates(), capability_list(), capability_create(name, template|code, runtime, description), capability_install(name), capability_run(name, args, background), capability_logs(name), capability_stop(name), capability_inspect(name), capability_delete(name) — САМОДЕЛЬНЫЕ ИНСТРУМЕНТЫ С РЕАЛЬНЫМ ДОСТУПОМ К СИСТЕМЕ: adb, RDP, GUI-скриншоты, Python-пакеты, фоновые задачи
 - web_search(query) — Wikipedia; web_fetch(url) — прочитать любую страницу как текст
 - open_url(url), clipboard_read(), clipboard_write(text), notify(title, content) — сеть и Android Termux:API
 - execute_command(command, cwd, timeout) — только для команд, которым нет специального инструмента
@@ -3509,7 +3532,9 @@ TOOL_JSON:{"tool":"health_check","args":{"url":"http://127.0.0.1:3000/","timeout
 - Сначала inspect/read существующий файл. Для изменения используй точечный edit_file; не переписывай весь проект или весь файл без явной необходимости (новый файл, повреждённый файл или прямое требование пользователя).
 - В web-console показывай только публичный краткий план, todo, блоки инструментов и финальный отчёт. Не выводи скрытые рассуждения.
 - Пиши TOOL: и ARG: как есть, без Markdown.
-- Отвечай на русском, кратко объясняя фактический результат.`;
+- Отвечай на русском, кратко объясняя фактический результат.
+
+${capabilitiesModule ? capabilitiesModule.CAPABILITY_PROMPT : ''}`;
 
 function buildSystemPrompt() {
   const providerRule = currentProvider === 'openrouter'
@@ -4051,7 +4076,10 @@ const WRITE_TOOLS = new Set([
   'write_file', 'execute_command', 'delete_file', 'append_file', 'edit_file', 'file_backup', 'mkdir', 'copy_file', 'move_file', 'archive_create', 'archive_extract',
   'set_workspace', 'process_start', 'process_stop', 'monitor_start', 'monitor_stop', 'terminal_create', 'terminal_write', 'terminal_close',
   'npm_install', 'npm_run', 'sqlite_query', 'sqlite_backup', 'env_set', 'env_delete', 'git_init', 'git_commit',
-  'open_url', 'clipboard_write', 'notify', 'termux_toast', 'termux_vibrate', 'termux_share', 'termux_volume', 'termux_location', 'custom_tool_create', 'custom_tool_run', 'custom_tool_delete', 'plugin_create', 'plugin_delete', 'plugin_tool_run', 'subagent_create', 'subagent_delete', 'todo_add', 'todo_done', 'todo_remove'
+  'open_url', 'clipboard_write', 'notify', 'termux_toast', 'termux_vibrate', 'termux_share', 'termux_volume', 'termux_location', 'custom_tool_create', 'custom_tool_run', 'custom_tool_delete', 'plugin_create', 'plugin_delete', 'plugin_tool_run', 'subagent_create', 'subagent_delete', 'todo_add', 'todo_done', 'todo_remove',
+  // Capabilities spawn real processes: they get the same approval gate as
+  // execute_command, never the softer treatment of a sandboxed custom tool.
+  ...(capabilitiesModule ? capabilitiesModule.CAPABILITY_WRITE_TOOLS : [])
 ]);
 function toolPermissionDecision(name, args = {}) {
   const mode = normalizedAgentMode(CONFIG.agentMode);
@@ -4088,7 +4116,8 @@ async function useTool(name, args) {
     if (r.analysis !== undefined) return `VISION • ${r.model || 'model'}\n\n${r.analysis}`;
     if (r.diff !== undefined) return r.diff;
     if (r.output !== undefined) return r.output || 'OK';
-    if (['process_start', 'process_status', 'process_stop', 'monitor_start', 'monitor_list', 'monitor_stop', 'terminal_create', 'terminal_write', 'terminal_list', 'terminal_close', 'file_backup', 'termux_info', 'network_check', 'http_request', 'health_check', 'websocket_test', 'project_inspect', 'tree_dir', 'search_text', 'file_info', 'copy_file', 'move_file', 'mkdir', 'archive_create', 'archive_extract', 'sqlite_info', 'sqlite_query', 'sqlite_schema', 'sqlite_backup', 'env_list', 'env_set', 'env_delete', 'image_info', 'vision_compare', 'vision_ui_audit', 'custom_tool_list', 'custom_tool_create', 'custom_tool_inspect', 'custom_tool_run', 'custom_tool_delete', 'subagent_list', 'subagent_create', 'subagent_task', 'subagent_delete', 'plugin_list', 'plugin_create', 'plugin_inspect', 'plugin_delete', 'plugin_tool_list', 'plugin_tool_run', 'plugin_provider_list', 'web_search', 'web_fetch'].includes(name)) {
+    if (['process_start', 'process_status', 'process_stop', 'monitor_start', 'monitor_list', 'monitor_stop', 'terminal_create', 'terminal_write', 'terminal_list', 'terminal_close', 'file_backup', 'termux_info', 'network_check', 'http_request', 'health_check', 'websocket_test', 'project_inspect', 'tree_dir', 'search_text', 'file_info', 'copy_file', 'move_file', 'mkdir', 'archive_create', 'archive_extract', 'sqlite_info', 'sqlite_query', 'sqlite_schema', 'sqlite_backup', 'env_list', 'env_set', 'env_delete', 'image_info', 'vision_compare', 'vision_ui_audit', 'custom_tool_list', 'custom_tool_create', 'custom_tool_inspect', 'custom_tool_run', 'custom_tool_delete', 'subagent_list', 'subagent_create', 'subagent_task', 'subagent_delete', 'plugin_list', 'plugin_create', 'plugin_inspect', 'plugin_delete', 'plugin_tool_list', 'plugin_tool_run', 'plugin_provider_list', 'web_search', 'web_fetch'].includes(name)
+      || (capabilities && capabilities.handles(name))) {
       return JSON.stringify(r, null, 2);
     }
     if (r.success) {
@@ -4558,7 +4587,8 @@ const TOOL_REQUIRED_ARGS = {
   image_info: ['path'], ocr_image: ['path'], vision_analyze: ['path'], analyze_image: ['path'], vision_ui_audit: ['path'], vision_compare: ['path', 'path2'],
   custom_tool_create: ['name', 'description', 'code'], custom_tool_inspect: ['name'], custom_tool_run: ['name'], custom_tool_delete: ['name'],
   subagent_create: ['name', 'description', 'prompt'], subagent_task: ['agent', 'prompt'], subagent_delete: ['name'],
-  plugin_create: ['name', 'description', 'code'], plugin_inspect: ['name'], plugin_delete: ['name'], plugin_tool_run: ['plugin', 'name']
+  plugin_create: ['name', 'description', 'code'], plugin_inspect: ['name'], plugin_delete: ['name'], plugin_tool_run: ['plugin', 'name'],
+  ...(capabilitiesModule ? capabilitiesModule.CAPABILITY_REQUIRED_ARGS : {})
 };
 const NATIVE_TOOL_PROPERTIES = {
   path: { type: 'string' }, cwd: { type: 'string' }, dir: { type: 'string' }, query: { type: 'string' }, text: { type: 'string' }, content: { type: 'string' },
@@ -4684,6 +4714,7 @@ async function handleToolCall(text, writtenFiles) {
     edit_file: '📝', delete_file: '🗑️', append_file: '➕',
     execute_command: '⚙️', web_search: '🔍',
     image_info: '🖼️', ocr_image: '🔤', vision_analyze: '👁️', analyze_image: '👁️', vision_ui_audit: '🧩', vision_compare: '🆚', custom_tool_list: '🧰', custom_tool_create: '🛠️', custom_tool_inspect: '🔎', custom_tool_run: '▶️', custom_tool_delete: '🗑️', subagent_list: '👥', subagent_create: '👤', subagent_task: '🤝', subagent_delete: '🗑️', plugin_list: '🧩', plugin_create: '🧩', plugin_inspect: '🔎', plugin_delete: '🗑️', plugin_tool_list: '🧰', plugin_tool_run: '▶️', plugin_provider_list: '🔌',
+    ...(capabilitiesModule ? capabilitiesModule.CAPABILITY_ICONS : {}),
     workspace_info: '📍', set_workspace: '📍', project_inspect: '🧭', termux_info: '📱', network_check: '🌐', tree_dir: '🌳', search_text: '🔎', file_info: 'ℹ️', find_files: '🔎',
     file_backup: '💾', file_diff: '🧩', mkdir: '📁', copy_file: '📋', move_file: '🚚', archive_create: '🗜️', archive_extract: '📦',
     process_start: '▶️', process_status: '📊', process_logs: '📜', process_stop: '⏹️', monitor_start: '🩺', monitor_list: '🩺', monitor_logs: '📜', monitor_stop: '⏹️',
@@ -5109,7 +5140,8 @@ function showTools() {
     ['Процессы, мониторинг и терминал', ['process_start','process_status','process_logs','process_stop','monitor_start','monitor_list','monitor_logs','monitor_stop','terminal_create','terminal_write','terminal_read','terminal_list','terminal_close','http_request','health_check','websocket_test']],
     ['Код, npm, SQLite и Git', ['npm_install','npm_run','run_tests','run_lint','code_check','dependency_audit','sqlite_info','sqlite_query','sqlite_schema','sqlite_backup','env_list','env_set','env_delete','git_status','git_diff','git_branch','git_log','git_init','git_commit']],
     ['Vision и изображения', ['image_info','ocr_image','vision_analyze','vision_ui_audit','vision_compare','read_image']],
-    ['Саморасширение', ['custom_tool_list','custom_tool_create','custom_tool_inspect','custom_tool_run','custom_tool_delete']],
+    ['Саморасширение (песочница vm)', ['custom_tool_list','custom_tool_create','custom_tool_inspect','custom_tool_run','custom_tool_delete']],
+    ['Capabilities (реальные процессы: adb, RDP, GUI, Python)', ['capability_templates','capability_list','capability_create','capability_install','capability_run','capability_logs','capability_stop','capability_inspect','capability_delete']],
     ['Subagents', ['subagent_list','subagent_create','subagent_task','subagent_delete']],
     ['Lifecycle plugins', ['plugin_list','plugin_create','plugin_inspect','plugin_tool_list','plugin_tool_run','plugin_provider_list','plugin_delete']],
     ['Сеть и Android', ['network_check','web_search','download_file','open_url','clipboard_read','clipboard_write','notify','termux_info']],

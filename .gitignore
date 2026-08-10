@@ -5,3 +5,7 @@
 
 # Repositories the agent clones at runtime
 work/
+
+# Agent runtime state: audit log, self-created capabilities, custom tools.
+# These are per-machine artifacts, not source.
+.zen-agent/

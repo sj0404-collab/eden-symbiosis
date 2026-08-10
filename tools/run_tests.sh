@@ -119,6 +119,24 @@ else
   echo "  note: kotlinc not on PATH, Kotlin tests not run"
 fi
 
+# Node tests. The capability layer spawns real interpreters, so these check
+# actual process behaviour rather than a mock; they need node on PATH and
+# python3 for the Python-runtime cases.
+if command -v node >/dev/null 2>&1; then
+  for f in "$HERE"/tests/*.js; do
+    [ -e "$f" ] || continue
+    n=$(basename "$f" .js)
+    if out=$(cd "$HERE" && node "$f" 2>&1); then
+      echo "  PASS  $n — $(printf '%s' "$out" | tail -1)"; pass=$((pass+1))
+    else
+      echo "  FAIL  $n"; printf '%s\n' "$out" | tail -15 | sed 's/^/        /'
+      fail=$((fail+1)); failed="$failed $n"
+    fi
+  done
+else
+  echo "  note: node not on PATH, JS tests not run"
+fi
+
 echo
 echo "passed=$pass failed=$fail skipped=$skip"
 [ "$fail" -eq 0 ] || { echo "failing:$failed"; exit 1; }

@@ -15,6 +15,7 @@ on:
       - 'tests/**'
       - 'tools/run_tests.sh'
       - 'patch/symbiosis/**'
+      - 'agent/capabilities.js'
       - '.github/workflows/tests.yml'
 
 jobs:
@@ -71,6 +72,48 @@ jobs:
         run: |
           export PATH="/tmp/kotlinc/bin:$PATH"
           bash fork/tools/run_tests.sh --eden "$GITHUB_WORKSPACE/eden" --max-skip 3
+
+      - name: Check the capability blueprints against a real virtual display
+        # The gui_screenshot blueprint is the one users reach for when they ask
+        # the agent to "build a program and show me it running". It is the only
+        # blueprint whose failure mode is a silent black PNG, so it gets an
+        # end-to-end check with a real Xvfb rather than a syntax probe.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb imagemagick python3-tk
+          cd fork
+          cat > /tmp/demo_app.py <<'PY'
+          import tkinter as tk
+          root = tk.Tk()
+          root.geometry("400x200")
+          root.configure(bg="#101820")
+          tk.Label(root, text="capability check", fg="#58a6ff", bg="#101820",
+                   font=("DejaVu Sans", 20)).pack(expand=True)
+          root.mainloop()
+          PY
+          node -e '
+            const { createCapabilities } = require("./agent/capabilities.js");
+            const caps = createCapabilities({
+              workspaceRoot: () => "/tmp",
+              commandEnvironment: () => ({ ...process.env }),
+              resolvePath: i => ({ path: require("path").resolve("/tmp", String(i)) }),
+              auditEvent: () => {}
+            });
+            (async () => {
+              await caps.handle("capability_create", { name: "ci_shots", template: "gui_screenshot", overwrite: true });
+              const r = await caps.handle("capability_run", {
+                name: "ci_shots",
+                args: { command: "python3 /tmp/demo_app.py", seconds: 5, shots: 1 }
+              });
+              const shots = (r.result && r.result.screenshots) || [];
+              if (!r.success || shots.length !== 1) {
+                console.error("capability run failed:", JSON.stringify(r, null, 2));
+                process.exit(1);
+              }
+              console.log("screenshot captured:", shots[0].file, shots[0].bytes, "bytes");
+              if (shots[0].bytes < 2000) { console.error("PNG suspiciously small - blank screen?"); process.exit(1); }
+            })();
+          '
 
       - name: Check the Russian localisation
         run: |
