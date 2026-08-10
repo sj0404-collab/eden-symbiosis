@@ -377,8 +377,11 @@ function askApproval(tool, args){
   stream.appendChild(box); if(stick) scroll();
 }
 
+let polling = false, finished = false;
+
 async function poll(){
-  if (!runId) return;
+  if (!runId || polling) return;   // a slow request must not overlap the next tick
+  polling = true;
   try{
     const r = await fetch('/api/agent/run/'+runId,{headers:H()});
     const run = (await r.json()).run;
@@ -386,6 +389,13 @@ async function poll(){
     $('m-time').textContent = Math.round((Date.now()-startedAt)/1000)+'с';
 
     if (['completed','failed','aborted'].includes(run.status)){
+      // Guard the ending as well: a request already in flight when the run
+      // finished will arrive after this and print the answer a second time.
+      // That is what produced five identical paragraphs - the poll interval is
+      // 1.1s and a round trip over the tunnel can exceed it, so several calls
+      // were in the air at once, each seeing the same completed run.
+      if (finished) return;
+      finished = true;
       clearInterval(timer); timer=null; setBusy(false); runId=null;
       $('phase').textContent = run.status==='completed' ? 'готово' : run.status;
       $('dot').className = 'dot ' + (run.status==='completed' ? 'ok' : 'bad');
@@ -393,6 +403,7 @@ async function poll(){
       else if (run.error) say('**Ошибка:** ' + run.error);
     }
   }catch(e){ /* a dropped poll is not fatal; the next tick retries */ }
+  finally{ polling = false; }
 }
 
 async function send(){
@@ -401,6 +412,7 @@ async function send(){
   q.value=''; q.style.height='auto';
   say(text, true);
   setBusy(true); startedAt=Date.now(); seen.clear(); pending=[]; curStep=0;
+  finished=false; polling=false;
   $('m-step').textContent='—'; $('m-tools').textContent='0'; $('m-tok').textContent='0';
   $('phase').textContent='запуск';
   try{

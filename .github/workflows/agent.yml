@@ -148,7 +148,13 @@ jobs:
 
           # 0.0.0.0 so ngrok can reach it; the agent then requires the token for
           # every non-loopback request.
+          # ZEN_LONG_TASKS raises the round ceiling from 25 to 250 and allows
+          # longer-running commands. A short question still finishes in one
+          # round - the limit is a ceiling, not a quota - but a real build or a
+          # multi-file refactor needs the headroom, and hitting the cap
+          # mid-task looks exactly like the agent giving up.
           ZEN_BIND_HOST=0.0.0.0 ZEN_REMOTE_TOKEN="$TOKEN" MCP_PORT=8765 \
+            ZEN_LONG_TASKS=1 ZEN_LONG_MAX_STEPS=250 \
             GITHUB_TOKEN="$GH_TOKEN" \
             nohup node agent/zen-agent.js > /tmp/agent.log 2>&1 &
 
