@@ -53,8 +53,27 @@ cd "$E"
 
 # --3way needs history, hence the depth-50 clone; the icon is excluded because
 # a binary delete cannot be applied without a full index line.
-git apply --3way --exclude='*ic_launcher_foreground.png' "$P/upstream_changes.patch" \
-  2>&1 | grep -v cleanly || true
+# Capture the outcome rather than swallowing it. A shallow clone makes --3way
+# fall back to direct application, which drops files and still exits 0 - the
+# build then succeeds against a half-applied patch, which is worse than failing.
+apply_log=$(git apply --3way --exclude='*ic_launcher_foreground.png' \
+  "$P/upstream_changes.patch" 2>&1 || true)
+printf '%s\n' "$apply_log" | grep -v cleanly || true
+
+if printf '%s' "$apply_log" | grep -q "lacks the necessary blob"; then
+  echo "ERROR: shallow checkout. git apply --3way needs full history:" >&2
+  echo "  git clone --branch <tag> https://git.eden-emu.dev/eden-emu/eden.git" >&2
+  exit 1
+fi
+if printf '%s' "$apply_log" | grep -q "patch does not apply"; then
+  echo "ERROR: the patch does not apply to this checkout." >&2
+  exit 1
+fi
+if git status --porcelain | grep -qE '^(UU|AA)'; then
+  echo "ERROR: unresolved conflicts:" >&2
+  git status --porcelain | grep -E '^(UU|AA)' >&2
+  exit 1
+fi
 rm -f "$A/res/drawable/ic_launcher_foreground.png"
 
 # C++ layer
@@ -93,4 +112,9 @@ GP="$E/src/android/gradle.properties"
 grep -q 'kotlin.compiler.execution.strategy' "$GP" 2>/dev/null || \
   echo 'kotlin.compiler.execution.strategy=in-process' >> "$GP"
 
-echo "PATCH_APPLIED files=$(git status --porcelain | wc -l)"
+changed=$(git status --porcelain | wc -l)
+echo "PATCH_APPLIED files=$changed"
+if [ "$changed" -lt 80 ]; then
+  echo "ERROR: only $changed files changed; a complete apply touches ~87." >&2
+  exit 1
+fi
