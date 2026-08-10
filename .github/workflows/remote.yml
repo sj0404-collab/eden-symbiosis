@@ -181,7 +181,7 @@ jobs:
           esac
 
           ngrok config add-authtoken "$NGROK_TOKEN"
-          nohup ngrok http 6080 --domain="$NGROK_DOMAIN" --log stdout \
+          nohup ngrok http 6080 --url="https://$NGROK_DOMAIN" --log stdout \
             > /tmp/ngrok.log 2>&1 &
           sleep 8
 
@@ -191,10 +191,19 @@ jobs:
             echo "https://dashboard.ngrok.com/get-started/your-authtoken"
             exit 1
           fi
-          if grep -qE "ERR_NGROK_(324|334|108)" /tmp/ngrok.log; then
-            echo "::error::The domain is refused or already in use by another session."
+          if grep -q "ERR_NGROK_334" /tmp/ngrok.log; then
+            # The reserved domain is already serving another agent. On a free
+            # account that is one tunnel total, so a second session cannot have
+            # the desktop - but it can still have a terminal.
+            echo "::error::$NGROK_DOMAIN is already online from another session."
+            echo "Cancel the other 'Remote session' run, or start this one with mode: ssh."
+            echo "Free ngrok allows a single simultaneous tunnel."
+            exit 1
+          fi
+          if grep -qE "ERR_NGROK_(324|108)" /tmp/ngrok.log; then
+            echo "::error::The domain was refused by ngrok."
             grep -aoE "ERR_NGROK_[0-9]+" /tmp/ngrok.log | head -1
-            echo "A free account allows one tunnel at a time - cancel the other run first."
+            grep -aoE 'err=\\"[^\\]{0,200}' /tmp/ngrok.log | head -1
             exit 1
           fi
           if ! grep -q "started tunnel" /tmp/ngrok.log; then
