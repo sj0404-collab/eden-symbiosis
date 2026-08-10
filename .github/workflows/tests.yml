@@ -51,6 +51,12 @@ jobs:
           bash "$GITHUB_WORKSPACE/fork/tools/apply_patch.sh" \
             --patch "$GITHUB_WORKSPACE/fork/patch" --eden "$GITHUB_WORKSPACE/eden"
 
+      - name: Check for duplicate resources
+        # aapt2 only reports this ~20 minutes into the build, after the whole
+        # native core has compiled, and does not say which file is at fault.
+        # A duplicate that upstream already defines is the usual cause.
+        run: python3 fork/tools/check_resources.py eden/src/android/app/src/main/res
+
       - name: Install Kotlin
         run: |
           curl -sL -o /tmp/kc.zip https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip

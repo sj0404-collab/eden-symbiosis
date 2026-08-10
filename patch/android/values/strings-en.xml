@@ -2082,7 +2082,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
     <!-- Game folders -->
-    <string name="game_folders">Game folders</string>
     <string name="game_folders_description">Your folders, with how many games each holds and what they weigh</string>
     <string name="folders_summary">%1$d folder(s) · %2$d games · %3$s</string>
     <string name="no_game_folders">No game folders yet. Add one from the home screen.</string>

@@ -1413,7 +1413,6 @@
 
 
     <!-- Game folders -->
-    <string name="game_folders">Папки с играми</string>
     <string name="game_folders_description">Ваши папки: сколько в каждой игр и сколько они занимают</string>
     <string name="folders_summary">Папок: %1$d · игр: %2$d · %3$s</string>
     <string name="no_game_folders">Папок с играми пока нет. Добавьте на главном экране.</string>
