@@ -181,37 +181,54 @@ jobs:
           esac
 
           ngrok config add-authtoken "$NGROK_TOKEN"
+
+          # Try the reserved domain first, then fall back to a generated one.
+          #
+          # The reserved domain is currently configured as a ngrok Cloud
+          # Endpoint: it answers on its own with ngrok's default page, which
+          # means it counts as already online and an agent cannot bind to it -
+          # ERR_NGROK_334. Refusing to start in that case would leave no
+          # desktop at all, so take the address ngrok hands out instead. The
+          # session still works; only the address stops being predictable.
+          ACTIVE_URL=""
           nohup ngrok http 6080 --url="https://$NGROK_DOMAIN" --log stdout \
             > /tmp/ngrok.log 2>&1 &
           sleep 8
 
           if grep -q "ERR_NGROK_105" /tmp/ngrok.log; then
             echo "::error::ngrok rejected the authtoken (ERR_NGROK_105)."
-            echo "Replace the NGROK_AUTH_TOKEN secret with the value from"
+            echo "Replace NGROK_AUTH_TOKEN with the value from"
             echo "https://dashboard.ngrok.com/get-started/your-authtoken"
             exit 1
           fi
+
           if grep -q "ERR_NGROK_334" /tmp/ngrok.log; then
-            # The reserved domain is already serving another agent. On a free
-            # account that is one tunnel total, so a second session cannot have
-            # the desktop - but it can still have a terminal.
-            echo "::error::$NGROK_DOMAIN is already online from another session."
-            echo "Cancel the other 'Remote session' run, or start this one with mode: ssh."
-            echo "Free ngrok allows a single simultaneous tunnel."
-            exit 1
-          fi
-          if grep -qE "ERR_NGROK_(324|108)" /tmp/ngrok.log; then
-            echo "::error::The domain was refused by ngrok."
-            grep -aoE "ERR_NGROK_[0-9]+" /tmp/ngrok.log | head -1
-            grep -aoE 'err=\\"[^\\]{0,200}' /tmp/ngrok.log | head -1
-            exit 1
-          fi
-          if ! grep -q "started tunnel" /tmp/ngrok.log; then
-            echo "::warning::ngrok may not have started; log follows."
-            tail -20 /tmp/ngrok.log
+            echo "::warning::$NGROK_DOMAIN is already online as a Cloud Endpoint,"
+            echo "so the agent cannot bind to it. Falling back to a generated address."
+            echo "To use the fixed domain, delete the Cloud Endpoint for it at"
+            echo "https://dashboard.ngrok.com/endpoints - the domain stays reserved."
+            pkill -f "ngrok http" || true
+            sleep 2
+            nohup ngrok http 6080 --log stdout > /tmp/ngrok.log 2>&1 &
+            sleep 8
           fi
 
-          URL="https://$NGROK_DOMAIN/vnc.html?autoconnect=1&resize=remote&password=$PASS"
+          # Ask the local agent API what address it actually got, rather than
+          # assuming: that is true for both paths above.
+          for i in $(seq 1 20); do
+            ACTIVE_URL=$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+              | python3 -c "import sys,json;t=json.load(sys.stdin).get('tunnels',[]);print(t[0]['public_url'] if t else '')" 2>/dev/null)
+            [ -n "$ACTIVE_URL" ] && break
+            sleep 2
+          done
+
+          if [ -z "$ACTIVE_URL" ]; then
+            echo "::error::No tunnel came up. ngrok log follows."
+            tail -25 /tmp/ngrok.log
+            exit 1
+          fi
+
+          URL="$ACTIVE_URL/vnc.html?autoconnect=1&resize=remote&password=$PASS"
           {
             echo ""
             echo "## Desktop in the browser"
@@ -220,7 +237,7 @@ jobs:
             echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| Address | \`https://$NGROK_DOMAIN\` (always the same) |"
+            echo "| Address | \`$ACTIVE_URL\` |"
             echo "| VNC password | \`$PASS\` |"
             echo ""
             echo "The link carries the password, so it connects on its own. No app"

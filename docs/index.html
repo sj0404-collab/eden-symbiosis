@@ -124,7 +124,7 @@
       onclick="refresh()">Обновить</button></h2>
   <div id="sessions"><span class="note">загрузка…</span></div>
   <div class="row" style="margin-top:10px">
-    <button class="ghost" onclick="window.open(DESKTOP,'_blank')">Открыть рабочий стол</button>
+    <button class="ghost" onclick="openDesktop()">Открыть рабочий стол</button>
   </div>
   <div class="note">
     Постоянный адрес: <code>filly-above-terrapin.ngrok-free.app</code> — не
@@ -132,12 +132,13 @@
     сводки подставляет его сама.
   </div>
   <div class="warn">
-    Рабочему столу нужен <b>authtoken</b> ngrok в секрете
-    <code>NGROK_AUTH_TOKEN</code>. Это ~49 символов, начинается с цифры —
-    страница <a href="https://dashboard.ngrok.com/get-started/your-authtoken"
-    target="_blank">Your Authtoken</a>. Ключи <code>ep_…</code> и
-    <code>ak_…</code> не подойдут: это endpoint и API-ключ, туннель с ними
-    не поднимается (ERR_NGROK_105). SSH работает без токена вообще.
+    Домен <code>filly-above-terrapin</code> сейчас занят <b>Cloud
+    Endpoint</b>&nbsp;— он отвечает сам и агент к нему привязаться не может
+    (ERR_NGROK_334). Сессия в этом случае берёт адрес, который выдаёт ngrok,
+    и он <b>печатается в сводке запуска</b>. Чтобы вернуть постоянный адрес,
+    удалите Cloud Endpoint на странице
+    <a href="https://dashboard.ngrok.com/endpoints" target="_blank">Endpoints</a>&nbsp;—
+    сам домен за вами останется.
   </div>
   <div class="note">
     Несколько сессий работают одновременно — переключайтесь, открывая нужную
@@ -225,6 +226,14 @@ function startSession() {
   });
 }
 
+// The address is only certain once a session reports it, so send the user to
+// the run summary when no session is live.
+function openDesktop() {
+  const live = window.__liveSession;
+  if (live) { window.open(live.html_url, '_blank'); return; }
+  window.open(DESKTOP, '_blank');
+}
+
 function pill(r) {
   if (r.status !== 'completed') return '<span class="pill run">идёт</span>';
   if (r.conclusion === 'success')   return '<span class="pill ok">успех</span>';
@@ -247,6 +256,7 @@ async function refresh() {
 
   // Sessions: live remote runs, each one attachable independently.
   const live = runs.filter(r => r.name === 'Remote session' && r.status !== 'completed');
+  window.__liveSession = live[0] || null;
   document.getElementById('sessions').innerHTML = live.length
     ? '<table>' + live.map(r => `<tr>
         <td>#${r.run_number}</td>
