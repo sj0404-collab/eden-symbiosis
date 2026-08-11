@@ -311,7 +311,13 @@ jobs:
           Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
           $exe = "C:\Program Files\TightVNC\tvnserver.exe"
           if (-not (Test-Path $exe)) { throw "TightVNC did not install to $exe" }
-          cmd /c start "" /b "$exe" -run
+          # The redirects are not optional. cmd /c start /b hands the child
+          # this step's stdout and stderr, and pwsh waits for those handles to
+          # close - so a long-lived child without redirects hangs the step
+          # forever. That is exactly what happened: the VNC launch sat in
+          # progress for eight minutes until the run was cancelled, while the
+          # identical websockify launch, which did redirect, returned at once.
+          cmd /c start "" /b "$exe" -run "1>$env:TEMP\tvn.log" "2>$env:TEMP\tvn.err"
           Start-Sleep -Seconds 6
           $proc = Get-Process tvnserver -ErrorAction SilentlyContinue
           if (-not $proc) { throw "tvnserver did not stay running" }
