@@ -109,6 +109,7 @@ VK = {
     "PageUp": 0x21, "PageDown": 0x22, "End": 0x23, "Home": 0x24,
     "ArrowLeft": 0x25, "ArrowUp": 0x26, "ArrowRight": 0x27, "ArrowDown": 0x28,
     "Insert": 0x2D, "Delete": 0x2E, "Meta": 0x5B,
+    "ContextMenu": 0x5D, "Space": 0x20, " ": 0x20,
     "F1": 0x70, "F2": 0x71, "F3": 0x72, "F4": 0x73, "F5": 0x74, "F6": 0x75,
     "F7": 0x76, "F8": 0x77, "F9": 0x78, "F10": 0x79, "F11": 0x7A, "F12": 0x7B,
 }
@@ -136,15 +137,43 @@ def mouse(x, y, view_w, view_h, flags=0, data=0):
                        ax, ay, data, 0)
 
 
+# Which modifiers are being held. A Unicode keystroke carries no virtual key,
+# so Windows cannot combine it with Ctrl or Win - Win+D and Ctrl+C did nothing
+# while plain typing worked. Tracking the modifiers lets a combination fall
+# back to a real virtual key, which does combine.
+_HELD = set()
+MODIFIERS = {"Control", "Alt", "Meta", "Shift"}
+
+
 def key_event(name, down):
     if not IS_WINDOWS:
         return
     flags = 0 if down else KEYEVENTF_KEYUP
+
+    if name in MODIFIERS:
+        if down:
+            _HELD.add(name)
+        else:
+            _HELD.discard(name)
+
     if name in VK:
         user32.keybd_event(VK[name], 0, flags, 0)
-    elif len(name) == 1:
-        # Unicode path: works for every printable character without caring
-        # about the keyboard layout the runner happens to have.
+        return
+
+    if len(name) == 1:
+        # With a modifier held, send the VIRTUAL KEY. Windows builds shortcuts
+        # out of virtual keys; a KEYEVENTF_UNICODE event is inserted as text
+        # and is never seen as part of a combination. Measured on a live desk:
+        # Meta alone opened the Start menu (429015 pixels changed), Meta+D did
+        # nothing at all.
+        active = _HELD - {"Shift"}
+        if active:
+            ch = name.upper()
+            if "A" <= ch <= "Z" or "0" <= ch <= "9":
+                user32.keybd_event(ord(ch), 0, flags, 0)
+                return
+        # Otherwise the Unicode path, which types any character regardless of
+        # the runner's keyboard layout.
         user32.keybd_event(0, ord(name), KEYEVENTF_UNICODE | flags, 0)
 
 
@@ -337,8 +366,13 @@ pad.addEventListener('touchcancel', () => {
 }, {passive:false});
 
 function rightClick(){
-  send({t:'down', x:startX, y:startY, b:2});
-  send({t:'up',   x:startX, y:startY, b:2});
+  // Before the first touch there is no last point, and a right click at 0,0
+  // lands on the corner of the screen. Fall back to the middle of the picture.
+  const x = startX || (img.clientWidth  / 2);
+  const y = startY || (img.clientHeight / 2);
+  send({t:'move', x:x, y:y});
+  send({t:'down', x:x, y:y, b:2});
+  send({t:'up',   x:x, y:y, b:2});
 }
 function tapKey(k){ send({t:'key', k:k, d:true}); send({t:'key', k:k, d:false}); }
 
