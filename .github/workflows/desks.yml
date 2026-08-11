@@ -311,14 +311,37 @@ jobs:
           Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
           $exe = "C:\Program Files\TightVNC\tvnserver.exe"
           if (-not (Test-Path $exe)) { throw "TightVNC did not install to $exe" }
-          # The redirects are not optional. cmd /c start /b hands the child
-          # this step's stdout and stderr, and pwsh waits for those handles to
-          # close - so a long-lived child without redirects hangs the step
-          # forever. That is exactly what happened: the VNC launch sat in
-          # progress for eight minutes until the run was cancelled, while the
-          # identical websockify launch, which did redirect, returned at once.
-          cmd /c start "" /b "$exe" -run "1>$env:TEMP\tvn.log" "2>$env:TEMP\tvn.err"
-          Start-Sleep -Seconds 6
+          # A scheduled task, not cmd /c start.
+          #
+          # Two launch styles were tried on a live runner and both hung this
+          # step until the run was cancelled - with redirects and without.
+          # tvnserver.exe -run does not return, and cmd /c start /b still keeps
+          # the step waiting on it. A scheduled task is owned by the task
+          # scheduler rather than by this console: Start-ScheduledTask returns
+          # immediately and the server keeps running after the step ends.
+          #
+          # It must run as the logged-in console user, not SYSTEM: the desktop
+          # worth showing belongs to runneradmin in session 2, and a SYSTEM
+          # task would land in session 0 and capture a blank one.
+          $me = "$env:USERDOMAIN\$env:USERNAME"
+          Write-Host "starting the VNC server as $me"
+          schtasks /Create /TN "symbiosis-vnc" /TR "`"$exe`" -run" /SC ONCE /ST 00:00 `
+            /RU $me /IT /F | Out-Null
+          schtasks /Run /TN "symbiosis-vnc" | Out-Null
+
+          $proc = $null
+          foreach ($try in 1..15) {
+            Start-Sleep -Seconds 2
+            $proc = Get-Process tvnserver -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($proc) { break }
+          }
+          if (-not $proc) {
+            # Fall back to the direct launch rather than giving up: it may hang
+            # this step, but a hung step with a working desk beats no desk.
+            Write-Host "::warning::the scheduled task did not start it; launching directly"
+            cmd /c start "" /b "$exe" -run "1>$env:TEMP\tvn.log" "2>$env:TEMP\tvn.err"
+            Start-Sleep -Seconds 6
+          }
           $proc = Get-Process tvnserver -ErrorAction SilentlyContinue
           if (-not $proc) { throw "tvnserver did not stay running" }
           Write-Host ("tvnserver pid {0} in session {1}" -f $proc.Id, $proc.SessionId)
