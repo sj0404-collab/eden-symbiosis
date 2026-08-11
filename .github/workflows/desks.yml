@@ -252,170 +252,71 @@ jobs:
         with:
           path: fork
 
-      - name: Start a VNC server with authentication switched off
+      - name: Start the desk
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $msi = "$env:TEMP\tightvnc.msi"
-          # curl.exe, not Invoke-WebRequest: the .NET stack on this image fails
-          # GitHub's redirect to objects.githubusercontent.com with
-          # RemoteCertificateNameMismatch. Measured, twice.
-          curl.exe -sL --retry 3 -o $msi `
-            "https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi"
-          if (-not (Test-Path $msi)) { throw "could not download TightVNC" }
-
-          # VALUE_OF_USEVNCAUTHENTICATION=0 is the point of the whole change:
-          # the server asks for nothing. The control password is switched off
-          # too, otherwise the service refuses to apply settings later.
-          $a = @(
-            "/i", "`"$msi`"", "/quiet", "/norestart",
-            "ADDLOCAL=Server",
-            "SERVER_REGISTER_AS_SERVICE=0",
-            "SERVER_ADD_FIREWALL_EXCEPTION=1",
-            "SET_USEVNCAUTHENTICATION=1", "VALUE_OF_USEVNCAUTHENTICATION=0",
-            "SET_USECONTROLAUTHENTICATION=1", "VALUE_OF_USECONTROLAUTHENTICATION=0",
-            "SET_ALLOWLOOPBACK=1", "VALUE_OF_ALLOWLOOPBACK=1",
-            "SET_ACCEPTHTTPCONNECTIONS=1", "VALUE_OF_ACCEPTHTTPCONNECTIONS=0"
-          )
-          $p = Start-Process msiexec -ArgumentList $a -Wait -PassThru
-          Write-Host "msiexec exit: $($p.ExitCode)"
-
-          # Belt and braces: write the same settings straight to the registry,
-          # because the MSI properties are silently ignored on some builds and
-          # a server that wants a password is exactly what this is removing.
-          # Written to all three hives: the 64-bit build reads
-          # HKLM\SOFTWARE\TightVNC\Server, a 32-bit install lands in
-          # Wow6432Node, and a server running as a logged-in application also
-          # consults HKCU.
-          foreach ($key in @(
-            "HKLM:\SOFTWARE\TightVNC\Server",
-            "HKLM:\SOFTWARE\Wow6432Node\TightVNC\Server",
-            "HKCU:\SOFTWARE\TightVNC\Server")) {
-          New-Item -Path $key -Force | Out-Null
-          Set-ItemProperty -Path $key -Name "AllowLoopback"            -Value 1 -Type DWord
-          Set-ItemProperty -Path $key -Name "UseVncAuthentication"     -Value 0 -Type DWord
-          Set-ItemProperty -Path $key -Name "UseControlAuthentication" -Value 0 -Type DWord
-          Set-ItemProperty -Path $key -Name "LoopbackOnly"             -Value 1 -Type DWord
-          Set-ItemProperty -Path $key -Name "AcceptHttpConnections"    -Value 0 -Type DWord
-          Set-ItemProperty -Path $key -Name "AlwaysShared"             -Value 1 -Type DWord
-          Set-ItemProperty -Path $key -Name "RemoveWallpaper"          -Value 0 -Type DWord
-          Set-ItemProperty -Path $key -Name "QueryAllowNoPass"         -Value 1 -Type DWord
-          Set-ItemProperty -Path $key -Name "QuerySetting"             -Value 0 -Type DWord
-          }
-
-          # As an application, not a service. The runner is logged in on the
-          # console in session 2 with a 1024x768 display and explorer running -
-          # measured on a real runner. A service would sit in session 0 and
-          # hand the browser a blank desktop.
-          Stop-Service tvnserver -ErrorAction SilentlyContinue
-          Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
-          $exe = "C:\Program Files\TightVNC\tvnserver.exe"
-          if (-not (Test-Path $exe)) { throw "TightVNC did not install to $exe" }
-          # A scheduled task, not cmd /c start.
+          # NOT VNC. Measured on this exact image, three frames of the same
+          # desktop seconds apart:
           #
-          # Two launch styles were tried on a live runner and both hung this
-          # step until the run was cancelled - with redirects and without.
-          # tvnserver.exe -run does not return, and cmd /c start /b still keeps
-          # the step waiting on it. A scheduled task is owned by the task
-          # scheduler rather than by this console: Start-ScheduledTask returns
-          # immediately and the server keeps running after the step ends.
+          #   GDI CopyFromScreen        26508 distinct colours  (real desktop)
+          #   TightVNC as a service         1 distinct colour   (black)
+          #   TightVNC as an application    1 distinct colour   (black)
           #
-          # It must run as the logged-in console user, not SYSTEM: the desktop
-          # worth showing belongs to runneradmin in session 2, and a SYSTEM
-          # task would land in session 0 and capture a blank one.
+          # Turning off its mirror driver, BlankScreen and RemoveWallpaper
+          # changed nothing. TightVNC's capture path does not work on a runner
+          # with no real display driver, so the desk is built on the path that
+          # demonstrably does: a GDI grab, streamed as MJPEG, with mouse and
+          # keyboard sent back through SendInput. A browser is the client, and
+          # there is nothing to authenticate - same as the Linux desk.
+          python -m pip install --quiet --disable-pip-version-check pillow
+
+          $script = "$env:GITHUB_WORKSPACE\fork\tools\win_desk_server.py"
+          if (-not (Test-Path $script)) { throw "desk server missing at $script" }
+
+          # A scheduled task in the console session, for two reasons proven by
+          # probe runs: a process started with Start-Process dies when its step
+          # ends, and cmd /c start keeps the step waiting on a server that
+          # never returns. The task must run as the logged-in user - the
+          # desktop worth showing belongs to runneradmin in session 2, and a
+          # SYSTEM task would capture session 0.
           $me = "$env:USERDOMAIN\$env:USERNAME"
-          Write-Host "starting the VNC server as $me"
-          schtasks /Create /TN "symbiosis-vnc" /TR "`"$exe`" -run" /SC ONCE /ST 00:00 `
-            /RU $me /IT /F | Out-Null
-          schtasks /Run /TN "symbiosis-vnc" | Out-Null
+          $py = (Get-Command python).Source
+          schtasks /Create /TN "symbiosis-desk" /TR "`"$py`" `"$script`" 6080" `
+            /SC ONCE /ST 00:00 /RU $me /IT /F | Out-Null
+          schtasks /Run /TN "symbiosis-desk" | Out-Null
 
-          $proc = $null
-          foreach ($try in 1..15) {
-            Start-Sleep -Seconds 2
-            $proc = Get-Process tvnserver -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($proc) { break }
-          }
-          if (-not $proc) {
-            # Fall back to the direct launch rather than giving up: it may hang
-            # this step, but a hung step with a working desk beats no desk.
-            Write-Host "::warning::the scheduled task did not start it; launching directly"
-            cmd /c start "" /b "$exe" -run "1>$env:TEMP\tvn.log" "2>$env:TEMP\tvn.err"
-            Start-Sleep -Seconds 6
-          }
-          $proc = Get-Process tvnserver -ErrorAction SilentlyContinue
-          if (-not $proc) { throw "tvnserver did not stay running" }
-          Write-Host ("tvnserver pid {0} in session {1}" -f $proc.Id, $proc.SessionId)
-
-      - name: Confirm no password is demanded, over the wire
-        shell: pwsh
-        run: |
-          # Trusting the registry is how the RDP attempt went wrong four times:
-          # every flag read back correct and the client was still refused. Ask
-          # the server itself what it offers.
           $ok = $false
-          foreach ($try in 1..10) {
-            try {
-              $c = New-Object System.Net.Sockets.TcpClient
-              $c.Connect("127.0.0.1", 5900)
-              $s = $c.GetStream()
-              $buf = New-Object byte[] 12
-              $n = $s.Read($buf, 0, 12)
-              Write-Host "banner: $([System.Text.Encoding]::ASCII.GetString($buf,0,$n).Trim())"
-              $ver = [System.Text.Encoding]::ASCII.GetBytes("RFB 003.008`n")
-              $s.Write($ver, 0, $ver.Length)
-              $sec = New-Object byte[] 8
-              $m = $s.Read($sec, 0, 8)
-              $count = $sec[0]
-              $types = @()
-              for ($i = 1; $i -le $count -and $i -lt $m; $i++) { $types += $sec[$i] }
-              Write-Host "security types offered: $($types -join ',') (1 = None)"
-              $c.Close()
-              if ($types -contains 1) { $ok = $true }
-              break
-            } catch {
-              Start-Sleep -Seconds 3
+          foreach ($try in 1..30) {
+            Start-Sleep -Seconds 2
+            if ((curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:6080/health") -eq "200") {
+              $ok = $true; break
             }
           }
-          if (-not $ok) { throw "the VNC server is not offering type 1 (None); a password would be demanded" }
+          if (-not $ok) { throw "the desk server did not come up on 6080" }
+          Write-Host "desk server is up"
 
-      - name: Serve it as a web page
+      - name: Confirm the picture is a real desktop, not a black rectangle
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          python --version
-          python -m pip install --quiet --disable-pip-version-check websockify
-
-          # noVNC is just static files; websockify serves them and bridges the
-          # WebSocket to port 5900.
-          curl.exe -sL --retry 3 -o "$env:TEMP\novnc.tgz" `
-            "https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz"
-          New-Item -ItemType Directory -Force -Path "$env:TEMP\novnc" | Out-Null
-          tar -xzf "$env:TEMP\novnc.tgz" -C "$env:TEMP\novnc"
-          $web = Get-ChildItem "$env:TEMP\novnc" -Directory | Select-Object -First 1 -ExpandProperty FullName
-          Write-Host "noVNC at $web"
-          "NOVNC_WEB=$web" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-          # cmd /c start, NOT Start-Process.
-          #
-          # A process launched with Start-Process is killed when the step that
-          # started it ends. Measured directly: three websockify servers were
-          # started in one step - Start-Process on 6080, cmd /c start on 6081,
-          # a scheduled task on 6082. All three answered 200 inside that step.
-          # In the very next step 6080 was gone (HTTP 000) while 6081 and 6082
-          # were still serving, and still serving two minutes later.
-          #
-          # That is exactly what made the Windows desk answer 502: the tunnel
-          # stayed up, and the thing behind it had been killed at the step
-          # boundary.
-          cmd /c start "" /b python -m websockify --web="$web" 6080 127.0.0.1:5900 `
-            "1>$env:TEMP\ws.log" "2>$env:TEMP\ws.err"
-          Start-Sleep -Seconds 8
-          $r = try { Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:6080/vnc.html" -TimeoutSec 15 } catch { $null }
-          if (-not $r -or $r.StatusCode -ne 200) {
-            Get-Content "$env:TEMP\ws.log","$env:TEMP\ws.err" -ErrorAction SilentlyContinue | Write-Host
-            throw "websockify is not serving the page on 6080"
-          }
-          Write-Host "noVNC is serving locally on 6080"
+          # The whole reason VNC was abandoned here. A frame that decodes and
+          # has one distinct colour is a black screen dressed as a success, and
+          # that is precisely the failure this replaces - so the desk refuses
+          # to be published unless the picture is real.
+          curl.exe -s -o "$env:TEMP\frame.jpg" -m 30 "http://127.0.0.1:6080/shot"
+          $check = @(
+            'from PIL import Image',
+            'import sys',
+            'im = Image.open(sys.argv[1]).convert("RGB")',
+            'c = im.getcolors(maxcolors=500000)',
+            'n = len(c) if c else 500000',
+            'print("frame", im.size, "distinct colours:", n)',
+            'sys.exit(0 if n > 2 else 1)'
+          ) -join "`n"
+          $check | Out-File -FilePath "$env:TEMP\check.py" -Encoding utf8
+          python "$env:TEMP\check.py" "$env:TEMP\frame.jpg"
+          if ($LASTEXITCODE -ne 0) { throw "the desk is showing a black screen" }
+          Write-Host "the picture is a real desktop"
 
       - name: Open the tunnel
         shell: pwsh
@@ -449,7 +350,7 @@ jobs:
           # opens it too early sees 502 and blames the desk.
           foreach ($try in 1..20) {
             try {
-              $r = Invoke-WebRequest -UseBasicParsing -Uri "$url/vnc.html" -TimeoutSec 15
+              $r = Invoke-WebRequest -UseBasicParsing -Uri "$url/health" -TimeoutSec 15
               if ($r.StatusCode -eq 200) { break }
             } catch { Start-Sleep -Seconds 3 }
           }
@@ -459,7 +360,7 @@ jobs:
       - name: Publish the address
         shell: pwsh
         run: |
-          $open = "$env:DESK_URL/vnc.html?autoconnect=1&resize=remote"
+          $open = "$env:DESK_URL/"
           @(
             "## Windows desk",
             "",
@@ -479,7 +380,6 @@ jobs:
         run: |
           Write-Host "The desk stays up until you cancel this run, or for six hours."
           $cf = "$env:TEMP\cloudflared.exe"
-          $web = $env:NOVNC_WEB
           for ($i = 0; $i -lt 1400; $i++) {
             Start-Sleep -Seconds 15
 
@@ -487,11 +387,10 @@ jobs:
             # websockify behind a live tunnel answers 502, which no PID check
             # would ever notice - and that is the failure that actually
             # happened.
-            $local = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:6080/vnc.html")
+            $local = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:6080/health")
             if ($local -ne "200") {
-              Write-Host "::warning::websockify stopped answering ($local); restarting it."
-              cmd /c start "" /b python -m websockify --web="$web" 6080 127.0.0.1:5900 `
-                "1>$env:TEMP\ws2.log" "2>$env:TEMP\ws2.err"
+              Write-Host "::warning::the desk server stopped answering ($local); restarting it."
+              schtasks /Run /TN "symbiosis-desk" | Out-Null
               Start-Sleep -Seconds 8
             }
 
@@ -512,7 +411,7 @@ jobs:
               $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
               bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
                 "slot=windows" "kind=Стол Windows" "os=windows" `
-                "url=$url" "deskUrl=$url/vnc.html?autoconnect=1&resize=remote" `
+                "url=$url" "deskUrl=$url/" `
                 "auth=без пароля" "label=${{ inputs.label }}"
             }
           }
