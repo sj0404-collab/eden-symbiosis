@@ -24,6 +24,20 @@ name: Remote session
 # CONNECTING FROM A PHONE:
 #   RDP - Microsoft Remote Desktop, or aFreeRDP. Host and port are printed in
 #         the log; user "runner", password shown in the same step.
+#
+# KEEPING THE CONNECTION SAVED ON YOUR PHONE
+#   Three repository secrets pin what would otherwise change every session:
+#     RDP_USER          login for the Windows session   (default zenrdp)
+#     RDP_PASSWORD      its password, reused each run
+#     NGROK_TCP_ADDRESS a reserved address, e.g. 1.tcp.eu.ngrok.io:12345
+#
+#   The port is already fixed at 3389 and never varies.
+#
+#   The address is the one thing that cannot be pinned for free: ngrok assigns
+#   TCP addresses randomly on the free plan and reserving one requires the
+#   Hobbyist or Pay-as-you-go plan. Without that secret the session still
+#   works - the address is simply new each time, and the panel always shows the
+#   current one.
 #   SSH - Termux, JuiceSSH or ConnectBot. The web link works with no client.
 #   A mouse over OTG works in both; RDP also takes touch as a mouse.
 
@@ -548,23 +562,34 @@ jobs:
       - name: Enable RDP and create the session user
         id: rdp
         shell: pwsh
+        env:
+          RDP_USER: ${{ secrets.RDP_USER }}
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
           $ErrorActionPreference = "Stop"
-          $user = "zenrdp"
+          $user = if ($env:RDP_USER) { $env:RDP_USER } else { "zenrdp" }
 
-          # Windows enforces password complexity: at least three of upper,
-          # lower, digit and symbol. Picking 16 characters at random from one
-          # pool satisfies that almost always - measured, 4 percent of draws do
-          # not, and New-LocalUser then throws InvalidPasswordException and the
-          # whole session fails. A one-in-twenty-five failure is the worst kind:
-          # it looks like bad luck rather than a bug. Take one from each class
-          # explicitly, fill the rest, then shuffle.
-          $upper  = 65..90  | Get-Random -Count 4 | ForEach-Object { [char]$_ }
-          $lower  = 97..122 | Get-Random -Count 4 | ForEach-Object { [char]$_ }
-          $digits = 48..57  | Get-Random -Count 4 | ForEach-Object { [char]$_ }
-          # Symbols kept to ones no shell, URL or RDP client will mangle.
-          $symbols = '!@#$%^*-_=+'.ToCharArray() | Get-Random -Count 2
-          $password = -join (($upper + $lower + $digits + $symbols) | Get-Random -Count 14)
+          # A stable password, so the saved connection on the phone keeps
+          # working instead of needing the password retyped every session.
+          #
+          # Set RDP_PASSWORD as a repository secret and it is used as-is.
+          # Without it, one is generated - and generated carefully, because
+          # Windows enforces complexity (three of upper, lower, digit, symbol)
+          # and a plain 16-character draw from one pool fails that about 4
+          # percent of the time, which surfaces as InvalidPasswordException and
+          # kills the session. Measured, not assumed.
+          if ($env:RDP_PASSWORD) {
+            $password = $env:RDP_PASSWORD
+            Write-Host "using the RDP_PASSWORD secret"
+          } else {
+            $upper  = 65..90  | Get-Random -Count 4 | ForEach-Object { [char]$_ }
+            $lower  = 97..122 | Get-Random -Count 4 | ForEach-Object { [char]$_ }
+            $digits = 48..57  | Get-Random -Count 4 | ForEach-Object { [char]$_ }
+            # Symbols kept to ones no shell, URL or RDP client will mangle.
+            $symbols = '!@#$%^*-_=+'.ToCharArray() | Get-Random -Count 2
+            $password = -join (($upper + $lower + $digits + $symbols) | Get-Random -Count 14)
+            Write-Host "generated a password; set the RDP_PASSWORD secret to keep it fixed"
+          }
 
           # Remote Desktop is present on the image but switched off, and NLA
           # would reject the fresh local account from most phone clients.
@@ -603,6 +628,7 @@ jobs:
       - name: Open the tunnel
         env:
           NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+          NGROK_TCP_ADDRESS: ${{ secrets.NGROK_TCP_ADDRESS }}
         shell: pwsh
         run: |
           if (-not $env:NGROK_TOKEN) {
@@ -622,8 +648,6 @@ jobs:
           # connection is closed immediately. That is exactly what a client
           # sees as "connection reset" - measured against a live session, four
           # attempts in a row, before this changed.
-          $ngrok = Start-Process -FilePath "ngrok" `
-            -ArgumentList "tcp 3389 --log stdout --log-format json --log-level info" `
             -RedirectStandardOutput "$env:TEMP\ngrok.log" `
             -RedirectStandardError "$env:TEMP\ngrok.err" `
             -WindowStyle Hidden -PassThru
