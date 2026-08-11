@@ -24,6 +24,7 @@ import org.yuzu.yuzu_emu.adapters.GameEntryAdapter
 import org.yuzu.yuzu_emu.databinding.FragmentGameFoldersBinding
 import org.yuzu.yuzu_emu.utils.GameFolderScanner
 import org.yuzu.yuzu_emu.utils.GameHelper
+import org.yuzu.yuzu_emu.utils.NativeSymbiosis
 
 /**
  * Lists the folders that hold games, rather than the games themselves.
@@ -176,7 +177,18 @@ class GameFoldersFragment : Fragment() {
             }
             if (_binding == null) return@launch
             if (game == null) {
-                Toast.makeText(requireContext(), R.string.folder_launch_unreadable, Toast.LENGTH_LONG).show()
+                // Ask the loader why rather than repeating a guess. "check keys
+                // and firmware" was wrong whenever the real cause was an update
+                // without its base game, which is exactly the [v393216] file in
+                // this folder.
+                val why = withContext(Dispatchers.IO) {
+                    runCatching { NativeSymbiosis.romProblem(uri.toString()) }.getOrNull()
+                }
+                MessageDialogFragment.newInstance(
+                    requireActivity(),
+                    titleString = entry.name.substringBeforeLast('.'),
+                    descriptionString = why ?: getString(R.string.folder_launch_unreadable)
+                ).show(childFragmentManager, MessageDialogFragment.TAG)
                 return@launch
             }
             binding.root.findNavController().navigate(

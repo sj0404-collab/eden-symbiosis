@@ -22,6 +22,22 @@ object NativeSymbiosis {
     private external fun runSelfTestCounts(): String
     external fun getDetectedGpu(): String
 
+    /**
+     * Why one ROM will not load, as "code|human sentence".
+     *
+     * Kotlin only ever saw a bare false from getIsValid, so the UI had to
+     * guess and said "check keys and firmware" for every cause alike. This
+     * asks the loader directly.
+     */
+    external fun diagnoseRom(path: String): String
+
+    /** The sentence half of [diagnoseRom], or null when the file is fine. */
+    fun romProblem(path: String): String? = runCatching {
+        val raw = diagnoseRom(path)
+        val code = raw.substringBefore('|')
+        if (code == "ok") null else raw.substringAfter('|', raw)
+    }.getOrNull()
+
     // --- Crash guard -----------------------------------------------------
     /** True when the layer switched itself off after an unclean shutdown. */
     external fun isSafeMode(): Boolean

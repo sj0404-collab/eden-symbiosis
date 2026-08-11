@@ -32,6 +32,16 @@
 #include "common/symbiosis/symbiosis_log.h"
 #include "common/symbiosis/thermal_monitor.h"
 
+#include "core/core.h"
+#include "core/file_sys/fs_filesystem.h"
+#include "core/crypto/key_manager.h"
+#include "core/file_sys/content_archive.h"
+#include "core/file_sys/registered_cache.h"
+#include "core/file_sys/submission_package.h"
+#include "core/loader/loader.h"
+#include "frontend_common/content_manager.h"
+#include "native.h"
+
 namespace {
 
 /// Encodes profiles for Kotlin as newline-separated records with a field
@@ -225,6 +235,86 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_applyProfile(JNIEnv* env, jobject,
 
 /// Live thermal state as "state|tempC|gpuClockPercent|summary|advice".
 JNIEXPORT jstring JNICALL
+/**
+ * Explains, in one sentence, why a specific ROM will not open.
+ *
+ * "check keys and firmware" is what the UI could say before, and it is close
+ * to useless: it names two things without saying which, and it is wrong
+ * whenever the real cause is a title key missing for that one game, an update
+ * with no base installed, or a truncated download. Every one of those looks
+ * identical from Kotlin, because GameMetadata::getIsValid returns a bare
+ * false.
+ *
+ * This asks the loader the same questions it asks itself and reports the first
+ * one that fails, so the answer names the actual problem.
+ */
+extern "C" JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
+                                                          jstring j_path) {
+    const std::string path = Common::Android::GetJString(env, j_path);
+    auto& system = EmulationSession::GetInstance().System();
+
+    // Keys first: without the base keys nothing NCA-backed can be parsed, and
+    // every later message would be a red herring.
+    if (Core::Crypto::KeyManager::Instance().BaseDeriveNecessary()) {
+        return Common::Android::ToJString(
+            env, "no_keys|prod.keys отсутствует или не подходит к этой прошивке");
+    }
+
+    auto file = system.GetFilesystem()->OpenFile(path, FileSys::OpenMode::Read);
+    if (!file) {
+        return Common::Android::ToJString(
+            env, "unreadable|файл не открывается — нет доступа или он удалён");
+    }
+    if (file->GetSize() == 0) {
+        return Common::Android::ToJString(env, "empty|файл пустой (0 байт)");
+    }
+
+    auto loader = Loader::GetLoader(system, file);
+    if (!loader) {
+        return Common::Android::ToJString(
+            env, "unknown_format|формат не распознан — файл повреждён или не является ROM");
+    }
+
+    const auto type = loader->GetFileType();
+    if (type == Loader::FileType::Unknown || type == Loader::FileType::Error) {
+        return Common::Android::ToJString(
+            env, "unknown_format|формат не распознан — скорее всего, файл скачан не полностью");
+    }
+
+    // An NSP that parses but holds no application program is the classic
+    // "update without a base game": it is a valid file that cannot be booted
+    // on its own, and telling the user to check their keys sends them the
+    // wrong way entirely.
+    if (type == Loader::FileType::NSP || type == Loader::FileType::XCI) {
+        if (!Loader::IsBootableGameContainer(file, type)) {
+            const bool is_update = path.find("[v") != std::string::npos &&
+                                   path.find("[v0]") == std::string::npos;
+            if (is_update) {
+                return Common::Android::ToJString(
+                    env,
+                    "update_only|это обновление, а не игра — сначала установи "
+                    "базовую версию [v0], потом это через «Установить»");
+            }
+            return Common::Android::ToJString(
+                env,
+                "not_bootable|внутри нет запускаемой игры — это DLC или "
+                "обновление, установи его, а запускай базовую игру");
+        }
+    }
+
+    u64 program_id = 0;
+    if (loader->ReadProgramId(program_id) != Loader::ResultStatus::Success) {
+        return Common::Android::ToJString(
+            env,
+            "no_title_key|нет ключа именно для этой игры — в prod.keys "
+            "отсутствует её title key, нужен полный дамп ключей");
+    }
+
+    return Common::Android::ToJString(env, "ok|файл читается");
+}
+
+extern "C" JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getThermalState(JNIEnv* env, jobject) {
     const auto reading = Symbiosis::GetThermalMonitor().Sample();
     std::string out = Symbiosis::ToString(reading.state);
