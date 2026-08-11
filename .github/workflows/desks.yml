@@ -243,9 +243,12 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $msi = "$env:TEMP\tightvnc.msi"
-          Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 `
-            -Uri "https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi" `
-            -OutFile $msi
+          # curl.exe, not Invoke-WebRequest: the .NET stack on this image fails
+          # GitHub's redirect to objects.githubusercontent.com with
+          # RemoteCertificateNameMismatch. Measured, twice.
+          curl.exe -sL --retry 3 -o $msi `
+            "https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi"
+          if (-not (Test-Path $msi)) { throw "could not download TightVNC" }
 
           # VALUE_OF_USEVNCAUTHENTICATION=0 is the point of the whole change:
           # the server asks for nothing. The control password is switched off
@@ -266,14 +269,25 @@ jobs:
           # Belt and braces: write the same settings straight to the registry,
           # because the MSI properties are silently ignored on some builds and
           # a server that wants a password is exactly what this is removing.
-          $key = "HKLM:\SOFTWARE\TightVNC\Server"
+          # Written to all three hives: the 64-bit build reads
+          # HKLM\SOFTWARE\TightVNC\Server, a 32-bit install lands in
+          # Wow6432Node, and a server running as a logged-in application also
+          # consults HKCU.
+          foreach ($key in @(
+            "HKLM:\SOFTWARE\TightVNC\Server",
+            "HKLM:\SOFTWARE\Wow6432Node\TightVNC\Server",
+            "HKCU:\SOFTWARE\TightVNC\Server")) {
           New-Item -Path $key -Force | Out-Null
+          Set-ItemProperty -Path $key -Name "AllowLoopback"            -Value 1 -Type DWord
           Set-ItemProperty -Path $key -Name "UseVncAuthentication"     -Value 0 -Type DWord
           Set-ItemProperty -Path $key -Name "UseControlAuthentication" -Value 0 -Type DWord
           Set-ItemProperty -Path $key -Name "LoopbackOnly"             -Value 1 -Type DWord
           Set-ItemProperty -Path $key -Name "AcceptHttpConnections"    -Value 0 -Type DWord
           Set-ItemProperty -Path $key -Name "AlwaysShared"             -Value 1 -Type DWord
           Set-ItemProperty -Path $key -Name "RemoveWallpaper"          -Value 0 -Type DWord
+          Set-ItemProperty -Path $key -Name "QueryAllowNoPass"         -Value 1 -Type DWord
+          Set-ItemProperty -Path $key -Name "QuerySetting"             -Value 0 -Type DWord
+          }
 
           # As an application, not a service. The runner is logged in on the
           # console in session 2 with a 1024x768 display and explorer running -
@@ -330,9 +344,8 @@ jobs:
 
           # noVNC is just static files; websockify serves them and bridges the
           # WebSocket to port 5900.
-          $zip = "$env:TEMP\novnc.zip"
-          Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 `
-            -Uri "https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz" -OutFile "$env:TEMP\novnc.tgz"
+          curl.exe -sL --retry 3 -o "$env:TEMP\novnc.tgz" `
+            "https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz"
           New-Item -ItemType Directory -Force -Path "$env:TEMP\novnc" | Out-Null
           tar -xzf "$env:TEMP\novnc.tgz" -C "$env:TEMP\novnc"
           $web = Get-ChildItem "$env:TEMP\novnc" -Directory | Select-Object -First 1 -ExpandProperty FullName
@@ -355,9 +368,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $cf = "$env:TEMP\cloudflared.exe"
-          Invoke-WebRequest -UseBasicParsing -TimeoutSec 300 `
-            -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
-            -OutFile $cf
+          curl.exe -sL --retry 3 -o $cf `
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          if (-not (Test-Path $cf)) { throw "could not download cloudflared" }
 
           # A quick tunnel: no account, no token, and as many as we like - which
           # is why both desks can be up at the same time. ngrok's free plan

@@ -1,28 +1,28 @@
 name: Desk probe
 
-# Round three. What the first two established, as facts from a real runner:
+# Round four, and the last one: everything below is now checking a fix rather
+# than hunting a cause.
 #
-#   * windows-latest logs in as runneradmin on the CONSOLE, session 2, with
-#     explorer running and a 1024x768 display. Screenshots show the real
-#     Windows Server 2025 desktop with the taskbar and a Notepad window. So a
-#     desk is possible; the runner is not a headless session-0 box.
-#   * TightVNC installs and listens on 5900.
-#   * python and websockify install fine.
+# WHAT THE FIRST THREE ROUNDS ESTABLISHED, as facts from real runners:
 #
-# What went wrong, also measured:
+#   1. windows-latest is logged in on the CONSOLE as runneradmin, session 2,
+#      with explorer running and a 1024x768 display. Screenshots show the real
+#      Windows Server 2025 desktop, taskbar and all. A desk is possible.
+#   2. TightVNC installs, runs in session 2, listens on 5900.
+#   3. The refusal had NOTHING to do with passwords. Read in full, it says:
 #
-#   * The VNC server ANSWERED THE HANDSHAKE WITH A REJECTION: the security-type
-#     count byte was 0, followed by a 43-character reason that got truncated at
-#     "Sor" because the probe only read 8 bytes. Almost certainly the classic
-#     "no valid password enabled" refusal - TightVNC declines to serve when
-#     authentication is on but no password exists. This round reads the whole
-#     string instead of assuming.
-#   * cloudflared could not be downloaded: RemoteCertificateNameMismatch on the
-#     github.com redirect to objects.githubusercontent.com. Retried here with
-#     curl.exe, which ships with Windows and does not use the .NET chain.
+#          Sorry, loopback connections are not enabled
 #
-# The point of this round is to get both answers before writing them into the
-# real workflow, because a wrong guess costs a whole session.
+#      I had set LoopbackOnly=1, which restricts connections to loopback, and
+#      never set AllowLoopback=1, which permits them in the first place. Two
+#      settings with confusingly similar names; the server was refusing my own
+#      probe for connecting from 127.0.0.1, not for lacking a credential.
+#   4. Invoke-WebRequest fails on this image with RemoteCertificateNameMismatch
+#      when GitHub redirects to objects.githubusercontent.com. curl.exe, which
+#      ships with Windows, fetched the same 54 MB cloudflared without complaint.
+#
+# This round proves the whole chain end to end: VNC accepts with security type
+# 1 (None), websockify serves the page, the tunnel answers from outside.
 
 on:
   workflow_dispatch:
@@ -36,14 +36,13 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Install TightVNC and switch authentication off everywhere
+      - name: Install TightVNC, no authentication, loopback allowed
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Continue"
+          $ErrorActionPreference = "Stop"
           $msi = "$env:TEMP\tightvnc.msi"
           curl.exe -sL --retry 3 -o $msi `
             "https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi"
-          Write-Host "msi: $((Get-Item $msi).Length) bytes"
 
           $a = @(
             "/i", "`"$msi`"", "/quiet", "/norestart",
@@ -57,11 +56,11 @@ jobs:
           $p = Start-Process msiexec -ArgumentList $a -Wait -PassThru
           Write-Host "msiexec exit: $($p.ExitCode)"
 
-          # Write the settings into every place TightVNC might read them. The
-          # 64-bit build uses HKLM\SOFTWARE\TightVNC\Server, but a 32-bit
-          # installer lands in Wow6432Node, and a server running as a logged-in
-          # application also consults HKCU. Setting all three costs nothing and
-          # removes a whole class of "the flag was right and it still refused".
+          # AllowLoopback, not LoopbackOnly. The first permits connections from
+          # 127.0.0.1; the second restricts to them. Only having the second is
+          # what produced "Sorry, loopback connections are not enabled" - and
+          # both are wanted here: allow loopback, and accept nothing else,
+          # because websockify is the only thing that should ever connect.
           $keys = @(
             "HKLM:\SOFTWARE\TightVNC\Server",
             "HKLM:\SOFTWARE\Wow6432Node\TightVNC\Server",
@@ -69,141 +68,87 @@ jobs:
           )
           foreach ($k in $keys) {
             New-Item -Path $k -Force | Out-Null
+            Set-ItemProperty -Path $k -Name "AllowLoopback"            -Value 1 -Type DWord
+            Set-ItemProperty -Path $k -Name "LoopbackOnly"             -Value 1 -Type DWord
             Set-ItemProperty -Path $k -Name "UseVncAuthentication"     -Value 0 -Type DWord
             Set-ItemProperty -Path $k -Name "UseControlAuthentication" -Value 0 -Type DWord
             Set-ItemProperty -Path $k -Name "QueryAllowNoPass"         -Value 1 -Type DWord
             Set-ItemProperty -Path $k -Name "QuerySetting"             -Value 0 -Type DWord
-            Set-ItemProperty -Path $k -Name "LoopbackOnly"             -Value 1 -Type DWord
             Set-ItemProperty -Path $k -Name "AcceptHttpConnections"    -Value 0 -Type DWord
             Set-ItemProperty -Path $k -Name "AlwaysShared"             -Value 1 -Type DWord
-            Write-Host "configured $k"
           }
 
-          Stop-Service tvnserver -ErrorAction SilentlyContinue
-          Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
-          Start-Sleep -Seconds 2
-          $exe = "C:\Program Files\TightVNC\tvnserver.exe"
-          Start-Process $exe -ArgumentList "-run" -WindowStyle Hidden
-          Start-Sleep -Seconds 6
-          (Get-Process tvnserver -ErrorAction SilentlyContinue |
-            Select-Object Id, SessionId | Out-String) | Write-Host
-          exit 0
-
-      - name: Read the whole handshake, including any refusal text
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          function Probe-Vnc {
-            $c = New-Object System.Net.Sockets.TcpClient
-            $c.Connect("127.0.0.1", 5900)
-            $s = $c.GetStream()
-            $s.ReadTimeout = 8000
-            $buf = New-Object byte[] 12
-            $n = $s.Read($buf, 0, 12)
-            Write-Host "banner: $([System.Text.Encoding]::ASCII.GetString($buf,0,$n).Trim())"
-            $ver = [System.Text.Encoding]::ASCII.GetBytes("RFB 003.008`n")
-            $s.Write($ver, 0, $ver.Length)
-
-            $one = New-Object byte[] 1
-            $s.Read($one, 0, 1) | Out-Null
-            $count = $one[0]
-            if ($count -eq 0) {
-              # A zero count means refusal: a 4-byte big-endian length follows,
-              # then the reason. Reading only 8 bytes last time is why the text
-              # was truncated to "Sor".
-              $len4 = New-Object byte[] 4
-              $s.Read($len4, 0, 4) | Out-Null
-              [Array]::Reverse($len4)
-              $len = [BitConverter]::ToInt32($len4, 0)
-              $msg = New-Object byte[] $len
-              $got = 0
-              while ($got -lt $len) {
-                $r = $s.Read($msg, $got, $len - $got)
-                if ($r -le 0) { break }
-                $got += $r
-              }
-              Write-Host "REFUSED ($len chars): $([System.Text.Encoding]::ASCII.GetString($msg,0,$got))"
-            } else {
-              $types = New-Object byte[] $count
-              $s.Read($types, 0, $count) | Out-Null
-              Write-Host "ACCEPTED - security types: $($types -join ',')  (1 = None = no password)"
-            }
-            $c.Close()
-          }
-          try { Probe-Vnc } catch { Write-Host "probe failed: $($_.Exception.Message)" }
-          exit 0
-
-      - name: If it refused, set an empty password and ask again
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          # TightVNC stores the password obfuscated with a fixed DES key. An
-          # all-zero blob is what the installer writes for "no password", and
-          # some builds treat a MISSING value as "not configured" while an
-          # empty one is accepted. Try that before concluding anything.
-          $keys = @(
-            "HKLM:\SOFTWARE\TightVNC\Server",
-            "HKLM:\SOFTWARE\Wow6432Node\TightVNC\Server",
-            "HKCU:\SOFTWARE\TightVNC\Server"
-          )
-          $blank = [byte[]](0,0,0,0,0,0,0,0)
-          foreach ($k in $keys) {
-            Set-ItemProperty -Path $k -Name "Password"        -Value $blank -Type Binary
-            Set-ItemProperty -Path $k -Name "PasswordViewOnly" -Value $blank -Type Binary
-          }
           Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
           Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
           Start-Sleep -Seconds 6
+          $proc = Get-Process tvnserver -ErrorAction SilentlyContinue
+          Write-Host ("tvnserver pid {0} session {1}" -f $proc.Id, $proc.SessionId)
 
+      - name: The handshake must be accepted with type 1
+        shell: pwsh
+        run: |
           $c = New-Object System.Net.Sockets.TcpClient
-          try {
-            $c.Connect("127.0.0.1", 5900)
-            $s = $c.GetStream(); $s.ReadTimeout = 8000
-            $buf = New-Object byte[] 12; $s.Read($buf,0,12) | Out-Null
-            $s.Write([System.Text.Encoding]::ASCII.GetBytes("RFB 003.008`n"), 0, 12)
-            $one = New-Object byte[] 1; $s.Read($one,0,1) | Out-Null
-            if ($one[0] -eq 0) {
-              $len4 = New-Object byte[] 4; $s.Read($len4,0,4) | Out-Null
-              [Array]::Reverse($len4); $len = [BitConverter]::ToInt32($len4,0)
-              $msg = New-Object byte[] $len; $got = 0
-              while ($got -lt $len) { $r = $s.Read($msg,$got,$len-$got); if ($r -le 0) { break }; $got += $r }
-              Write-Host "STILL REFUSED: $([System.Text.Encoding]::ASCII.GetString($msg,0,$got))"
-            } else {
-              $t = New-Object byte[] $one[0]; $s.Read($t,0,$one[0]) | Out-Null
-              Write-Host "NOW ACCEPTED - security types: $($t -join ',')"
-            }
-            $c.Close()
-          } catch { Write-Host "second probe failed: $($_.Exception.Message)" }
-          exit 0
+          $c.Connect("127.0.0.1", 5900)
+          $s = $c.GetStream(); $s.ReadTimeout = 8000
+          $buf = New-Object byte[] 12; $s.Read($buf,0,12) | Out-Null
+          Write-Host "banner: $([System.Text.Encoding]::ASCII.GetString($buf,0,12).Trim())"
+          $s.Write([System.Text.Encoding]::ASCII.GetBytes("RFB 003.008`n"), 0, 12)
+          $one = New-Object byte[] 1; $s.Read($one,0,1) | Out-Null
+          if ($one[0] -eq 0) {
+            $len4 = New-Object byte[] 4; $s.Read($len4,0,4) | Out-Null
+            [Array]::Reverse($len4); $len = [BitConverter]::ToInt32($len4,0)
+            $msg = New-Object byte[] $len; $got = 0
+            while ($got -lt $len) { $r = $s.Read($msg,$got,$len-$got); if ($r -le 0) { break }; $got += $r }
+            throw "still refused: $([System.Text.Encoding]::ASCII.GetString($msg,0,$got))"
+          }
+          $t = New-Object byte[] $one[0]; $s.Read($t,0,$one[0]) | Out-Null
+          Write-Host "ACCEPTED - security types: $($t -join ',')"
+          $c.Close()
+          if ($t -notcontains 1) { throw "type 1 (None) not offered; a password would be demanded" }
+          Write-Host "no password is demanded"
 
-      - name: Try UltraVNC as a second option
+      - name: Serve it and reach it from outside
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Continue"
-          # If TightVNC insists on a password, UltraVNC does not: it has an
-          # explicit "no authentication" mode. Downloaded with curl.exe because
-          # Invoke-WebRequest failed the certificate chain on this image.
-          curl.exe -sL --retry 3 -o "$env:TEMP\uvnc.exe" `
-            "https://uvnc.eu/download/1400/UltraVNC_1_4_60_X64_Setup.exe"
-          if (Test-Path "$env:TEMP\uvnc.exe") {
-            Write-Host "ultravnc installer: $((Get-Item "$env:TEMP\uvnc.exe").Length) bytes"
-          } else { Write-Host "ultravnc download failed" }
-          exit 0
+          $ErrorActionPreference = "Stop"
+          python -m pip install --quiet --disable-pip-version-check websockify
+          curl.exe -sL --retry 3 -o "$env:TEMP\novnc.tgz" `
+            "https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz"
+          New-Item -ItemType Directory -Force -Path "$env:TEMP\novnc" | Out-Null
+          tar -xzf "$env:TEMP\novnc.tgz" -C "$env:TEMP\novnc"
+          $web = Get-ChildItem "$env:TEMP\novnc" -Directory | Select-Object -First 1 -ExpandProperty FullName
 
-      - name: Download cloudflared the way that works here
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          # Invoke-WebRequest died on RemoteCertificateNameMismatch following
-          # the redirect to objects.githubusercontent.com. curl.exe ships with
-          # Windows and uses the OS certificate store.
+          Start-Process python -ArgumentList "-m","websockify","--web=`"$web`"","6080","127.0.0.1:5900" `
+            -RedirectStandardOutput "$env:TEMP\ws.log" -RedirectStandardError "$env:TEMP\ws.err" -WindowStyle Hidden
+          Start-Sleep -Seconds 6
+          $r = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:6080/vnc.html" -TimeoutSec 15
+          Write-Host "local noVNC: HTTP $($r.StatusCode)"
+
           curl.exe -sL --retry 3 -o "$env:TEMP\cloudflared.exe" `
             "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-          if (Test-Path "$env:TEMP\cloudflared.exe") {
-            Write-Host "size: $((Get-Item "$env:TEMP\cloudflared.exe").Length)"
-            & "$env:TEMP\cloudflared.exe" --version
-          } else {
-            Write-Host "curl.exe could not fetch cloudflared either"
+          $log = "$env:TEMP\cf.log"
+          Start-Process "$env:TEMP\cloudflared.exe" `
+            -ArgumentList "tunnel","--url","http://localhost:6080","--no-autoupdate","--loglevel","info" `
+            -RedirectStandardOutput $log -RedirectStandardError "$env:TEMP\cf.err" -WindowStyle Hidden
+
+          $url = $null
+          foreach ($try in 1..40) {
+            Start-Sleep -Seconds 2
+            $text = (Get-Content $log,"$env:TEMP\cf.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+            if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
           }
-          exit 0
+          if (-not $url) { throw "no tunnel address" }
+          Write-Host "tunnel: $url"
+
+          # Fetch it from the public internet, through Cloudflare, not from
+          # localhost - that is the only test that matches what a phone does.
+          $ok = $false
+          foreach ($try in 1..20) {
+            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 20 "$url/vnc.html")
+            Write-Host "attempt $try : HTTP $code"
+            if ($code -eq "200") { $ok = $true; break }
+            Start-Sleep -Seconds 4
+          }
+          if (-not $ok) { throw "the page is not reachable through the tunnel" }
+          Write-Host "THE WINDOWS DESK WORKS END TO END, WITH NO PASSWORD"

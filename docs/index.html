@@ -225,6 +225,15 @@
     </div>
   </div>
 
+  <div class="card" id="desks-card" style="display:none">
+    <h2>Столы</h2>
+    <div id="desks"></div>
+    <div class="note">
+      Пароля нет ни у одного: ссылка открывает стол сразу. Кто знает адрес —
+      тот управляет; адрес живёт до конца сессии, не дольше шести часов.
+    </div>
+  </div>
+
   <div class="card" id="screen-card" style="display:none">
     <h2>Экран</h2>
     <div id="preview"><span class="spin">проверяю…</span></div>
@@ -945,6 +954,102 @@ function renderPreview() {
 
 function expandPreview()   { previewOpen = true;  renderPreview(); }
 function collapsePreview() { previewOpen = false; renderPreview(); }
+
+// ── two desks, side by side ─────────────────────────────────────────
+//
+// The Desks workflow publishes one file per desk - session-linux.json and
+// session-windows.json - so the two never overwrite each other. That split
+// exists because the old single mailbox meant only one desk could be live at
+// a time, and because free ngrok allowed exactly one tunnel. cloudflared quick
+// tunnels have no such limit, so both desks are genuinely up at once.
+//
+// Neither has a password. There is nothing to copy and nothing to type: the
+// button opens the desk and it connects on its own.
+let DESKS = { linux: null, windows: null };
+let deskOpen = null;   // 'linux' | 'windows' | null - which one is expanded
+
+async function loadDesks() {
+  const box = $('desks');
+  const card = $('desks-card');
+  if (!box || !card) return;
+
+  const read = async slot => {
+    try {
+      const f = await api(
+        `${CTL()}/contents/session-${slot}.json?ref=session-state&t=${Date.now()}`);
+      const s = JSON.parse(atob((f.content || '').replace(/\n/g, '')));
+      // A runner killed hard never clears its file, so an old entry lingers
+      // and would advertise a desk that stopped answering hours ago.
+      const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
+      if (s.state === 'ended' || age > 361) return null;
+      s._age = Math.round(age);
+      return s;
+    } catch (e) { return null; }
+  };
+
+  const [lin, win] = await Promise.all([read('linux'), read('windows')]);
+  DESKS = { linux: lin, windows: win };
+
+  if (!lin && !win) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  const tile = (slot, s, title) => {
+    if (!s) return `
+      <div style="flex:1;min-width:150px;border:1px dashed var(--line);border-radius:10px;
+           padding:12px;opacity:.55">
+        <b>${title}</b><div class="note" style="margin-top:4px">не запущен</div>
+      </div>`;
+    const url = s.deskUrl || s.url || '';
+    const left = Math.max(0, 360 - s._age);
+    return `
+      <div style="flex:1;min-width:150px;border:1px solid var(--line);border-radius:10px;
+           padding:12px">
+        <b>${title}</b>
+        <div class="note" style="margin:4px 0 8px">
+          без пароля · идёт ${s._age} мин · осталось ~${left} мин
+        </div>
+        <div style="position:relative;border:1px solid var(--line);border-radius:8px;
+             overflow:hidden;background:#000;height:110px;margin-bottom:8px">
+          <iframe src="${esc(url)}" style="border:0;width:300%;height:330px;
+                  transform:scale(.333);transform-origin:0 0" scrolling="no"
+                  sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+          <div onclick="expandDesk('${slot}')" style="position:absolute;inset:0;cursor:pointer"></div>
+        </div>
+        <div class="row">
+          <button class="small" onclick="expandDesk('${slot}')">Открыть здесь</button>
+          <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
+        </div>
+        ${s.terminal ? `<div class="row" style="margin-top:6px">
+          <button class="ghost small" onclick="window.open('${esc(s.terminal)}','_blank')">Терминал</button></div>` : ''}
+        ${s.runId && tok() ? `<div class="row" style="margin-top:6px">
+          <button class="ghost small" onclick="stopRun(${s.runId})">Выключить</button></div>` : ''}
+      </div>`;
+  };
+
+  if (deskOpen && DESKS[deskOpen]) {
+    const s = DESKS[deskOpen];
+    const url = s.deskUrl || s.url || '';
+    const other = deskOpen === 'linux' ? 'windows' : 'linux';
+    box.innerHTML = `
+      <div class="row" style="margin-bottom:8px">
+        <button class="small">${deskOpen === 'linux' ? 'Linux' : 'Windows'}</button>
+        ${DESKS[other] ? `<button class="ghost small" onclick="expandDesk('${other}')">
+          ${other === 'linux' ? 'Linux' : 'Windows'}</button>` : ''}
+        <button class="ghost small" onclick="collapseDesks()">Оба рядом</button>
+      </div>
+      <iframe src="${esc(url)}" style="border:1px solid var(--line);border-radius:10px;
+              width:100%;height:70vh;background:#000"
+              sandbox="allow-scripts allow-same-origin allow-forms"></iframe>`;
+  } else {
+    box.innerHTML = `<div class="row" style="gap:10px;align-items:stretch">
+      ${tile('linux', lin, 'Linux')}
+      ${tile('windows', win, 'Windows')}
+    </div>`;
+  }
+}
+
+function expandDesk(slot) { deskOpen = slot; loadDesks(); }
+function collapseDesks()  { deskOpen = null; loadDesks(); }
 
 // ── one session per account ─────────────────────────────────────────
 //

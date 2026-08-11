@@ -19,6 +19,14 @@
 #   make the repository private; the panel reads it with the same token either
 #   way.
 #
+# TWO DESKS AT ONCE
+#   Pass slot=linux or slot=windows and the entry lands in its own file,
+#   session-linux.json or session-windows.json, so the two desks never
+#   overwrite each other. Without a slot the old single session.json is used,
+#   which keeps the older workflows working unchanged.
+#
+#   The panel reads all three and shows whichever are live.
+#
 # Usage: publish_session.sh key=value ...
 #   Recognised keys are passed straight through to JSON, so a new session type
 #   can add a field without touching this script.
@@ -27,6 +35,19 @@ set -uo pipefail
 
 BRANCH="session-state"
 FILE="session.json"
+
+# A slot is a routing instruction, not data: pull it out of the arguments
+# before they become JSON.
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    slot=linux)   FILE="session-linux.json" ;;
+    slot=windows) FILE="session-windows.json" ;;
+    slot=*)       ;;   # unknown slot: ignore rather than write a stray file
+    *)            ARGS+=("$arg") ;;
+  esac
+done
+set -- ${ARGS+"${ARGS[@]}"}
 
 python3 - "$@" <<'PY' > /tmp/session.json
 import json, os, sys, datetime
