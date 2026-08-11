@@ -1,7 +1,14 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-11T18:21:23Z",
-  "runId": "31521732320",
-  "runNumber": "1",
+  "kind": "Стол Linux",
+  "os": "linux",
+  "url": "https://singles-toilet-unity-drilling.trycloudflare.com",
+  "deskUrl": "https://singles-toilet-unity-drilling.trycloudflare.com/vnc.html?autoconnect=1&resize=remote",
+  "terminal": "https://singles-toilet-unity-drilling.trycloudflare.com/term/",
+  "auth": "без пароля",
+  "label": "desks",
+  "startedAt": "2026-08-11T18:24:02Z",
+  "state": "live",
+  "runId": "31522293768",
+  "runNumber": "2",
   "repo": "sj0404-collab/eden-symbiosis"
 }
