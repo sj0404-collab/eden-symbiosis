@@ -1,7 +1,13 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-11T18:21:17Z",
-  "runId": "31521732320",
-  "runNumber": "1",
+  "kind": "Стол Windows",
+  "os": "windows",
+  "url": "https://society-carries-trinity-peoples.trycloudflare.com",
+  "deskUrl": "https://society-carries-trinity-peoples.trycloudflare.com/vnc.html?autoconnect=1&resize=remote",
+  "auth": "без пароля",
+  "label": "desks",
+  "startedAt": "2026-08-11T18:30:03Z",
+  "state": "live",
+  "runId": "31522830044",
+  "runNumber": "3",
   "repo": "sj0404-collab/eden-symbiosis"
 }
