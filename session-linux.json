@@ -1,13 +1,6 @@
 {
-  "kind": "Стол Linux",
-  "os": "linux",
-  "url": "https://kids-nest-fallen-nomination.trycloudflare.com",
-  "deskUrl": "https://kids-nest-fallen-nomination.trycloudflare.com/vnc.html?autoconnect=1&resize=scale&quality=6&compression=6&show_dot=true",
-  "terminal": "https://kids-nest-fallen-nomination.trycloudflare.com/term/",
-  "auth": "без пароля",
-  "label": "desks",
-  "startedAt": "2026-08-11T20:26:25Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-11T20:32:42Z",
   "runId": "31532744166",
   "runNumber": "15",
   "repo": "sj0404-collab/eden-symbiosis"
