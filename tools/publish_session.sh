@@ -73,7 +73,17 @@ data.setdefault('state', 'live')
 data['runId'] = os.environ.get('GITHUB_RUN_ID', '')
 data['runNumber'] = os.environ.get('GITHUB_RUN_NUMBER', '')
 data['repo'] = os.environ.get('GITHUB_REPOSITORY', '')
-print(json.dumps(data, ensure_ascii=False, indent=2))
+# Write bytes, not text.
+#
+# Python on the Windows runner defaults stdout to cp1252, and the moment a
+# value contains Cyrillic - "Стол Windows" - print() raises UnicodeEncodeError,
+# the staging file ends up empty and the script reports "nothing to publish"
+# and exits 0. The step goes green and no address is ever published. That is
+# exactly what happened: the Windows desk was up and reachable, and the panel
+# showed nothing. Measured in the run log, not guessed.
+sys.stdout.buffer.write(
+    json.dumps(data, ensure_ascii=False, indent=2).encode('utf-8'))
+sys.stdout.buffer.write(b"\n")
 PY
 
 if [ ! -s "$STAGE" ]; then

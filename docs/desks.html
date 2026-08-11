@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d12">
+<title>Столы — Eden Symbiosis</title>
+<!--
+  Two desks, side by side, opened with one tap and no password.
+
+  WHY THIS PAGE REPLACES rdp.html
+
+  The old page existed to hand an address, a login and a password to Microsoft
+  Remote Desktop, because a browser cannot speak RDP - it is raw TCP, and a web
+  page can only open HTTP and WebSocket. That page worked as designed and the
+  connection still failed: the Windows server answered
+  LOGON_FAILED_UPDATE_PASSWORD through four different ways of creating the
+  account.
+
+  Both desks are now VNC served over HTTP through noVNC, which a browser does
+  understand - so they embed here for real, no client app, nothing to type.
+  Both VNC servers offer security type 1 (None): there is no credential to
+  present, correct or otherwise.
+
+  Everything is inline: no CDN, no build step, works from disk and inside the
+  APK's WebView.
+-->
+<style>
+  :root {
+    --bg:#0d0d12; --panel:#16161f; --line:#262633; --text:#e8e8f0; --dim:#8a8a9e;
+    --pink:#ff2d78; --cyan:#22e0d6; --amber:#ffb020; --red:#ff4d4d; --green:#3fd17a;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body {
+    margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif;
+    padding:14px; padding-bottom:40px;
+  }
+  h1 { font-size:20px; margin:2px 0 2px; }
+  h1 span { color:var(--pink); }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:14px; }
+  .card {
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:14px; margin-bottom:12px;
+  }
+  .card h2 {
+    font-size:13px; margin:0 0 10px; color:var(--cyan);
+    text-transform:uppercase; letter-spacing:.8px;
+  }
+  button {
+    font:inherit; font-weight:600; border:0; border-radius:10px;
+    padding:12px 14px; margin:4px 4px 4px 0; cursor:pointer;
+    background:var(--pink); color:#fff; min-height:46px;
+  }
+  button.ghost { background:transparent; color:var(--cyan); border:1px solid var(--line); }
+  button.small { padding:8px 12px; min-height:38px; font-size:14px; }
+  button:disabled { opacity:.5; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .note { color:var(--dim); font-size:13px; margin-top:8px; }
+  .warn { color:var(--amber); font-size:13px; }
+  .tiles { display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; }
+  .tile {
+    flex:1; min-width:170px; border:1px solid var(--line);
+    border-radius:12px; padding:12px; background:#12121a;
+  }
+  .tile.off { border-style:dashed; opacity:.55; }
+  .tile b { font-size:15px; }
+  .shot {
+    position:relative; height:130px; margin:8px 0;
+    border:1px solid var(--line); border-radius:8px; overflow:hidden; background:#000;
+  }
+  .shot iframe { border:0; width:300%; height:390px; transform:scale(.333); transform-origin:0 0; }
+  .shot .hit { position:absolute; inset:0; cursor:pointer; }
+  .full { width:100%; height:74vh; border:1px solid var(--line); border-radius:12px; background:#000; }
+  code { background:#0a0a10; padding:2px 6px; border-radius:6px; font-size:13px; word-break:break-all; }
+  .ok { color:var(--green); }
+</style>
+</head>
+<body>
+
+<h1>Столы <span>Symbiosis</span></h1>
+<div class="sub">Linux и Windows рядом. Ни у одного нет пароля.</div>
+
+<div class="card">
+  <h2>Состояние</h2>
+  <div id="state"><span class="note">проверяю…</span></div>
+  <div class="row" style="margin-top:8px">
+    <button class="ghost small" onclick="load()">Обновить</button>
+    <button class="ghost small" onclick="location.href='index.html'">Панель</button>
+  </div>
+</div>
+
+<div class="card" id="desks-card" style="display:none">
+  <h2>Открыть</h2>
+  <div id="desks"></div>
+</div>
+
+<div class="card">
+  <h2>Почему без пароля</h2>
+  <div class="note">
+    Раньше Windows отдавался по RDP: адрес, логин, пароль — и отказ
+    <code>LOGON_FAILED_UPDATE_PASSWORD</code> при любом способе завести
+    учётную запись. Теперь оба стола — обычные веб-страницы: VNC предлагает
+    тип безопасности 1 (None), предъявлять нечего. Клиент не нужен, вводить
+    нечего.
+  </div>
+  <div class="note warn">
+    Обратная сторона честно: кто знает адрес — тот управляет столом. Адрес
+    случайный, живёт до конца сессии и не дольше шести часов.
+  </div>
+</div>
+
+<script>
+// The panel keeps the token; this page only needs to read two small files, and
+// on a public repository it can do that without one. With a token it also
+// works on a private repository - the same key the panel already saved.
+const REPO = 'sj0404-collab/eden-symbiosis';
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+function token() {
+  try {
+    const raw = localStorage.getItem('zen_accounts');
+    if (raw) {
+      const a = JSON.parse(raw);
+      const list = Array.isArray(a) ? a : (a.accounts || []);
+      const cur = list.find(x => x && x.token);
+      if (cur) return cur.token;
+    }
+    return localStorage.getItem('zen_token') || '';
+  } catch (e) { return ''; }
+}
+
+async function readSlot(slot) {
+  const url = `https://api.github.com/repos/${REPO}/contents/session-${slot}.json` +
+              `?ref=session-state&t=${Date.now()}`;
+  const h = { Accept: 'application/vnd.github+json' };
+  const t = token();
+  if (t) h.Authorization = 'token ' + t;
+  const r = await fetch(url, { headers: h });
+  if (!r.ok) return null;
+  const j = await r.json();
+  const s = JSON.parse(decodeURIComponent(escape(atob((j.content || '').replace(/\n/g, '')))));
+  // A runner killed hard never clears its file, so a stale entry would
+  // advertise a desk that stopped answering hours ago.
+  const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
+  if (s.state === 'ended' || age > 361) return null;
+  s._age = Math.round(age);
+  return s;
+}
+
+let OPEN = null;
+
+function tile(slot, s, title) {
+  if (!s) return `<div class="tile off"><b>${title}</b>
+    <div class="note">не запущен</div></div>`;
+  const url = s.deskUrl || s.url || '';
+  const left = Math.max(0, 360 - s._age);
+  return `<div class="tile">
+    <b>${title}</b> <span class="ok">без пароля</span>
+    <div class="note">идёт ${s._age} мин · осталось ~${left} мин</div>
+    <div class="shot">
+      <iframe src="${esc(url)}" scrolling="no"
+              sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+      <div class="hit" onclick="openDesk('${slot}')"></div>
+    </div>
+    <div class="row">
+      <button class="small" onclick="openDesk('${slot}')">Открыть</button>
+      <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">Вкладка</button>
+      ${s.terminal ? `<button class="ghost small"
+        onclick="window.open('${esc(s.terminal)}','_blank')">Терминал</button>` : ''}
+    </div>
+  </div>`;
+}
+
+let DESKS = { linux: null, windows: null };
+
+async function load() {
+  $('state').innerHTML = '<span class="note">проверяю…</span>';
+  const [linux, windows] = await Promise.all([readSlot('linux'), readSlot('windows')]);
+  DESKS = { linux, windows };
+
+  const live = [linux && 'Linux', windows && 'Windows'].filter(Boolean);
+  $('state').innerHTML = live.length
+    ? `<span class="ok">работает: ${live.join(' и ')}</span>`
+    : '<span class="note">столы не запущены — поднимите их в панели</span>';
+
+  const card = $('desks-card');
+  if (!linux && !windows) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  if (OPEN && DESKS[OPEN]) {
+    const s = DESKS[OPEN];
+    const other = OPEN === 'linux' ? 'windows' : 'linux';
+    $('desks').innerHTML = `
+      <div class="row" style="margin-bottom:8px">
+        <button class="small">${OPEN === 'linux' ? 'Linux' : 'Windows'}</button>
+        ${DESKS[other] ? `<button class="ghost small" onclick="openDesk('${other}')">
+          ${other === 'linux' ? 'Linux' : 'Windows'}</button>` : ''}
+        <button class="ghost small" onclick="OPEN=null;load()">Оба рядом</button>
+      </div>
+      <iframe class="full" src="${esc(s.deskUrl || s.url)}"
+              sandbox="allow-scripts allow-same-origin allow-forms"></iframe>`;
+  } else {
+    $('desks').innerHTML = `<div class="tiles">
+      ${tile('linux', linux, 'Linux')}
+      ${tile('windows', windows, 'Windows')}
+    </div>`;
+  }
+}
+
+function openDesk(slot) { OPEN = slot; load(); }
+
+load();
+// Poll gently: a desk takes a couple of minutes to appear after it is started
+// from the panel, and refreshing by hand on a phone is a chore.
+setInterval(() => { if (!OPEN) load(); }, 20000);
+</script>
+</body>
+</html>
