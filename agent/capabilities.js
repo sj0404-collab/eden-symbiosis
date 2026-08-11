@@ -444,7 +444,15 @@ $args = $env:CAPABILITY_ARGS | ConvertFrom-Json
 $user = if ($args.user) { [string]$args.user } else { "zenrdp" }
 $port = if ($args.port) { [int]$args.port } else { 3389 }
 $password = if ($args.password) { [string]$args.password } else {
-  -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 14 | ForEach-Object { [char]$_ })
+  # Windows wants three of upper/lower/digit/symbol. Drawing at random from one
+  # pool misses that a few percent of the time and New-LocalUser then throws
+  # InvalidPasswordException - a failure that looks like bad luck, not a bug.
+  # Guarantee the mix, then shuffle.
+  $u = 65..90  | Get-Random -Count 4 | ForEach-Object { [char]$_ }
+  $l = 97..122 | Get-Random -Count 4 | ForEach-Object { [char]$_ }
+  $d = 48..57  | Get-Random -Count 4 | ForEach-Object { [char]$_ }
+  $s = '!@#$%^*-_=+'.ToCharArray() | Get-Random -Count 2
+  -join (($u + $l + $d + $s) | Get-Random -Count 14)
 }
 
 $report = [ordered]@{ user = $user; port = $port }

@@ -551,8 +551,20 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $user = "zenrdp"
-          $password = -join ((48..57) + (65..90) + (97..122) |
-            Get-Random -Count 16 | ForEach-Object { [char]$_ })
+
+          # Windows enforces password complexity: at least three of upper,
+          # lower, digit and symbol. Picking 16 characters at random from one
+          # pool satisfies that almost always - measured, 4 percent of draws do
+          # not, and New-LocalUser then throws InvalidPasswordException and the
+          # whole session fails. A one-in-twenty-five failure is the worst kind:
+          # it looks like bad luck rather than a bug. Take one from each class
+          # explicitly, fill the rest, then shuffle.
+          $upper  = 65..90  | Get-Random -Count 4 | ForEach-Object { [char]$_ }
+          $lower  = 97..122 | Get-Random -Count 4 | ForEach-Object { [char]$_ }
+          $digits = 48..57  | Get-Random -Count 4 | ForEach-Object { [char]$_ }
+          # Symbols kept to ones no shell, URL or RDP client will mangle.
+          $symbols = '!@#$%^*-_=+'.ToCharArray() | Get-Random -Count 2
+          $password = -join (($upper + $lower + $digits + $symbols) | Get-Random -Count 14)
 
           # Remote Desktop is present on the image but switched off, and NLA
           # would reject the fresh local account from most phone clients.
