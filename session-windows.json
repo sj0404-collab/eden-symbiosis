@@ -1,13 +1,13 @@
 {
   "kind": "Стол Windows",
   "os": "windows",
-  "url": "https://laws-agencies-latitude-jacksonville.trycloudflare.com",
-  "deskUrl": "https://laws-agencies-latitude-jacksonville.trycloudflare.com/",
+  "url": "https://potentially-consequences-sequence-visiting.trycloudflare.com",
+  "deskUrl": "https://potentially-consequences-sequence-visiting.trycloudflare.com/",
   "auth": "без пароля",
-  "label": "win",
-  "startedAt": "2026-08-11T19:52:05Z",
+  "label": "desks",
+  "startedAt": "2026-08-11T19:56:49Z",
   "state": "live",
-  "runId": "31529958275",
-  "runNumber": "12",
+  "runId": "31530360792",
+  "runNumber": "13",
   "repo": "sj0404-collab/eden-symbiosis"
 }
