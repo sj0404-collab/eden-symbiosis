@@ -233,8 +233,6 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_applyProfile(JNIEnv* env, jobject,
     return applied;
 }
 
-/// Live thermal state as "state|tempC|gpuClockPercent|summary|advice".
-JNIEXPORT jstring JNICALL
 /**
  * Explains, in one sentence, why a specific ROM will not open.
  *
@@ -338,6 +336,7 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
     return Common::Android::ToJString(env, message);
 }
 
+/// Live thermal state as "state|tempC|gpuClockPercent|summary|advice".
 JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getThermalState(JNIEnv* env, jobject) {
     const auto reading = Symbiosis::GetThermalMonitor().Sample();
