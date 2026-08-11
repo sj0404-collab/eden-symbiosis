@@ -1,13 +1,6 @@
 {
-  "kind": "Стол Linux",
-  "os": "linux",
-  "url": "https://differential-applied-prophet-chuck.trycloudflare.com",
-  "deskUrl": "https://differential-applied-prophet-chuck.trycloudflare.com/vnc.html?autoconnect=1&resize=remote",
-  "terminal": "https://differential-applied-prophet-chuck.trycloudflare.com/term/",
-  "auth": "без пароля",
-  "label": "desks",
-  "startedAt": "2026-08-11T20:21:44Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-11T20:23:59Z",
   "runId": "31532294159",
   "runNumber": "14",
   "repo": "sj0404-collab/eden-symbiosis"
