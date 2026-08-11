@@ -177,6 +177,12 @@
 
 <!-- ══ ACTIONS ══════════════════════════════════════════════════════ -->
 <div class="page" id="p-act">
+  <div class="card" id="watch-card" style="display:none">
+    <h2>Идёт сейчас <button class="ghost small" style="float:right"
+        onclick="toggleWatch()" id="watch-btn">пауза</button></h2>
+    <div id="watch"></div>
+  </div>
+
   <div class="card">
     <h2>Workflow <button class="ghost small" style="float:right"
         onclick="loadActions(true)">Обновить</button></h2>
@@ -453,7 +459,7 @@ function go(p) {
   window.scrollTo(0, 0);
   if (p === 'acc')  loadAccount();
   if (p === 'repo') loadRepos();
-  if (p === 'act')  loadActions();
+  if (p === 'act')  { loadActions(); pollWatch(); }
   if (p === 'sess') refresh();
   if (p === 'apk')  { refresh(); loadPanelApk(); }
 }
@@ -673,6 +679,115 @@ function showFile(f) {
 
 // ── actions ─────────────────────────────────────────────────────────
 let ACT_REPO = ctlRepo();
+
+// ── live progress ───────────────────────────────────────────────────
+//
+// Watching a build meant leaving for github.com and hunting for the running
+// step. This polls the jobs endpoint, which is CORS-open, and shows each step
+// with a tick, a spinner and how long it has taken.
+//
+// It deliberately does not show log text: GitHub only publishes a job's log
+// after the job finishes - the endpoint 404s with BlobNotFound while it runs -
+// so a "live log" here would be an empty box pretending to work. Steps do
+// update in real time, and the link to the real log is one tap away.
+
+let watchTimer = null;
+let watchPaused = false;
+const WATCH_NAMES = ['Build APK', 'Tests', 'Panel APK', 'Zen agent', 'Remote session'];
+
+function fmtSecs(sec) {
+  if (sec < 60) return sec + ' с';
+  const m = Math.floor(sec / 60), r = sec % 60;
+  return m + ' мин' + (r ? ' ' + r + ' с' : '');
+}
+
+function stepIcon(st) {
+  if (st.status === 'in_progress') return '<span style="color:var(--amber)">◐</span>';
+  if (st.status === 'queued' || st.status === 'pending') return '<span style="color:var(--dim)">○</span>';
+  if (st.conclusion === 'success') return '<span style="color:var(--green)">✓</span>';
+  if (st.conclusion === 'skipped') return '<span style="color:var(--dim)">–</span>';
+  return '<span style="color:var(--red)">✕</span>';
+}
+
+function stepSecs(st) {
+  if (!st.started_at) return null;
+  const from = new Date(st.started_at).getTime();
+  const to = st.completed_at ? new Date(st.completed_at).getTime() : Date.now();
+  return Math.max(0, Math.round((to - from) / 1000));
+}
+
+async function pollWatch() {
+  const card = $('watch-card'), box = $('watch');
+  if (!card || !box) return;
+  let runs = [];
+  try { runs = (await api(`${CTL()}/actions/runs?per_page=15`)).workflow_runs || []; }
+  catch (e) { return; }
+
+  const live = runs.filter(r => r.status !== 'completed' && WATCH_NAMES.includes(r.name));
+  if (!live.length) {
+    card.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  card.style.display = '';
+
+  const parts = [];
+  for (const r of live.slice(0, 3)) {
+    let jobs = [];
+    try { jobs = (await api(`${CTL()}/actions/runs/${r.id}/jobs`)).jobs || []; }
+    catch (e) { continue; }
+    for (const j of jobs) {
+      if (j.conclusion === 'skipped') continue;
+      const done = j.steps.filter(x => x.status === 'completed').length;
+      const total = j.steps.length;
+      const cur = j.steps.find(x => x.status === 'in_progress');
+      const elapsed = j.started_at
+        ? Math.round((Date.now() - new Date(j.started_at).getTime()) / 1000) : 0;
+
+      parts.push(`
+        <div style="margin-bottom:12px">
+          <div><b>${esc(r.name)}</b> #${r.run_number} ${pill(r)}
+            <span class="note">· ${fmtSecs(elapsed)} · ${done}/${total}</span></div>
+          <div style="height:6px;background:#22222e;border-radius:99px;margin:6px 0">
+            <div style="height:6px;width:${Math.round(done / Math.max(1, total) * 100)}%;
+                 background:var(--cyan);border-radius:99px;transition:width .4s"></div>
+          </div>
+          ${cur ? `<div class="note" style="margin:0">сейчас: ${esc(cur.name)}
+                    ${stepSecs(cur) != null ? '· ' + fmtSecs(stepSecs(cur)) : ''}</div>` : ''}
+          <details style="margin-top:6px">
+            <summary>все шаги</summary>
+            ${j.steps.map(st => `<div style="font-size:12.5px;padding:2px 0">
+              ${stepIcon(st)} ${esc(st.name)}
+              ${stepSecs(st) != null ? `<span class="note">· ${fmtSecs(stepSecs(st))}</span>` : ''}
+            </div>`).join('')}
+          </details>
+          <div class="row" style="margin-top:6px">
+            <a class="note" href="${esc(r.html_url)}" target="_blank">полный лог на GitHub</a>
+          </div>
+        </div>`);
+    }
+  }
+  box.innerHTML = parts.join('') ||
+    '<span class="note">запуск ставится в очередь…</span>';
+}
+
+function toggleWatch() {
+  watchPaused = !watchPaused;
+  const b = $('watch-btn');
+  if (b) b.textContent = watchPaused ? 'продолжить' : 'пауза';
+  if (!watchPaused) pollWatch();
+}
+
+function startWatching() {
+  if (watchTimer) return;
+  pollWatch();
+  // Five seconds: fast enough to feel live, slow enough that the hourly rate
+  // limit is never in danger even with the Actions tab left open.
+  watchTimer = setInterval(() => {
+    if (!watchPaused && (page === 'act' || page === 'sess')) pollWatch();
+  }, 5000);
+}
+
 async function loadActions(force) {
   $('act-repo').textContent = ACT_REPO;
   const wbox = $('workflows'), rbox = $('runs');
@@ -1143,6 +1258,7 @@ async function refresh() {
 $('act-repo').textContent = ACT_REPO;
 go('sess');
 loadAccount();
+startWatching();
 setInterval(() => { if (page === 'sess') refresh(); }, 30000);
 </script>
 </body>
