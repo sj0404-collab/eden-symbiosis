@@ -68,6 +68,27 @@ else
   git rm -rqf . 2>/dev/null || true
 fi
 
+# Only clear an entry this run owns.
+#
+# Every session calls this with state=ended on the way out, and the file is a
+# single mailbox, so a finishing job would happily stamp "ended" over a
+# different session that is still live - which is what happened: a cancelled
+# agent erased the record of a running desktop, and the panel then reported no
+# session while the desktop was serving fine.
+if grep -q '"state": *"ended"' /tmp/session.json 2>/dev/null && [ -f "$FILE" ]; then
+  OWNER_RUN=$(python3 -c "
+import json,sys
+try:
+    print(json.load(open('$FILE')).get('runId',''))
+except Exception:
+    print('')
+" 2>/dev/null)
+  if [ -n "$OWNER_RUN" ] && [ "$OWNER_RUN" != "${GITHUB_RUN_ID:-}" ]; then
+    echo "publish_session: $FILE belongs to run $OWNER_RUN, not ${GITHUB_RUN_ID:-?} - left alone"
+    exit 0
+  fi
+fi
+
 cp /tmp/session.json "$FILE"
 git config user.email "session@eden-symbiosis"
 git config user.name  "Session state"
