@@ -1,25 +1,31 @@
 name: Desk probe
 
-# Round five. One question: what kills websockify on the Windows runner?
+# Round six. The Windows desk serves, accepts with no password, and shows a
+# BLACK SCREEN. Everything else is proven; this is the last unknown.
 #
-# WHERE THIS STANDS
-#   Round four proved the whole Windows chain works when it all happens inside
-#   a single step: VNC accepts with security type 1 (None), noVNC serves, and
-#   the page answers HTTP 200 through the Cloudflare tunnel from outside.
+# WHAT IS ALREADY FACT, measured on real runners:
+#   * the runner is logged in on the console as runneradmin, session 2, with a
+#     1024x768 display, explorer running, and a genuine Windows Server 2025
+#     desktop - a screenshot taken by a step shows the taskbar and a Notepad
+#     window
+#   * TightVNC accepts with security type 1 (None): no password anywhere
+#   * the page is reachable through a Cloudflare quick tunnel from outside
+#   * a framebuffer captured through that tunnel is 1024x768 and entirely
+#     black - one single colour, checked pixel by pixel
 #
-#   In the real workflow the same chain is split across steps, and the desk
-#   answered 502 - "tunnel up, nothing behind it". cloudflared, started the
-#   same way in a later step, survived. So it is not blanket step teardown:
-#   something specific happens to websockify.
+# So the server is capturing the wrong desktop, or a blanked one. Two
+# candidates, and I do not intend to guess between them again:
 #
-#   Two candidates, and this run distinguishes them:
-#     A. the process is killed when its step ends
-#     B. it crashes later, on its own or on the first real connection
+#   A. run as an APPLICATION, started by the task scheduler. That is what the
+#      workflow does now.
+#   B. run as a SERVICE. I previously wrote off service mode as "session 0, so
+#      blank" - that was reasoning, not measurement, and it may well be
+#      backwards: a VNC service on Windows runs as SYSTEM specifically so it
+#      can attach to whichever desktop is current.
 #
-#   Step 2 starts it. Step 3 - a different step, so a different console - asks
-#   whether it is still alive and prints its log either way. Step 4 hits it
-#   through a tunnel and asks again. Guessing between A and B would cost a
-#   session each time; this costs five minutes once.
+# This job tries both, in order, and after each one captures an actual frame
+# from the server with a real VNC client and counts the distinct colours. One
+# colour means black. The PNGs are uploaded either way.
 
 on:
   workflow_dispatch:
@@ -30,17 +36,39 @@ permissions:
 jobs:
   probe:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
-      - name: Start VNC and websockify
+      - name: Tools and a reference screenshot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          New-Item -ItemType Directory -Force -Path shots | Out-Null
+          python -m pip install --quiet --disable-pip-version-check vncdotool pillow
+
+          # What the session really looks like, captured by this step - the
+          # yardstick every VNC frame below is compared against.
+          Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
+          $bmp.Save("shots\0-reference.png")
+          Write-Host "reference saved, $($b.Width)x$($b.Height)"
+          (query session 2>&1 | Out-String) | Write-Host
+          exit 0
+
+      - name: Install TightVNC
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           curl.exe -sL --retry 3 -o "$env:TEMP\tightvnc.msi" `
             "https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi"
+          # Registered as a service here, because case B needs it and case A can
+          # simply stop it.
           $a = @("/i", "`"$env:TEMP\tightvnc.msi`"", "/quiet", "/norestart",
-                 "ADDLOCAL=Server", "SERVER_REGISTER_AS_SERVICE=0",
+                 "ADDLOCAL=Server", "SERVER_REGISTER_AS_SERVICE=1",
+                 "SERVER_ADD_FIREWALL_EXCEPTION=1",
                  "SET_USEVNCAUTHENTICATION=1", "VALUE_OF_USEVNCAUTHENTICATION=0",
                  "SET_USECONTROLAUTHENTICATION=1", "VALUE_OF_USECONTROLAUTHENTICATION=0")
           Start-Process msiexec -ArgumentList $a -Wait | Out-Null
@@ -52,106 +80,68 @@ jobs:
             Set-ItemProperty -Path $k -Name "LoopbackOnly"             -Value 1 -Type DWord
             Set-ItemProperty -Path $k -Name "UseVncAuthentication"     -Value 0 -Type DWord
             Set-ItemProperty -Path $k -Name "UseControlAuthentication" -Value 0 -Type DWord
+            Set-ItemProperty -Path $k -Name "RemoveWallpaper"          -Value 0 -Type DWord
+            Set-ItemProperty -Path $k -Name "AlwaysShared"             -Value 1 -Type DWord
           }
-          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
+          Write-Host "installed"
 
-          python -m pip install --quiet --disable-pip-version-check websockify
-          curl.exe -sL --retry 3 -o "$env:TEMP\novnc.tgz" `
-            "https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz"
-          New-Item -ItemType Directory -Force -Path "$env:TEMP\novnc" | Out-Null
-          tar -xzf "$env:TEMP\novnc.tgz" -C "$env:TEMP\novnc"
-          $web = Get-ChildItem "$env:TEMP\novnc" -Directory | Select-Object -First 1 -ExpandProperty FullName
-
-          # Three ways of launching the same server, so the survivor is
-          # identified rather than guessed at.
-          #
-          #   6080 - Start-Process, exactly as the real workflow does it
-          #   6081 - the same, but detached from this console's job object via
-          #          cmd /c start, which is the classic way to outlive a step
-          #   6082 - a scheduled task, which the service control manager owns
-          #          and no console teardown can touch
-          Start-Process python -ArgumentList "-m","websockify","--web=`"$web`"","6080","127.0.0.1:5900" `
-            -RedirectStandardOutput "$env:TEMP\ws80.log" -RedirectStandardError "$env:TEMP\ws80.err" `
-            -WindowStyle Hidden
-          "PY_WEB=$web" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-          cmd /c start "" /b python -m websockify --web="$web" 6081 127.0.0.1:5900 `
-            "1>$env:TEMP\ws81.log" "2>$env:TEMP\ws81.err"
-
-          $action = New-ScheduledTaskAction -Execute "python" `
-            -Argument "-m websockify --web=`"$web`" 6082 127.0.0.1:5900"
-          Register-ScheduledTask -TaskName "wsk" -Action $action `
-            -User "SYSTEM" -RunLevel Highest -Force | Out-Null
-          Start-ScheduledTask -TaskName "wsk"
-
+      - name: Case B - as a service
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          Restart-Service tvnserver -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 8
-          foreach ($p in 6080, 6081, 6082) {
-            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:$p/vnc.html")
-            Write-Host "same step, port $p : HTTP $code"
-          }
+          (Get-Service tvnserver | Out-String) | Write-Host
+          (Get-Process tvnserver -ErrorAction SilentlyContinue |
+            Select-Object Id, SessionId | Out-String) | Write-Host
 
-      - name: A different step - who is still alive
-        shell: pwsh
-        run: |
-          Start-Sleep -Seconds 10
-          (Get-Process python -ErrorAction SilentlyContinue |
-            Select-Object Id, SessionId, StartTime | Out-String) | Write-Host
-          foreach ($p in 6080, 6081, 6082) {
-            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:$p/vnc.html")
-            Write-Host "next step, port $p : HTTP $code"
-          }
-          Write-Host "--- ws80 log ---"
-          Get-Content "$env:TEMP\ws80.log","$env:TEMP\ws80.err" -ErrorAction SilentlyContinue | Write-Host
-          Write-Host "--- ws81 log ---"
-          Get-Content "$env:TEMP\ws81.log","$env:TEMP\ws81.err" -ErrorAction SilentlyContinue | Write-Host
+          python -m vncdotool.command -s 127.0.0.1::5900 capture shots\1-service.png 2>&1 | Write-Host
           exit 0
 
-      - name: Reach the survivor from outside, then look again
+      - name: Case A - as an application in the console session
         shell: pwsh
         run: |
-          curl.exe -sL --retry 3 -o "$env:TEMP\cloudflared.exe" `
-            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          $ErrorActionPreference = "Continue"
+          Stop-Service tvnserver -Force -ErrorAction SilentlyContinue
+          Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 3
 
-          # Tunnel whichever port is still answering.
-          $port = $null
-          foreach ($p in 6080, 6081, 6082) {
-            if ((curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:$p/vnc.html") -eq "200") { $port = $p; break }
-          }
-          if (-not $port) { Write-Host "nothing is serving; nothing to tunnel"; exit 0 }
-          Write-Host "tunnelling port $port"
+          $exe = "C:\Program Files\TightVNC\tvnserver.exe"
+          $me  = "$env:USERDOMAIN\$env:USERNAME"
+          schtasks /Create /TN "symbiosis-vnc" /TR "`"$exe`" -run" /SC ONCE /ST 00:00 `
+            /RU $me /IT /F | Out-Null
+          schtasks /Run /TN "symbiosis-vnc" | Out-Null
+          Start-Sleep -Seconds 8
+          (Get-Process tvnserver -ErrorAction SilentlyContinue |
+            Select-Object Id, SessionId | Out-String) | Write-Host
 
-          Start-Process "$env:TEMP\cloudflared.exe" `
-            -ArgumentList "tunnel","--url","http://localhost:$port","--no-autoupdate","--loglevel","info" `
-            -RedirectStandardOutput "$env:TEMP\cf.log" -RedirectStandardError "$env:TEMP\cf.err" -WindowStyle Hidden
-          $url = $null
-          foreach ($try in 1..40) {
-            Start-Sleep -Seconds 2
-            $t = (Get-Content "$env:TEMP\cf.log","$env:TEMP\cf.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
-            if ($t -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
-          }
-          Write-Host "tunnel: $url"
-          foreach ($try in 1..10) {
-            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 20 "$url/vnc.html")
-            Write-Host "outside attempt $try : HTTP $code"
-            if ($code -eq "200") { break }
-            Start-Sleep -Seconds 5
-          }
+          python -m vncdotool.command -s 127.0.0.1::5900 capture shots\2-app.png 2>&1 | Write-Host
           exit 0
 
-      - name: Two minutes later, is it still there
+      - name: Count the colours in each frame
         shell: pwsh
         run: |
-          # The real desk died somewhere between "step 5 said 200" and a client
-          # arriving minutes afterwards. This is the same gap, deliberately.
-          Start-Sleep -Seconds 120
-          foreach ($p in 6080, 6081, 6082) {
-            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:$p/vnc.html")
-            Write-Host "two minutes on, port $p : HTTP $code"
-          }
-          (Get-Process python -ErrorAction SilentlyContinue | Select-Object Id | Out-String) | Write-Host
-          Write-Host "--- ws80 ---"
-          Get-Content "$env:TEMP\ws80.log","$env:TEMP\ws80.err" -Tail 20 -ErrorAction SilentlyContinue | Write-Host
-          Write-Host "--- ws81 ---"
-          Get-Content "$env:TEMP\ws81.log","$env:TEMP\ws81.err" -Tail 20 -ErrorAction SilentlyContinue | Write-Host
+          # One distinct colour means a black rectangle. The reference frame is
+          # there to prove the counting itself is sound.
+          $py = @(
+            'from PIL import Image',
+            'import os, glob',
+            'for f in sorted(glob.glob("shots/*.png")):',
+            '    im = Image.open(f).convert("RGB")',
+            '    cols = im.getcolors(maxcolors=500000)',
+            '    n = len(cols) if cols else 500000',
+            '    print(f"{os.path.basename(f):20s} {im.size}  distinct colours: {n}  ",',
+            '          "BLACK" if n <= 2 else "REAL DESKTOP")'
+          ) -join "`n"
+          $py | Out-File -FilePath count.py -Encoding utf8
+          python count.py
           exit 0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desk-frames
+          path: shots
+          if-no-files-found: warn
