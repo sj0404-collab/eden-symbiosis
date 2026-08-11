@@ -199,19 +199,22 @@
 <!-- ══ SESSIONS ═════════════════════════════════════════════════════ -->
 <div class="page" id="p-sess">
   <div class="card">
-    <h2>Сессия</h2>
+    <h2>Столы</h2>
     <div class="note" style="margin-top:0">
-      Одна сессия на аккаунт. Она сама сохраняет работу в свою ветку и живёт
-      до шести часов.
+      Два стола рядом, оба в браузере и оба без пароля. Живут до шести часов.
     </div>
     <div class="row" style="margin-top:10px">
-      <button id="btn-linux"  onclick="launch('linux')">Linux</button>
-      <button id="btn-windows" onclick="launch('windows')">Windows</button>
-      <button class="ghost" id="btn-agent" onclick="launchAgent()">CLI-агент</button>
+      <button id="btn-both" onclick="launchDesks('both')">Оба стола</button>
+      <button class="ghost" id="btn-linux" onclick="launchDesks('linux')">Только Linux</button>
+      <button class="ghost" id="btn-windows" onclick="launchDesks('windows')">Только Windows</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost small" id="btn-agent" onclick="launchAgent()">CLI-агент</button>
     </div>
     <div class="note">
-      Linux — рабочий стол и терминал. Windows — рабочий стол по RDP.
-      CLI-агент — чат с инструментами; спросит, где его поднять.
+      Linux — XFCE и терминал. Windows — собственный рабочий стол раннера.
+      Клиент не нужен: обе открываются ссылкой. RDP больше не используется —
+      он требовал логин с паролем и всё равно отказывал.
     </div>
     <div id="agent-conflict" class="warn" style="display:none"></div>
   </div>
@@ -706,7 +709,7 @@ let ACT_REPO = ctlRepo();
 
 let watchTimer = null;
 let watchPaused = false;
-const WATCH_NAMES = ['Build APK', 'Tests', 'Panel APK', 'Zen agent', 'Remote session'];
+const WATCH_NAMES = ['Build APK', 'Tests', 'Panel APK', 'Zen agent', 'Remote session', 'Desks'];
 
 function fmtSecs(sec) {
   if (sec < 60) return sec + ' с';
@@ -1116,6 +1119,64 @@ async function launch(os) {
   }
 }
 
+// ── start the desks ─────────────────────────────────────────────────
+//
+// Unlike launch() above, this does NOT stop what is already running. The old
+// rule - one session at a time - existed because free ngrok allows one tunnel,
+// so a second session was unreachable no matter what the panel said.
+// cloudflared quick tunnels have no such limit, which is the whole reason two
+// desks can exist. The Desks workflow runs both as separate jobs of one run.
+async function launchDesks(which) {
+  if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
+
+  const already = (await currentRuns()).filter(
+    r => r.name === 'Desks' && r.status !== 'completed');
+  if (already.length) {
+    if (!confirm(`Столы уже подняты (${mins(already[0].created_at)} мин).\n\n` +
+                 'ОК — остановить и поднять заново.\nОтмена — оставить как есть.')) {
+      await refresh(); return;
+    }
+    for (const r of already) await cancelRun(r.id);
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
+  const id = which === 'both' ? 'btn-both' : which === 'windows' ? 'btn-windows' : 'btn-linux';
+  const btn = $(id);
+  btn.dataset.label = btn.dataset.label || btn.textContent;
+  for (const b of ['btn-both', 'btn-linux', 'btn-windows']) {
+    if ($(b)) $(b).disabled = true;
+  }
+  btn.textContent = 'Поднимаю…';
+  try {
+    const r = await fetch(`${CTL()}/actions/workflows/desks.yml/dispatches`, {
+      method: 'POST', headers: hdr(),
+      body: JSON.stringify({ ref: 'main', inputs: {
+        which,
+        prepare_build: 'false',
+        label: (acct() && acct().login) || 'desks'
+      } })
+    });
+    if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
+
+    // A desk takes two to four minutes to install, tunnel and publish. Poll
+    // rather than promising it is ready: the tile appears the moment the
+    // address lands in the session-state branch.
+    for (let i = 0; i < 90; i++) {
+      await new Promise(res => setTimeout(res, 5000));
+      await loadDesks();
+      if (DESKS.linux || DESKS.windows) break;
+      btn.textContent = `Поднимаю… ${Math.round(i * 5 / 60 * 10) / 10} мин`;
+    }
+    await refresh();
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  } finally {
+    for (const b of ['btn-both', 'btn-linux', 'btn-windows']) {
+      if ($(b)) { $(b).disabled = false; $(b).textContent = $(b).dataset.label || $(b).textContent; }
+    }
+  }
+}
+
 async function launchAgent() {
   if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
   const where = confirm('Где поднять агента?\n\nОК — Linux (2 ядра, умеет собирать APK)\n' +
@@ -1360,6 +1421,7 @@ async function refresh() {
   // firing this off unawaited left refresh() reporting a live session above two
   // cards that were still empty.
   await loadCreds();
+  await loadDesks();
 
   const build = runs.find(r => r.name === 'Build APK' && r.conclusion === 'success');
   const box = $('apk');
