@@ -1,12 +1,6 @@
 {
-  "kind": "Стол Windows",
-  "os": "windows",
-  "url": "https://brown-dividend-genuine-legislature.trycloudflare.com",
-  "deskUrl": "https://brown-dividend-genuine-legislature.trycloudflare.com/",
-  "auth": "без пароля",
-  "label": "desks",
-  "startedAt": "2026-08-11T20:25:09Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-11T20:32:33Z",
   "runId": "31532744166",
   "runNumber": "15",
   "repo": "sj0404-collab/eden-symbiosis"
