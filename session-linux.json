@@ -1,7 +1,14 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-11T19:37:47Z",
-  "runId": "31526664924",
-  "runNumber": "8",
+  "kind": "Стол Linux",
+  "os": "linux",
+  "url": "https://obj-wallpaper-photograph-myrtle.trycloudflare.com",
+  "deskUrl": "https://obj-wallpaper-photograph-myrtle.trycloudflare.com/vnc.html?autoconnect=1&resize=remote",
+  "terminal": "https://obj-wallpaper-photograph-myrtle.trycloudflare.com/term/",
+  "auth": "без пароля",
+  "label": "desks",
+  "startedAt": "2026-08-11T19:40:35Z",
+  "state": "live",
+  "runId": "31528781749",
+  "runNumber": "10",
   "repo": "sj0404-collab/eden-symbiosis"
 }
