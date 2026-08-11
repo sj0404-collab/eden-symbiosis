@@ -1434,4 +1434,11 @@
     <string name="status_driver">Драйвер</string>
     <string name="status_games">Игры</string>
     <string name="status_saves">Сейвы</string>
+    <string name="status_shaders">Шейдеры</string>
+    <string name="status_data_root">Папка данных</string>
+    <string name="status_change_folder">Сменить папку данных</string>
+    <string name="status_folder_changed">Папка данных: %1$s. Перезапусти приложение.</string>
+    <string name="status_folder_failed">Не удалось использовать эту папку: %1$s</string>
+    <string name="folders_open_list">Папки с играми</string>
+    <string name="folder_in_subfolder">в %1$s</string>
 </resources>

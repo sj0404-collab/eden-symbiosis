@@ -2101,4 +2101,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="status_driver">Driver</string>
     <string name="status_games">Games</string>
     <string name="status_saves">Saves</string>
+    <string name="status_shaders">Shaders</string>
+    <string name="status_data_root">Data folder</string>
+    <string name="status_change_folder">Change data folder</string>
+    <string name="status_folder_changed">Data folder: %1$s. Restart the app.</string>
+    <string name="status_folder_failed">Could not use that folder: %1$s</string>
+    <string name="folders_open_list">Game folders</string>
+    <string name="folder_in_subfolder">in %1$s</string>
 </resources>

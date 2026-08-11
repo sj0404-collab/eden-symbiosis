@@ -26,12 +26,20 @@ object SetupStatus {
         val labelRes: Int,
         val present: Boolean,
         /** Where it lives, or why it is missing. Shown under the label. */
-        val detail: String
+        val detail: String,
+        /**
+         * Bytes this item occupies, or null when size is meaningless for it
+         * (the driver is not a file this build owns).
+         *
+         * Kept separate from [detail] so the strip can show "Прошивка ✓ 312 MB"
+         * without the caller parsing a sentence back apart.
+         */
+        val bytes: Long? = null
     )
 
-    /** Keys, firmware, driver, games - in the order they matter. */
+    /** Keys, firmware, driver, games, saves, shader cache - in the order they matter. */
     fun all(context: Context): List<Item> = listOf(
-        keys(), firmware(), driver(), games(context)
+        keys(), firmware(), driver(), games(context), saves(), shaderCache()
     )
 
     private fun root(): String? = runCatching {
@@ -53,7 +61,8 @@ object SetupStatus {
                 !onDisk -> "prod.keys — нет"
                 !loaded -> "prod.keys есть, но не читается"
                 else -> dir ?: ""
-            }
+            },
+            bytes = if (onDisk) GameFolderScanner.directoryBytes(dir) else null
         )
     }
 
@@ -64,7 +73,8 @@ object SetupStatus {
         return Item(
             labelRes = R.string.status_firmware,
             present = available && count > 0,
-            detail = if (count > 0) "$count файлов · ${dir ?: ""}" else "не установлена"
+            detail = if (count > 0) "$count файлов · ${dir ?: ""}" else "не установлена",
+            bytes = if (count > 0) GameFolderScanner.directoryBytes(dir) else null
         )
     }
 
@@ -94,24 +104,64 @@ object SetupStatus {
             return Item(R.string.status_games, false, "папка не выбрана")
         }
         // Count what is really on disk now rather than trusting the library
-        // cache, which is what made a deleted game keep appearing.
+        // cache, which is what made a deleted game keep appearing. One scan
+        // yields both the count and the bytes, so the strip and the folder
+        // screen cannot report different numbers.
         var games = 0
+        var bytes = 0L
         for (dir in dirs) {
-            games += runCatching {
-                GameFolderScanner.listGames(context, dir.uriString).size
-            }.getOrDefault(0)
+            val entries = runCatching {
+                GameFolderScanner.listGames(context, dir.uriString)
+            }.getOrDefault(emptyList())
+            games += entries.size
+            bytes += entries.sumOf { it.bytes }
         }
         val name = GameFolderScanner.displayNameOf(dirs.first().uriString)
         return Item(
             labelRes = R.string.status_games,
             present = games > 0,
             detail = if (dirs.size == 1) "$games в «$name»"
-                     else "$games в ${dirs.size} папках"
+                     else "$games в ${dirs.size} папках",
+            bytes = bytes
+        )
+    }
+
+    /** Save data. Grows quietly and is the thing worth backing up. */
+    fun saves(): Item {
+        val dir = savesPath().takeIf { it != "—" }
+        val bytes = GameFolderScanner.directoryBytes(dir)
+        val profiles = dir?.let { File(it).listFiles()?.size } ?: 0
+        return Item(
+            labelRes = R.string.status_saves,
+            present = bytes > 0,
+            detail = if (bytes > 0) (dir ?: "") else "пусто",
+            bytes = bytes
+        )
+    }
+
+    /**
+     * Compiled shader cache.
+     *
+     * Never "missing" in a way that matters - it rebuilds itself - but it is
+     * often the largest thing on disk after the games, and it is the one item
+     * here that is safe to delete when storage runs out.
+     */
+    fun shaderCache(): Item {
+        val dir = root()?.let { "$it/shader" }
+        val bytes = GameFolderScanner.directoryBytes(dir)
+        return Item(
+            labelRes = R.string.status_shaders,
+            present = true,
+            detail = if (bytes > 0) "можно удалить · ${dir ?: ""}" else "пуст",
+            bytes = bytes
         )
     }
 
     /** Where saves live; worth stating because it moves with the data root. */
     fun savesPath(): String = root()?.let { "$it/nand/user/save" } ?: "—"
+
+    /** The data root every other path is derived from. */
+    fun dataRoot(): String = root() ?: "—"
 
     /** One-line summary for a collapsed strip. */
     fun summary(context: Context): String {

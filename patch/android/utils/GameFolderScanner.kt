@@ -34,18 +34,22 @@ object GameFolderScanner {
     /**
      * Scans every configured game folder.
      *
-     * @param deep when true, descends into subdirectories. Off by default: a
-     *   deep scan of a large SD card is slow, and folders configured with
-     *   deep_scan already say so themselves.
+     * Always descends into subdirectories, regardless of the folder's
+     * `deep_scan` flag. That flag governs what the emulator's own library
+     * importer does; using it here made the count depend on a setting the user
+     * cannot see from this screen, and let the count disagree with the file
+     * list beside it. A storage summary that says "14 games" must mean the same
+     * fourteen files the list can show. [MAX_DIRECTORIES] keeps a pathological
+     * tree from turning that into a hang.
      */
     fun scan(context: Context): List<Folder> {
         val dirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return emptyList()
         return dirs.map { dir ->
-            scanOne(context, dir.uriString, dir.deepScan)
+            scanOne(context, dir.uriString)
         }
     }
 
-    private fun scanOne(context: Context, uriString: String, deep: Boolean): Folder {
+    private fun scanOne(context: Context, uriString: String): Folder {
         val name = displayNameOf(uriString)
         val tree = runCatching { Uri.parse(uriString) }.getOrNull()
             ?: return Folder(uriString, name, 0, 0, unreadable = true)
@@ -85,14 +89,12 @@ object GameFolderScanner {
                     val size = if (it.isNull(3)) 0L else it.getLong(3)
 
                     if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        if (deep) {
-                            runCatching {
-                                queue.add(
-                                    DocumentsContract.buildChildDocumentsUriUsingTree(
-                                        tree, documentId
-                                    )
+                        runCatching {
+                            queue.add(
+                                DocumentsContract.buildChildDocumentsUriUsingTree(
+                                    tree, documentId
                                 )
-                            }
+                            )
                         }
                         continue
                     }
@@ -110,10 +112,22 @@ object GameFolderScanner {
         return Folder(uriString, name, count, bytes, unreadable = !readable)
     }
 
-    data class Entry(val name: String, val bytes: Long)
+    data class Entry(
+        val name: String,
+        val bytes: Long,
+        /** Sub-path below the folder root, empty when the file sits at the top. */
+        val relativePath: String = ""
+    )
 
     /**
-     * Lists the ROMs directly inside one folder.
+     * Lists the ROMs inside one folder.
+     *
+     * Descends into subdirectories, because [scanOne] does. When the two
+     * disagreed the screen said "14 games" and then listed none of them: the
+     * count walked the whole tree while this only ever read the top level, so
+     * a library organised one-folder-per-game - which is the normal way to
+     * keep them - looked empty. Anything the counter counts must be listable,
+     * or the count is a lie.
      *
      * Read at the moment of asking rather than served from the library cache,
      * so a file copied over USB a second ago is listed and one deleted a second
@@ -121,28 +135,51 @@ object GameFolderScanner {
      */
     fun listGames(context: Context, uriString: String): List<Entry> {
         val tree = runCatching { Uri.parse(uriString) }.getOrNull() ?: return emptyList()
-        val children = childrenUriFor(tree) ?: return emptyList()
+        val root = childrenUriFor(tree) ?: return emptyList()
         val out = mutableListOf<Entry>()
-        val cursor = runCatching {
-            context.contentResolver.query(
-                children,
-                arrayOf(
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                    DocumentsContract.Document.COLUMN_MIME_TYPE,
-                    DocumentsContract.Document.COLUMN_SIZE
-                ),
-                null, null, null
-            )
-        }.getOrNull() ?: return emptyList()
 
-        cursor.use {
-            while (it.moveToNext()) {
-                val name = it.getString(0) ?: continue
-                val mime = it.getString(1) ?: ""
-                val size = if (it.isNull(2)) 0L else it.getLong(2)
-                if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
-                if (name.substringAfterLast('.', "").lowercase(Locale.ROOT) in ROM_EXTENSIONS) {
-                    out.add(Entry(name, size))
+        // Same iterative walk and the same guard as the counter, so the two
+        // cannot drift apart again.
+        val queue = ArrayDeque<Pair<Uri, String>>()
+        queue.add(root to "")
+        var guard = 0
+
+        while (queue.isNotEmpty() && guard < MAX_DIRECTORIES) {
+            guard++
+            val (children, prefix) = queue.removeFirst()
+            val cursor = runCatching {
+                context.contentResolver.query(
+                    children,
+                    arrayOf(
+                        DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                        DocumentsContract.Document.COLUMN_MIME_TYPE,
+                        DocumentsContract.Document.COLUMN_SIZE
+                    ),
+                    null, null, null
+                )
+            }.getOrNull() ?: continue
+
+            cursor.use {
+                while (it.moveToNext()) {
+                    val documentId = it.getString(0)
+                    val name = it.getString(1) ?: continue
+                    val mime = it.getString(2) ?: ""
+                    val size = if (it.isNull(3)) 0L else it.getLong(3)
+
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        runCatching {
+                            queue.add(
+                                DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId)
+                                    to if (prefix.isEmpty()) name else "$prefix/$name"
+                            )
+                        }
+                        continue
+                    }
+
+                    if (name.substringAfterLast('.', "").lowercase(Locale.ROOT) in ROM_EXTENSIONS) {
+                        out.add(Entry(name, size, prefix))
+                    }
                 }
             }
         }
@@ -161,6 +198,34 @@ object GameFolderScanner {
         val decoded = runCatching { Uri.decode(uriString) }.getOrDefault(uriString)
         val tail = decoded.substringAfterLast(':', decoded.substringAfterLast('/'))
         return tail.substringAfterLast('/').ifBlank { decoded }
+    }
+
+    /**
+     * Total bytes under a plain filesystem directory.
+     *
+     * Keys, firmware, saves and the shader cache live in the data root as
+     * ordinary files, not behind a document tree, so they are measured with
+     * [java.io.File] rather than the content resolver. Returns 0 for a missing
+     * directory, which is the honest answer for "nothing installed".
+     */
+    fun directoryBytes(path: String?): Long {
+        if (path.isNullOrBlank()) return 0L
+        val root = java.io.File(path)
+        if (!root.exists()) return 0L
+        if (root.isFile) return root.length()
+
+        var total = 0L
+        var guard = 0
+        val queue = ArrayDeque<java.io.File>()
+        queue.add(root)
+        while (queue.isNotEmpty() && guard < MAX_DIRECTORIES) {
+            guard++
+            val entries = queue.removeFirst().listFiles() ?: continue
+            for (entry in entries) {
+                if (entry.isDirectory) queue.add(entry) else total += entry.length()
+            }
+        }
+        return total
     }
 
     /** Formats bytes the way a storage screen would. */

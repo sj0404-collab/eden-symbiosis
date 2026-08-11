@@ -105,8 +105,12 @@ class GameFoldersFragment : Fragment() {
             val body = if (entries.isEmpty()) {
                 getString(R.string.folder_empty)
             } else {
-                entries.joinToString("\n") {
-                    "${it.name}  —  ${GameFolderScanner.humanSize(it.bytes)}"
+                // Show the sub-path when there is one: with games kept one per
+                // folder, a bare filename does not say where it came from.
+                entries.joinToString("\n") { entry ->
+                    val where = if (entry.relativePath.isEmpty()) ""
+                                else "  (" + entry.relativePath + ")"
+                    "${entry.name}$where  —  ${GameFolderScanner.humanSize(entry.bytes)}"
                 }
             }
 

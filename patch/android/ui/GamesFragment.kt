@@ -22,7 +22,9 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.yuzu.yuzu_emu.utils.GameFolderScanner
 import org.yuzu.yuzu_emu.utils.SetupStatus
+import org.yuzu.yuzu_emu.utils.SharedDataDirectory
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.core.widget.doOnTextChanged
@@ -39,6 +41,7 @@ import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.YuzuApplication
 import org.yuzu.yuzu_emu.adapters.GameAdapter
+import org.yuzu.yuzu_emu.adapters.GameFolderAdapter
 import org.yuzu.yuzu_emu.databinding.FragmentGamesBinding
 import org.yuzu.yuzu_emu.features.settings.model.BooleanSetting
 import org.yuzu.yuzu_emu.model.AppletInfo
@@ -84,6 +87,52 @@ class GamesFragment : Fragment() {
             if (result != null) {
                 mainActivity.processGamesDir(result, true)
             }
+        }
+
+    /**
+     * Picks the data root: firmware, keys, saves and shader cache.
+     *
+     * "Eden Debug" was hard-coded as the only visible default, which is wrong
+     * for anyone whose existing install sits in "Eden", "eden-emu" or a folder
+     * of their own naming - they were told to use a folder they do not have.
+     * The chosen path is validated before it is committed, and what was found
+     * inside is reported, because "I picked a folder and nothing happened" is
+     * the failure mode worth avoiding.
+     */
+    private val getDataDirectory =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            val ctx = context ?: return@registerForActivityResult
+            val path = SharedDataDirectory.resolveTreePath(uri)
+            if (path == null) {
+                Toast.makeText(
+                    ctx,
+                    getString(R.string.status_folder_failed, uri.toString()),
+                    Toast.LENGTH_LONG
+                ).show()
+                return@registerForActivityResult
+            }
+            val check = SharedDataDirectory.inspect(ctx, path)
+            if (!check.ok) {
+                Toast.makeText(
+                    ctx,
+                    getString(R.string.status_folder_failed, check.verdict.name),
+                    Toast.LENGTH_LONG
+                ).show()
+                return@registerForActivityResult
+            }
+            SharedDataDirectory.configuredPath = path
+            // Apply it to the running process, so the strip below answers about
+            // the folder just chosen rather than the previous one. Falls back to
+            // "restart the app" only when the redirect itself fails.
+            val applied = SharedDataDirectory.redirectNow(path)
+            Toast.makeText(
+                ctx,
+                if (applied) path else getString(R.string.status_folder_changed, path),
+                Toast.LENGTH_LONG
+            ).show()
+            refreshStatusStrip()
+            refreshFolderCards()
         }
 
     private fun getCurrentViewType(): Int {
@@ -197,11 +246,23 @@ class GamesFragment : Fragment() {
         // Status strip. Refreshed in onResume too, because keys and firmware are
         // usually installed from another screen and the answer changes while
         // this one is in the background.
-        binding.statusStrip?.setOnClickListener {
-            val paths = binding.statusPaths ?: return@setOnClickListener
-            paths.isVisible = !paths.isVisible
+        // The strip no longer hides its own detail - tapping it now refreshes,
+        // which is what a user pokes a status line for when it looks stale.
+        binding.statusStrip?.setOnClickListener { refreshStatusStrip() }
+
+        // A plain button. The folder list used to be reachable only by long
+        // pressing "+" or by digging through the Tools tab, which is to say:
+        // not discoverable at all.
+        binding.foldersButton?.setOnClickListener {
+            findNavController().navigate(R.id.action_global_symbiosisGameFoldersFragment)
         }
+
+        binding.dataRootButton?.setOnClickListener {
+            getDataDirectory.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).data)
+        }
+
         refreshStatusStrip()
+        refreshFolderCards()
 
         binding.toolsButton?.setOnClickListener {
             findNavController().navigate(R.id.action_global_toolsFragment)
@@ -287,7 +348,10 @@ class GamesFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        if (_binding != null) refreshStatusStrip()
+        if (_binding != null) {
+            refreshStatusStrip()
+            refreshFolderCards()
+        }
         if (getCurrentViewType() == GameAdapter.VIEW_TYPE_CAROUSEL) {
             (binding.gridGames as? CarouselRecyclerView)?.setupCarousel(true)
             (binding.gridGames as? CarouselRecyclerView)?.restoreScrollState(gamesViewModel.lastScrollPosition)
@@ -496,17 +560,62 @@ class GamesFragment : Fragment() {
             } ?: return@launch
             if (_binding == null) return@launch
 
-            line.text = items.joinToString(" · ") {
-                getString(it.labelRes) + (if (it.present) " ✓" else " ✕")
+            // Summary line: name, tick and size. A bare tick told the user
+            // that four unnamed things had a state, which is not information.
+            line.text = items.joinToString(" · ") { item ->
+                val size = item.bytes?.takeIf { it > 0 }
+                    ?.let { " " + GameFolderScanner.humanSize(it) } ?: ""
+                getString(item.labelRes) + (if (item.present) " ✓" else " ✕") + size
             }
 
+            // Detail block, always visible: what each item is, where it lives
+            // and what it weighs.
             binding.statusPaths?.text = buildString {
                 for (item in items) {
                     append(getString(item.labelRes)).append(": ")
-                        .append(item.detail).append('\n')
+                        .append(item.detail)
+                    item.bytes?.takeIf { it > 0 }?.let {
+                        append(" · ").append(GameFolderScanner.humanSize(it))
+                    }
+                    append('\n')
                 }
-                append(getString(R.string.status_saves)).append(": ")
-                    .append(SetupStatus.savesPath())
+                append(getString(R.string.status_data_root)).append(": ")
+                    .append(SetupStatus.dataRoot())
+            }
+        }
+    }
+
+    /**
+     * Folder cards on the games screen itself.
+     *
+     * The dedicated screen still exists and shows the same data, but reaching
+     * it meant a long press on "+" or a trip through the Tools tab - neither
+     * of which anyone finds. Storage is the scarce resource on this device, so
+     * "which folders, how many games, how many gigabytes" belongs where the
+     * games are.
+     */
+    private fun refreshFolderCards() {
+        val list = binding.folderCards ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val ctx = requireContext()
+            val folders = withContext(Dispatchers.IO) {
+                runCatching { GameFolderScanner.scan(ctx) }.getOrDefault(emptyList())
+            }
+            if (_binding == null) return@launch
+
+            list.isVisible = folders.isNotEmpty()
+            if (folders.isEmpty()) return@launch
+
+            if (list.layoutManager == null) {
+                list.layoutManager = LinearLayoutManager(ctx, LinearLayoutManager.HORIZONTAL, false)
+            }
+            list.adapter = GameFolderAdapter(
+                requireActivity() as androidx.appcompat.app.AppCompatActivity,
+                folders
+            ) {
+                // Tapping a card opens the full screen, where the file list
+                // lives - the same destination as the button.
+                findNavController().navigate(R.id.action_global_symbiosisGameFoldersFragment)
             }
         }
     }
