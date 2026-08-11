@@ -1,16 +1,28 @@
 name: Desk probe
 
-# Answers one question with facts instead of guesses: does a windows-latest
-# runner have a real, visible desktop that a VNC server can capture?
+# Round three. What the first two established, as facts from a real runner:
 #
-# Everything about the passwordless Windows desk depends on it. If the runner
-# process lives in session 0 with no interactive window station, a VNC server
-# will happily start, the tunnel will open, and the browser will show a black
-# rectangle - which is exactly the kind of failure that costs a full session to
-# discover. Ten minutes here, once, instead.
+#   * windows-latest logs in as runneradmin on the CONSOLE, session 2, with
+#     explorer running and a 1024x768 display. Screenshots show the real
+#     Windows Server 2025 desktop with the taskbar and a Notepad window. So a
+#     desk is possible; the runner is not a headless session-0 box.
+#   * TightVNC installs and listens on 5900.
+#   * python and websockify install fine.
 #
-# The job screenshots the desktop before and after starting a GUI app and
-# uploads both as artifacts.
+# What went wrong, also measured:
+#
+#   * The VNC server ANSWERED THE HANDSHAKE WITH A REJECTION: the security-type
+#     count byte was 0, followed by a 43-character reason that got truncated at
+#     "Sor" because the probe only read 8 bytes. Almost certainly the classic
+#     "no valid password enabled" refusal - TightVNC declines to serve when
+#     authentication is on but no password exists. This round reads the whole
+#     string instead of assuming.
+#   * cloudflared could not be downloaded: RemoteCertificateNameMismatch on the
+#     github.com redirect to objects.githubusercontent.com. Retried here with
+#     curl.exe, which ships with Windows and does not use the .NET chain.
+#
+# The point of this round is to get both answers before writing them into the
+# real workflow, because a wrong guess costs a whole session.
 
 on:
   workflow_dispatch:
@@ -24,182 +36,174 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Who and where this step runs
-        shell: pwsh
-        run: |
-          Write-Host "whoami: $(whoami)"
-          Write-Host "process session id: $((Get-Process -Id $PID).SessionId)"
-          Write-Host "--- query session ---"
-          (query session 2>&1 | Out-String)
-          Write-Host "--- query user ---"
-          (query user 2>&1 | Out-String)
-          Write-Host "--- explorer ---"
-          $ex = Get-Process explorer -ErrorAction SilentlyContinue
-          if ($ex) { ($ex | Select-Object Id, SessionId | Out-String) } else { Write-Host "no explorer running" }
-          Write-Host "--- screens ---"
-          Add-Type -AssemblyName System.Windows.Forms
-          foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
-            Write-Host "screen $($s.DeviceName) $($s.Bounds)"
-          }
-          # query.exe returns non-zero even when it printed what was asked, and
-          # the pwsh wrapper turns a stray $LASTEXITCODE into a failed step.
-          exit 0
-
-      - name: Screenshot the bare desktop
-        shell: pwsh
-        run: |
-          # CopyFromScreen throws when the process has no desktop to read, so a
-          # thrown exception is itself an answer, not a failure of the probe.
-          $ErrorActionPreference = "Continue"
-          New-Item -ItemType Directory -Force -Path shots | Out-Null
-          try {
-            Add-Type -AssemblyName System.Drawing
-            Add-Type -AssemblyName System.Windows.Forms
-            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
-            Write-Host "virtual screen: $b"
-            $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
-            $bmp.Save("shots\1-bare.png")
-            Write-Host "saved 1-bare.png"
-          } catch {
-            Write-Host "screenshot failed: $($_.Exception.Message)"
-          }
-
-      - name: Start a GUI app and screenshot again
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          Start-Process notepad
-          Start-Sleep -Seconds 5
-          $np = Get-Process notepad -ErrorAction SilentlyContinue
-          if ($np) {
-            Write-Host ("notepad pid {0} session {1} mainWindow '{2}'" -f `
-              $np.Id, $np.SessionId, $np.MainWindowTitle)
-          } else {
-            Write-Host "notepad did not start"
-          }
-          try {
-            Add-Type -AssemblyName System.Drawing
-            Add-Type -AssemblyName System.Windows.Forms
-            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
-            $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
-            $bmp.Save("shots\2-notepad.png")
-            Write-Host "saved 2-notepad.png"
-          } catch {
-            Write-Host "screenshot failed: $($_.Exception.Message)"
-          }
-
-      - name: Install TightVNC with authentication switched off
+      - name: Install TightVNC and switch authentication off everywhere
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
           $msi = "$env:TEMP\tightvnc.msi"
-          Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 `
-            -Uri "https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi" `
-            -OutFile $msi
-          Write-Host "downloaded $((Get-Item $msi).Length) bytes"
+          curl.exe -sL --retry 3 -o $msi `
+            "https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi"
+          Write-Host "msi: $((Get-Item $msi).Length) bytes"
 
-          # VALUE_OF_USEVNCAUTHENTICATION=0 is the whole point: no password on
-          # the desk at all. Installed as a service first; whether a service in
-          # session 0 can see the desktop is what the screenshots will tell.
-          $args = @(
+          $a = @(
             "/i", "`"$msi`"", "/quiet", "/norestart",
             "ADDLOCAL=Server",
-            "SERVER_REGISTER_AS_SERVICE=1",
+            "SERVER_REGISTER_AS_SERVICE=0",
             "SERVER_ADD_FIREWALL_EXCEPTION=1",
             "SET_USEVNCAUTHENTICATION=1", "VALUE_OF_USEVNCAUTHENTICATION=0",
             "SET_USECONTROLAUTHENTICATION=1", "VALUE_OF_USECONTROLAUTHENTICATION=0",
             "SET_ALLOWLOOPBACK=1", "VALUE_OF_ALLOWLOOPBACK=1"
           )
-          $p = Start-Process msiexec -ArgumentList $args -Wait -PassThru
+          $p = Start-Process msiexec -ArgumentList $a -Wait -PassThru
           Write-Host "msiexec exit: $($p.ExitCode)"
 
-          # Run the server as an application in this session, not as a service.
-          # The runner logs in on the console as runneradmin in session 2 with a
-          # real 1024x768 display and explorer running - measured, in the probe
-          # before this one. A service would sit in session 0 and serve a blank
-          # desktop; an application started here shares the session that has the
-          # screen.
-          Stop-Service tvnserver -ErrorAction SilentlyContinue
-          $exe = "C:\Program Files\TightVNC\tvnserver.exe"
-          if (Test-Path $exe) {
-            Start-Process $exe -ArgumentList "-run" -WindowStyle Hidden
-            Start-Sleep -Seconds 6
-            (Get-Process tvnserver -ErrorAction SilentlyContinue |
-              Select-Object Id, SessionId | Out-String) | Write-Host
-          } else { Write-Host "tvnserver.exe not where expected" }
-          Start-Sleep -Seconds 5
-          Get-Service tvnserver -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String | Write-Host
-          (Get-NetTCPConnection -State Listen -LocalPort 5900 -ErrorAction SilentlyContinue | Out-String)
+          # Write the settings into every place TightVNC might read them. The
+          # 64-bit build uses HKLM\SOFTWARE\TightVNC\Server, but a 32-bit
+          # installer lands in Wow6432Node, and a server running as a logged-in
+          # application also consults HKCU. Setting all three costs nothing and
+          # removes a whole class of "the flag was right and it still refused".
+          $keys = @(
+            "HKLM:\SOFTWARE\TightVNC\Server",
+            "HKLM:\SOFTWARE\Wow6432Node\TightVNC\Server",
+            "HKCU:\SOFTWARE\TightVNC\Server"
+          )
+          foreach ($k in $keys) {
+            New-Item -Path $k -Force | Out-Null
+            Set-ItemProperty -Path $k -Name "UseVncAuthentication"     -Value 0 -Type DWord
+            Set-ItemProperty -Path $k -Name "UseControlAuthentication" -Value 0 -Type DWord
+            Set-ItemProperty -Path $k -Name "QueryAllowNoPass"         -Value 1 -Type DWord
+            Set-ItemProperty -Path $k -Name "QuerySetting"             -Value 0 -Type DWord
+            Set-ItemProperty -Path $k -Name "LoopbackOnly"             -Value 1 -Type DWord
+            Set-ItemProperty -Path $k -Name "AcceptHttpConnections"    -Value 0 -Type DWord
+            Set-ItemProperty -Path $k -Name "AlwaysShared"             -Value 1 -Type DWord
+            Write-Host "configured $k"
+          }
 
-      - name: Ask the VNC server what it offers, over the wire
+          Stop-Service tvnserver -ErrorAction SilentlyContinue
+          Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          $exe = "C:\Program Files\TightVNC\tvnserver.exe"
+          Start-Process $exe -ArgumentList "-run" -WindowStyle Hidden
+          Start-Sleep -Seconds 6
+          (Get-Process tvnserver -ErrorAction SilentlyContinue |
+            Select-Object Id, SessionId | Out-String) | Write-Host
+          exit 0
+
+      - name: Read the whole handshake, including any refusal text
         shell: pwsh
         run: |
-          # A handshake proves two things at once: the server is listening, and
-          # security type 1 (None) is on offer - meaning no password.
-          try {
+          $ErrorActionPreference = "Continue"
+          function Probe-Vnc {
             $c = New-Object System.Net.Sockets.TcpClient
             $c.Connect("127.0.0.1", 5900)
             $s = $c.GetStream()
+            $s.ReadTimeout = 8000
             $buf = New-Object byte[] 12
             $n = $s.Read($buf, 0, 12)
-            Write-Host "server banner: $([System.Text.Encoding]::ASCII.GetString($buf,0,$n).Trim())"
+            Write-Host "banner: $([System.Text.Encoding]::ASCII.GetString($buf,0,$n).Trim())"
             $ver = [System.Text.Encoding]::ASCII.GetBytes("RFB 003.008`n")
             $s.Write($ver, 0, $ver.Length)
-            $sec = New-Object byte[] 8
-            $m = $s.Read($sec, 0, 8)
-            Write-Host "security bytes: $(($sec[0..([Math]::Max($m-1,0))] | ForEach-Object { $_ }) -join ',')"
-            Write-Host "(count then types; type 1 = None = no password, 2 = VNC auth)"
+
+            $one = New-Object byte[] 1
+            $s.Read($one, 0, 1) | Out-Null
+            $count = $one[0]
+            if ($count -eq 0) {
+              # A zero count means refusal: a 4-byte big-endian length follows,
+              # then the reason. Reading only 8 bytes last time is why the text
+              # was truncated to "Sor".
+              $len4 = New-Object byte[] 4
+              $s.Read($len4, 0, 4) | Out-Null
+              [Array]::Reverse($len4)
+              $len = [BitConverter]::ToInt32($len4, 0)
+              $msg = New-Object byte[] $len
+              $got = 0
+              while ($got -lt $len) {
+                $r = $s.Read($msg, $got, $len - $got)
+                if ($r -le 0) { break }
+                $got += $r
+              }
+              Write-Host "REFUSED ($len chars): $([System.Text.Encoding]::ASCII.GetString($msg,0,$got))"
+            } else {
+              $types = New-Object byte[] $count
+              $s.Read($types, 0, $count) | Out-Null
+              Write-Host "ACCEPTED - security types: $($types -join ',')  (1 = None = no password)"
+            }
             $c.Close()
-          } catch {
-            Write-Host "handshake failed: $($_.Exception.Message)"
           }
-
-      - name: Screenshot what the VNC service itself sees
-        shell: pwsh
-        run: |
-          # tvnserver -controlservice cannot screenshot, so instead capture the
-          # desktop again after the service is up: if the service is stuck on a
-          # blank session-0 desktop, a GUI app started earlier will be missing
-          # from this shot too.
-          $ErrorActionPreference = "Continue"
-          try {
-            Add-Type -AssemblyName System.Drawing
-            Add-Type -AssemblyName System.Windows.Forms
-            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
-            $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
-            $bmp.Save("shots\3-after-vnc.png")
-            Write-Host "saved 3-after-vnc.png"
-          } catch {
-            Write-Host "screenshot failed: $($_.Exception.Message)"
-          }
-
-      - name: Can Python serve websockify here
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          python --version
-          python -m pip install --quiet websockify
-          if ($LASTEXITCODE -eq 0) { Write-Host "websockify installed" } else { Write-Host "pip failed: $LASTEXITCODE" }
-
-      - name: Does cloudflared run here without an account
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 `
-            -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
-            -OutFile "$env:TEMP\cloudflared.exe"
-          & "$env:TEMP\cloudflared.exe" --version
+          try { Probe-Vnc } catch { Write-Host "probe failed: $($_.Exception.Message)" }
           exit 0
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: desk-probe-shots
-          path: shots
-          if-no-files-found: warn
+      - name: If it refused, set an empty password and ask again
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          # TightVNC stores the password obfuscated with a fixed DES key. An
+          # all-zero blob is what the installer writes for "no password", and
+          # some builds treat a MISSING value as "not configured" while an
+          # empty one is accepted. Try that before concluding anything.
+          $keys = @(
+            "HKLM:\SOFTWARE\TightVNC\Server",
+            "HKLM:\SOFTWARE\Wow6432Node\TightVNC\Server",
+            "HKCU:\SOFTWARE\TightVNC\Server"
+          )
+          $blank = [byte[]](0,0,0,0,0,0,0,0)
+          foreach ($k in $keys) {
+            Set-ItemProperty -Path $k -Name "Password"        -Value $blank -Type Binary
+            Set-ItemProperty -Path $k -Name "PasswordViewOnly" -Value $blank -Type Binary
+          }
+          Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
+          Start-Sleep -Seconds 6
+
+          $c = New-Object System.Net.Sockets.TcpClient
+          try {
+            $c.Connect("127.0.0.1", 5900)
+            $s = $c.GetStream(); $s.ReadTimeout = 8000
+            $buf = New-Object byte[] 12; $s.Read($buf,0,12) | Out-Null
+            $s.Write([System.Text.Encoding]::ASCII.GetBytes("RFB 003.008`n"), 0, 12)
+            $one = New-Object byte[] 1; $s.Read($one,0,1) | Out-Null
+            if ($one[0] -eq 0) {
+              $len4 = New-Object byte[] 4; $s.Read($len4,0,4) | Out-Null
+              [Array]::Reverse($len4); $len = [BitConverter]::ToInt32($len4,0)
+              $msg = New-Object byte[] $len; $got = 0
+              while ($got -lt $len) { $r = $s.Read($msg,$got,$len-$got); if ($r -le 0) { break }; $got += $r }
+              Write-Host "STILL REFUSED: $([System.Text.Encoding]::ASCII.GetString($msg,0,$got))"
+            } else {
+              $t = New-Object byte[] $one[0]; $s.Read($t,0,$one[0]) | Out-Null
+              Write-Host "NOW ACCEPTED - security types: $($t -join ',')"
+            }
+            $c.Close()
+          } catch { Write-Host "second probe failed: $($_.Exception.Message)" }
+          exit 0
+
+      - name: Try UltraVNC as a second option
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          # If TightVNC insists on a password, UltraVNC does not: it has an
+          # explicit "no authentication" mode. Downloaded with curl.exe because
+          # Invoke-WebRequest failed the certificate chain on this image.
+          curl.exe -sL --retry 3 -o "$env:TEMP\uvnc.exe" `
+            "https://uvnc.eu/download/1400/UltraVNC_1_4_60_X64_Setup.exe"
+          if (Test-Path "$env:TEMP\uvnc.exe") {
+            Write-Host "ultravnc installer: $((Get-Item "$env:TEMP\uvnc.exe").Length) bytes"
+          } else { Write-Host "ultravnc download failed" }
+          exit 0
+
+      - name: Download cloudflared the way that works here
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          # Invoke-WebRequest died on RemoteCertificateNameMismatch following
+          # the redirect to objects.githubusercontent.com. curl.exe ships with
+          # Windows and uses the OS certificate store.
+          curl.exe -sL --retry 3 -o "$env:TEMP\cloudflared.exe" `
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          if (Test-Path "$env:TEMP\cloudflared.exe") {
+            Write-Host "size: $((Get-Item "$env:TEMP\cloudflared.exe").Length)"
+            & "$env:TEMP\cloudflared.exe" --version
+          } else {
+            Write-Host "curl.exe could not fetch cloudflared either"
+          }
+          exit 0
