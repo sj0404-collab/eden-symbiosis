@@ -635,15 +635,42 @@ jobs:
             Write-Host "created the account $user"
           }
 
-          # PasswordExpired $false is the part that clears the flag; the WMI
-          # call is the belt-and-braces version for images where the cmdlet
-          # silently leaves it set.
+          # Clear "must change password at next logon".
+          #
+          # PasswordNeverExpires is a different flag - it governs ageing, not
+          # the change-on-next-logon demand - so setting it alone left the
+          # account still demanding a change, and the client still saw
+          # LOGON_FAILED_UPDATE_PASSWORD. The property that matters is
+          # PasswordExpired, and Set-LocalUser only exposes it via
+          # -PasswordNeverExpires on some builds, so set it directly through
+          # the .NET account object and confirm with net user.
           Set-LocalUser -Name $user -PasswordNeverExpires $true
           try {
-            $wmiUser = Get-WmiObject Win32_UserAccount -Filter "Name='$user' AND LocalAccount=True"
-            if ($wmiUser) { $wmiUser.PasswordExpires = $false; $wmiUser.Put() | Out-Null }
-          } catch { }
+            Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+            $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext `
+              ([System.DirectoryServices.AccountManagement.ContextType]::Machine)
+            $up = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($ctx, $user)
+            if ($up) {
+              $up.PasswordNeverExpires = $true
+              $up.Save()
+              # Refresh the password without the change-at-logon side effect.
+              $up.SetPassword($password)
+              $up.Save()
+              Write-Host "password reset through AccountManagement"
+            }
+          } catch { Write-Host "AccountManagement path failed: $($_.Exception.Message)" }
+
+          # The ADSI flag is the one Windows actually consults for the prompt:
+          # pwdLastSet = -1 means "the password was just set, do not ask".
+          try {
+            $adsi = [ADSI]"WinNT://./$user,user"
+            $adsi.Put("PasswordExpired", 0)
+            $adsi.SetInfo()
+            Write-Host "PasswordExpired cleared via ADSI"
+          } catch { Write-Host "ADSI path failed: $($_.Exception.Message)" }
+
           net user $user /logonpasswordchg:no | Out-Null
+          net user $user /expires:never | Out-Null
 
           Add-LocalGroupMember -Group "Administrators" -Member $user -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user -ErrorAction SilentlyContinue
