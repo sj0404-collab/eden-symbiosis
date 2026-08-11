@@ -1,28 +1,25 @@
 name: Desk probe
 
-# Round four, and the last one: everything below is now checking a fix rather
-# than hunting a cause.
+# Round five. One question: what kills websockify on the Windows runner?
 #
-# WHAT THE FIRST THREE ROUNDS ESTABLISHED, as facts from real runners:
+# WHERE THIS STANDS
+#   Round four proved the whole Windows chain works when it all happens inside
+#   a single step: VNC accepts with security type 1 (None), noVNC serves, and
+#   the page answers HTTP 200 through the Cloudflare tunnel from outside.
 #
-#   1. windows-latest is logged in on the CONSOLE as runneradmin, session 2,
-#      with explorer running and a 1024x768 display. Screenshots show the real
-#      Windows Server 2025 desktop, taskbar and all. A desk is possible.
-#   2. TightVNC installs, runs in session 2, listens on 5900.
-#   3. The refusal had NOTHING to do with passwords. Read in full, it says:
+#   In the real workflow the same chain is split across steps, and the desk
+#   answered 502 - "tunnel up, nothing behind it". cloudflared, started the
+#   same way in a later step, survived. So it is not blanket step teardown:
+#   something specific happens to websockify.
 #
-#          Sorry, loopback connections are not enabled
+#   Two candidates, and this run distinguishes them:
+#     A. the process is killed when its step ends
+#     B. it crashes later, on its own or on the first real connection
 #
-#      I had set LoopbackOnly=1, which restricts connections to loopback, and
-#      never set AllowLoopback=1, which permits them in the first place. Two
-#      settings with confusingly similar names; the server was refusing my own
-#      probe for connecting from 127.0.0.1, not for lacking a credential.
-#   4. Invoke-WebRequest fails on this image with RemoteCertificateNameMismatch
-#      when GitHub redirects to objects.githubusercontent.com. curl.exe, which
-#      ships with Windows, fetched the same 54 MB cloudflared without complaint.
-#
-# This round proves the whole chain end to end: VNC accepts with security type
-# 1 (None), websockify serves the page, the tunnel answers from outside.
+#   Step 2 starts it. Step 3 - a different step, so a different console - asks
+#   whether it is still alive and prints its log either way. Step 4 hits it
+#   through a tunnel and asks again. Guessing between A and B would cost a
+#   session each time; this costs five minutes once.
 
 on:
   workflow_dispatch:
@@ -36,82 +33,29 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Install TightVNC, no authentication, loopback allowed
+      - name: Start VNC and websockify
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $msi = "$env:TEMP\tightvnc.msi"
-          curl.exe -sL --retry 3 -o $msi `
+          curl.exe -sL --retry 3 -o "$env:TEMP\tightvnc.msi" `
             "https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi"
-
-          $a = @(
-            "/i", "`"$msi`"", "/quiet", "/norestart",
-            "ADDLOCAL=Server",
-            "SERVER_REGISTER_AS_SERVICE=0",
-            "SERVER_ADD_FIREWALL_EXCEPTION=1",
-            "SET_USEVNCAUTHENTICATION=1", "VALUE_OF_USEVNCAUTHENTICATION=0",
-            "SET_USECONTROLAUTHENTICATION=1", "VALUE_OF_USECONTROLAUTHENTICATION=0",
-            "SET_ALLOWLOOPBACK=1", "VALUE_OF_ALLOWLOOPBACK=1"
-          )
-          $p = Start-Process msiexec -ArgumentList $a -Wait -PassThru
-          Write-Host "msiexec exit: $($p.ExitCode)"
-
-          # AllowLoopback, not LoopbackOnly. The first permits connections from
-          # 127.0.0.1; the second restricts to them. Only having the second is
-          # what produced "Sorry, loopback connections are not enabled" - and
-          # both are wanted here: allow loopback, and accept nothing else,
-          # because websockify is the only thing that should ever connect.
-          $keys = @(
-            "HKLM:\SOFTWARE\TightVNC\Server",
-            "HKLM:\SOFTWARE\Wow6432Node\TightVNC\Server",
-            "HKCU:\SOFTWARE\TightVNC\Server"
-          )
-          foreach ($k in $keys) {
+          $a = @("/i", "`"$env:TEMP\tightvnc.msi`"", "/quiet", "/norestart",
+                 "ADDLOCAL=Server", "SERVER_REGISTER_AS_SERVICE=0",
+                 "SET_USEVNCAUTHENTICATION=1", "VALUE_OF_USEVNCAUTHENTICATION=0",
+                 "SET_USECONTROLAUTHENTICATION=1", "VALUE_OF_USECONTROLAUTHENTICATION=0")
+          Start-Process msiexec -ArgumentList $a -Wait | Out-Null
+          foreach ($k in @("HKLM:\SOFTWARE\TightVNC\Server",
+                           "HKLM:\SOFTWARE\Wow6432Node\TightVNC\Server",
+                           "HKCU:\SOFTWARE\TightVNC\Server")) {
             New-Item -Path $k -Force | Out-Null
             Set-ItemProperty -Path $k -Name "AllowLoopback"            -Value 1 -Type DWord
             Set-ItemProperty -Path $k -Name "LoopbackOnly"             -Value 1 -Type DWord
             Set-ItemProperty -Path $k -Name "UseVncAuthentication"     -Value 0 -Type DWord
             Set-ItemProperty -Path $k -Name "UseControlAuthentication" -Value 0 -Type DWord
-            Set-ItemProperty -Path $k -Name "QueryAllowNoPass"         -Value 1 -Type DWord
-            Set-ItemProperty -Path $k -Name "QuerySetting"             -Value 0 -Type DWord
-            Set-ItemProperty -Path $k -Name "AcceptHttpConnections"    -Value 0 -Type DWord
-            Set-ItemProperty -Path $k -Name "AlwaysShared"             -Value 1 -Type DWord
           }
-
-          Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
-          Start-Sleep -Seconds 2
           Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
-          Start-Sleep -Seconds 6
-          $proc = Get-Process tvnserver -ErrorAction SilentlyContinue
-          Write-Host ("tvnserver pid {0} session {1}" -f $proc.Id, $proc.SessionId)
+          Start-Sleep -Seconds 5
 
-      - name: The handshake must be accepted with type 1
-        shell: pwsh
-        run: |
-          $c = New-Object System.Net.Sockets.TcpClient
-          $c.Connect("127.0.0.1", 5900)
-          $s = $c.GetStream(); $s.ReadTimeout = 8000
-          $buf = New-Object byte[] 12; $s.Read($buf,0,12) | Out-Null
-          Write-Host "banner: $([System.Text.Encoding]::ASCII.GetString($buf,0,12).Trim())"
-          $s.Write([System.Text.Encoding]::ASCII.GetBytes("RFB 003.008`n"), 0, 12)
-          $one = New-Object byte[] 1; $s.Read($one,0,1) | Out-Null
-          if ($one[0] -eq 0) {
-            $len4 = New-Object byte[] 4; $s.Read($len4,0,4) | Out-Null
-            [Array]::Reverse($len4); $len = [BitConverter]::ToInt32($len4,0)
-            $msg = New-Object byte[] $len; $got = 0
-            while ($got -lt $len) { $r = $s.Read($msg,$got,$len-$got); if ($r -le 0) { break }; $got += $r }
-            throw "still refused: $([System.Text.Encoding]::ASCII.GetString($msg,0,$got))"
-          }
-          $t = New-Object byte[] $one[0]; $s.Read($t,0,$one[0]) | Out-Null
-          Write-Host "ACCEPTED - security types: $($t -join ',')"
-          $c.Close()
-          if ($t -notcontains 1) { throw "type 1 (None) not offered; a password would be demanded" }
-          Write-Host "no password is demanded"
-
-      - name: Serve it and reach it from outside
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
           python -m pip install --quiet --disable-pip-version-check websockify
           curl.exe -sL --retry 3 -o "$env:TEMP\novnc.tgz" `
             "https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz"
@@ -119,36 +63,95 @@ jobs:
           tar -xzf "$env:TEMP\novnc.tgz" -C "$env:TEMP\novnc"
           $web = Get-ChildItem "$env:TEMP\novnc" -Directory | Select-Object -First 1 -ExpandProperty FullName
 
+          # Three ways of launching the same server, so the survivor is
+          # identified rather than guessed at.
+          #
+          #   6080 - Start-Process, exactly as the real workflow does it
+          #   6081 - the same, but detached from this console's job object via
+          #          cmd /c start, which is the classic way to outlive a step
+          #   6082 - a scheduled task, which the service control manager owns
+          #          and no console teardown can touch
           Start-Process python -ArgumentList "-m","websockify","--web=`"$web`"","6080","127.0.0.1:5900" `
-            -RedirectStandardOutput "$env:TEMP\ws.log" -RedirectStandardError "$env:TEMP\ws.err" -WindowStyle Hidden
-          Start-Sleep -Seconds 6
-          $r = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:6080/vnc.html" -TimeoutSec 15
-          Write-Host "local noVNC: HTTP $($r.StatusCode)"
+            -RedirectStandardOutput "$env:TEMP\ws80.log" -RedirectStandardError "$env:TEMP\ws80.err" `
+            -WindowStyle Hidden
+          "PY_WEB=$web" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+          cmd /c start "" /b python -m websockify --web="$web" 6081 127.0.0.1:5900 `
+            "1>$env:TEMP\ws81.log" "2>$env:TEMP\ws81.err"
+
+          $action = New-ScheduledTaskAction -Execute "python" `
+            -Argument "-m websockify --web=`"$web`" 6082 127.0.0.1:5900"
+          Register-ScheduledTask -TaskName "wsk" -Action $action `
+            -User "SYSTEM" -RunLevel Highest -Force | Out-Null
+          Start-ScheduledTask -TaskName "wsk"
+
+          Start-Sleep -Seconds 8
+          foreach ($p in 6080, 6081, 6082) {
+            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:$p/vnc.html")
+            Write-Host "same step, port $p : HTTP $code"
+          }
+
+      - name: A different step - who is still alive
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 10
+          (Get-Process python -ErrorAction SilentlyContinue |
+            Select-Object Id, SessionId, StartTime | Out-String) | Write-Host
+          foreach ($p in 6080, 6081, 6082) {
+            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:$p/vnc.html")
+            Write-Host "next step, port $p : HTTP $code"
+          }
+          Write-Host "--- ws80 log ---"
+          Get-Content "$env:TEMP\ws80.log","$env:TEMP\ws80.err" -ErrorAction SilentlyContinue | Write-Host
+          Write-Host "--- ws81 log ---"
+          Get-Content "$env:TEMP\ws81.log","$env:TEMP\ws81.err" -ErrorAction SilentlyContinue | Write-Host
+          exit 0
+
+      - name: Reach the survivor from outside, then look again
+        shell: pwsh
+        run: |
           curl.exe -sL --retry 3 -o "$env:TEMP\cloudflared.exe" `
             "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-          $log = "$env:TEMP\cf.log"
-          Start-Process "$env:TEMP\cloudflared.exe" `
-            -ArgumentList "tunnel","--url","http://localhost:6080","--no-autoupdate","--loglevel","info" `
-            -RedirectStandardOutput $log -RedirectStandardError "$env:TEMP\cf.err" -WindowStyle Hidden
 
+          # Tunnel whichever port is still answering.
+          $port = $null
+          foreach ($p in 6080, 6081, 6082) {
+            if ((curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:$p/vnc.html") -eq "200") { $port = $p; break }
+          }
+          if (-not $port) { Write-Host "nothing is serving; nothing to tunnel"; exit 0 }
+          Write-Host "tunnelling port $port"
+
+          Start-Process "$env:TEMP\cloudflared.exe" `
+            -ArgumentList "tunnel","--url","http://localhost:$port","--no-autoupdate","--loglevel","info" `
+            -RedirectStandardOutput "$env:TEMP\cf.log" -RedirectStandardError "$env:TEMP\cf.err" -WindowStyle Hidden
           $url = $null
           foreach ($try in 1..40) {
             Start-Sleep -Seconds 2
-            $text = (Get-Content $log,"$env:TEMP\cf.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
-            if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+            $t = (Get-Content "$env:TEMP\cf.log","$env:TEMP\cf.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+            if ($t -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
           }
-          if (-not $url) { throw "no tunnel address" }
           Write-Host "tunnel: $url"
-
-          # Fetch it from the public internet, through Cloudflare, not from
-          # localhost - that is the only test that matches what a phone does.
-          $ok = $false
-          foreach ($try in 1..20) {
+          foreach ($try in 1..10) {
             $code = (curl.exe -s -o NUL -w "%{http_code}" -m 20 "$url/vnc.html")
-            Write-Host "attempt $try : HTTP $code"
-            if ($code -eq "200") { $ok = $true; break }
-            Start-Sleep -Seconds 4
+            Write-Host "outside attempt $try : HTTP $code"
+            if ($code -eq "200") { break }
+            Start-Sleep -Seconds 5
           }
-          if (-not $ok) { throw "the page is not reachable through the tunnel" }
-          Write-Host "THE WINDOWS DESK WORKS END TO END, WITH NO PASSWORD"
+          exit 0
+
+      - name: Two minutes later, is it still there
+        shell: pwsh
+        run: |
+          # The real desk died somewhere between "step 5 said 200" and a client
+          # arriving minutes afterwards. This is the same gap, deliberately.
+          Start-Sleep -Seconds 120
+          foreach ($p in 6080, 6081, 6082) {
+            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:$p/vnc.html")
+            Write-Host "two minutes on, port $p : HTTP $code"
+          }
+          (Get-Process python -ErrorAction SilentlyContinue | Select-Object Id | Out-String) | Write-Host
+          Write-Host "--- ws80 ---"
+          Get-Content "$env:TEMP\ws80.log","$env:TEMP\ws80.err" -Tail 20 -ErrorAction SilentlyContinue | Write-Host
+          Write-Host "--- ws81 ---"
+          Get-Content "$env:TEMP\ws81.log","$env:TEMP\ws81.err" -Tail 20 -ErrorAction SilentlyContinue | Write-Host
+          exit 0
