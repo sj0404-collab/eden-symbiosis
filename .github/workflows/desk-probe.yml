@@ -1,0 +1,186 @@
+name: Desk probe
+
+# Answers one question with facts instead of guesses: does a windows-latest
+# runner have a real, visible desktop that a VNC server can capture?
+#
+# Everything about the passwordless Windows desk depends on it. If the runner
+# process lives in session 0 with no interactive window station, a VNC server
+# will happily start, the tunnel will open, and the browser will show a black
+# rectangle - which is exactly the kind of failure that costs a full session to
+# discover. Ten minutes here, once, instead.
+#
+# The job screenshots the desktop before and after starting a GUI app and
+# uploads both as artifacts.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Who and where this step runs
+        shell: pwsh
+        run: |
+          Write-Host "whoami: $(whoami)"
+          Write-Host "process session id: $((Get-Process -Id $PID).SessionId)"
+          Write-Host "--- query session ---"
+          (query session 2>&1 | Out-String)
+          Write-Host "--- query user ---"
+          (query user 2>&1 | Out-String)
+          Write-Host "--- explorer ---"
+          $ex = Get-Process explorer -ErrorAction SilentlyContinue
+          if ($ex) { ($ex | Select-Object Id, SessionId | Out-String) } else { Write-Host "no explorer running" }
+          Write-Host "--- screens ---"
+          Add-Type -AssemblyName System.Windows.Forms
+          foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
+            Write-Host "screen $($s.DeviceName) $($s.Bounds)"
+          }
+
+      - name: Screenshot the bare desktop
+        shell: pwsh
+        run: |
+          # CopyFromScreen throws when the process has no desktop to read, so a
+          # thrown exception is itself an answer, not a failure of the probe.
+          $ErrorActionPreference = "Continue"
+          New-Item -ItemType Directory -Force -Path shots | Out-Null
+          try {
+            Add-Type -AssemblyName System.Drawing
+            Add-Type -AssemblyName System.Windows.Forms
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            Write-Host "virtual screen: $b"
+            $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
+            $bmp.Save("shots\1-bare.png")
+            Write-Host "saved 1-bare.png"
+          } catch {
+            Write-Host "screenshot failed: $($_.Exception.Message)"
+          }
+
+      - name: Start a GUI app and screenshot again
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Start-Process notepad
+          Start-Sleep -Seconds 5
+          $np = Get-Process notepad -ErrorAction SilentlyContinue
+          if ($np) {
+            Write-Host ("notepad pid {0} session {1} mainWindow '{2}'" -f `
+              $np.Id, $np.SessionId, $np.MainWindowTitle)
+          } else {
+            Write-Host "notepad did not start"
+          }
+          try {
+            Add-Type -AssemblyName System.Drawing
+            Add-Type -AssemblyName System.Windows.Forms
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
+            $bmp.Save("shots\2-notepad.png")
+            Write-Host "saved 2-notepad.png"
+          } catch {
+            Write-Host "screenshot failed: $($_.Exception.Message)"
+          }
+
+      - name: Install TightVNC with authentication switched off
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $msi = "$env:TEMP\tightvnc.msi"
+          Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 `
+            -Uri "https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi" `
+            -OutFile $msi
+          Write-Host "downloaded $((Get-Item $msi).Length) bytes"
+
+          # VALUE_OF_USEVNCAUTHENTICATION=0 is the whole point: no password on
+          # the desk at all. Installed as a service first; whether a service in
+          # session 0 can see the desktop is what the screenshots will tell.
+          $args = @(
+            "/i", "`"$msi`"", "/quiet", "/norestart",
+            "ADDLOCAL=Server",
+            "SERVER_REGISTER_AS_SERVICE=1",
+            "SERVER_ADD_FIREWALL_EXCEPTION=1",
+            "SET_USEVNCAUTHENTICATION=1", "VALUE_OF_USEVNCAUTHENTICATION=0",
+            "SET_USECONTROLAUTHENTICATION=1", "VALUE_OF_USECONTROLAUTHENTICATION=0",
+            "SET_ALLOWLOOPBACK=1", "VALUE_OF_ALLOWLOOPBACK=1"
+          )
+          $p = Start-Process msiexec -ArgumentList $args -Wait -PassThru
+          Write-Host "msiexec exit: $($p.ExitCode)"
+          Start-Sleep -Seconds 5
+          Get-Service tvnserver -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String | Write-Host
+          (Get-NetTCPConnection -State Listen -LocalPort 5900 -ErrorAction SilentlyContinue | Out-String)
+
+      - name: Ask the VNC server what it offers, over the wire
+        shell: pwsh
+        run: |
+          # A handshake proves two things at once: the server is listening, and
+          # security type 1 (None) is on offer - meaning no password.
+          try {
+            $c = New-Object System.Net.Sockets.TcpClient
+            $c.Connect("127.0.0.1", 5900)
+            $s = $c.GetStream()
+            $buf = New-Object byte[] 12
+            $n = $s.Read($buf, 0, 12)
+            Write-Host "server banner: $([System.Text.Encoding]::ASCII.GetString($buf,0,$n).Trim())"
+            $ver = [System.Text.Encoding]::ASCII.GetBytes("RFB 003.008`n")
+            $s.Write($ver, 0, $ver.Length)
+            $sec = New-Object byte[] 8
+            $m = $s.Read($sec, 0, 8)
+            Write-Host "security bytes: $(($sec[0..([Math]::Max($m-1,0))] | ForEach-Object { $_ }) -join ',')"
+            Write-Host "(count then types; type 1 = None = no password, 2 = VNC auth)"
+            $c.Close()
+          } catch {
+            Write-Host "handshake failed: $($_.Exception.Message)"
+          }
+
+      - name: Screenshot what the VNC service itself sees
+        shell: pwsh
+        run: |
+          # tvnserver -controlservice cannot screenshot, so instead capture the
+          # desktop again after the service is up: if the service is stuck on a
+          # blank session-0 desktop, a GUI app started earlier will be missing
+          # from this shot too.
+          $ErrorActionPreference = "Continue"
+          try {
+            Add-Type -AssemblyName System.Drawing
+            Add-Type -AssemblyName System.Windows.Forms
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
+            $bmp.Save("shots\3-after-vnc.png")
+            Write-Host "saved 3-after-vnc.png"
+          } catch {
+            Write-Host "screenshot failed: $($_.Exception.Message)"
+          }
+
+      - name: Can Python serve websockify here
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          python --version
+          python -m pip install --quiet websockify
+          if ($LASTEXITCODE -eq 0) { Write-Host "websockify installed" } else { Write-Host "pip failed: $LASTEXITCODE" }
+
+      - name: Does cloudflared run here without an account
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 `
+            -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
+            -OutFile "$env:TEMP\cloudflared.exe"
+          & "$env:TEMP\cloudflared.exe" --version
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desk-probe-shots
+          path: shots
+          if-no-files-found: warn
