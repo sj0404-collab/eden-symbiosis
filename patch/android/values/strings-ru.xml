@@ -1441,4 +1441,5 @@
     <string name="status_folder_failed">Не удалось использовать эту папку: %1$s</string>
     <string name="folders_open_list">Папки с играми</string>
     <string name="folder_in_subfolder">в %1$s</string>
+    <string name="status_storage_needed">Нужен доступ к файлам</string>
 </resources>

@@ -132,7 +132,18 @@ object SetupStatus {
         // Comparing against it turns "I see a file but no game" from a mystery
         // into a sentence.
         val imported = runCatching { GameHelper.cachedGameList.size }.getOrDefault(-1)
+
+        // Storage access is checked before anything else is blamed. The
+        // document provider happily lists and counts a folder without it,
+        // while the emulator - which opens the file directly - sees nothing.
+        // That combination produced a game with a name and no image behind it,
+        // and pointed the user at keys and firmware, which were fine.
+        val noAccess = SharedDataDirectory.needsAllFilesAccess() &&
+            !SharedDataDirectory.hasAllFilesAccess()
+
         val detail = when {
+            noAccess && games > 0 ->
+                "$games найдено, но нет доступа к файлам — выдай «Все файлы» в настройках"
             games == 0 && skipped > 0 ->
                 "файлы есть ($skipped), но это не игры — нужны .xci .nsp .nca .nro"
             games == 0 ->
@@ -145,8 +156,9 @@ object SetupStatus {
         }
         return Item(
             labelRes = R.string.status_games,
-            // Green only when the emulator agrees it has something to launch.
-            present = games > 0 && imported != 0,
+            // Green only when the emulator agrees it has something to launch,
+            // and only when it is actually allowed to read the files.
+            present = games > 0 && imported != 0 && !noAccess,
             detail = detail,
             bytes = bytes
         )

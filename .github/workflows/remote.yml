@@ -459,10 +459,35 @@ jobs:
         uses: mxschmitt/action-tmate@v3
         with:
           limit-access-to-actor: false
-          detached: ${{ inputs.mode == 'both' }}
+          # Detached in every mode now. Attached, tmate blocks this step for
+          # the life of the session, so the publish step below never ran and
+          # the panel showed "no active session" for a session that was very
+          # much alive - which is exactly what happened to run #14.
+          detached: true
+
+      - name: Publish the SSH details
+        if: inputs.mode == 'ssh' || inputs.mode == 'both'
+        run: |
+          # tmate writes its addresses to a file; read them rather than scrape
+          # the log, which is not available while the job runs.
+          SSH_LINE=""; WEB_LINE=""
+          for i in $(seq 1 20); do
+            SSH_LINE=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}' 2>/dev/null || true)
+            WEB_LINE=$(tmate -S /tmp/tmate.sock display -p '#{tmate_web}' 2>/dev/null || true)
+            [ -n "$SSH_LINE" ] && break
+            sleep 3
+          done
+          echo "ssh: ${SSH_LINE:-(none)}"
+          echo "web: ${WEB_LINE:-(none)}"
+
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "kind=SSH" "os=linux" \
+              "sshCmd=${SSH_LINE:-}" "terminal=${WEB_LINE:-}" \
+              "branch=$SESSION_BRANCH"
 
       - name: Hold the session open
-        if: inputs.mode == 'rdp' || inputs.mode == 'web'
+        if: inputs.mode != ''
         run: |
           # Without this the job would end the moment the RDP step returned,
           # taking the desktop with it.

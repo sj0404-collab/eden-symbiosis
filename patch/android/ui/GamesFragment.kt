@@ -22,6 +22,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.yuzu.yuzu_emu.fragments.MessageDialogFragment
 import org.yuzu.yuzu_emu.utils.GameFolderScanner
 import org.yuzu.yuzu_emu.utils.SetupStatus
 import org.yuzu.yuzu_emu.utils.SharedDataDirectory
@@ -70,6 +71,9 @@ class GamesFragment : Fragment() {
     private var fallbackBottomInset: Int = 0
 
     companion object {
+        /** Set once the storage prompt has been shown, so it is not repeated. */
+        private const val PREF_ASKED_STORAGE = "SymbiosisAskedStorage"
+
         private const val SEARCH_TEXT = "SearchText"
         private const val PREF_SORT_TYPE = "GamesSortType"
     }
@@ -161,6 +165,18 @@ class GamesFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         homeViewModel.setStatusBarShadeVisibility(true)
         mainActivity = requireActivity() as MainActivity
+
+        // Ask for storage access on first run.
+        //
+        // Removing the setup wizard removed the only place this was ever
+        // requested. The permission is declared in the manifest, but
+        // MANAGE_EXTERNAL_STORAGE is not granted by a dialog - the user has to
+        // toggle it in system settings - so without asking, Android silently
+        // refuses every read outside the app's own directory. A folder could
+        // be picked and counted through the document provider while the
+        // emulator, which opens the file directly, saw nothing: a game listed
+        // with a name and no image behind it, which is exactly the report.
+        maybeAskForStorage()
 
         if (savedInstanceState != null) {
             binding.searchText.setText(savedInstanceState.getString(SEARCH_TEXT))
@@ -583,6 +599,49 @@ class GamesFragment : Fragment() {
                     .append(SetupStatus.dataRoot())
             }
         }
+    }
+
+    /**
+     * One prompt, once, when All Files Access is missing.
+     *
+     * Deliberately not a loop: a user who declines on purpose should not be
+     * nagged on every launch. The status strip keeps saying what is missing,
+     * and Tools has the same button for later.
+     */
+    private fun maybeAskForStorage() {
+        if (!SharedDataDirectory.needsAllFilesAccess()) return
+        if (SharedDataDirectory.hasAllFilesAccess()) return
+        val prefs = PreferenceManager.getDefaultSharedPreferences(requireContext())
+        if (prefs.getBoolean(PREF_ASKED_STORAGE, false)) return
+        prefs.edit().putBoolean(PREF_ASKED_STORAGE, true).apply()
+
+        MessageDialogFragment.newInstance(
+            requireActivity(),
+            titleId = R.string.status_storage_needed,
+            descriptionId = R.string.need_all_files_access,
+            positiveButtonTitleId = R.string.open_settings,
+            positiveAction = {
+                runCatching {
+                    startActivity(
+                        Intent(
+                            android.provider.Settings
+                                .ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                            android.net.Uri.parse("package:${requireContext().packageName}")
+                        )
+                    )
+                }.onFailure {
+                    // Some vendor builds lack the per-app screen; the global
+                    // list is better than nothing.
+                    runCatching {
+                        startActivity(
+                            Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                        )
+                    }
+                }
+            },
+            showNegativeButton = true,
+            negativeButtonTitleId = android.R.string.cancel
+        ).show(childFragmentManager, MessageDialogFragment.TAG)
     }
 
     /**

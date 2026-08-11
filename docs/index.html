@@ -864,6 +864,7 @@ async function currentRuns() {
 // unconditionally and served whatever else was there - a 404, i.e. a blank
 // page with no explanation. Everything now comes from session.json.
 let LIVE = null;
+let LAST_RUNS = [];
 
 function desktopUrl() {
   if (!LIVE) return null;
@@ -1062,7 +1063,19 @@ async function waitAndOpen(kind) {
 // Open whatever the live session is, in the way that suits it.
 function openLive() {
   const s = LIVE;
-  if (!s) { alert('Активной сессии нет.'); return; }
+  if (!s) {
+    // The run list and the published address come from different places: a
+    // session can be running for a minute before it has an address, and an
+    // entry left by an earlier run can be stale. Saying "no active session"
+    // while two are visibly running - which is what the panel did - is the
+    // least useful answer available.
+    alert(LAST_RUNS && LAST_RUNS.length
+      ? 'Сессия запущена, но ещё не сообщила адрес.\n\n' +
+        'Обычно это первые 1–2 минуты. Если висит дольше — откройте журнал: ' +
+        'возможно, туннель занят другой сессией.'
+      : 'Активной сессии нет.');
+    return;
+  }
   if (s.agentUrl) { window.open(s.agentUrl, '_blank'); return; }
   if (s.vncUrl)   { window.open(s.vncUrl, '_blank'); return; }
   if (s.rdpHost) {
@@ -1209,6 +1222,7 @@ async function refresh() {
   }
 
   const live = anyLive(runs);
+  LAST_RUNS = live;
   const conflict = $('agent-conflict');
   if (live.length > 1) {
     // Should not happen now that launching stops what is running, but an old
