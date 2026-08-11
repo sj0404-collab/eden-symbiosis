@@ -627,12 +627,24 @@ jobs:
           #
           # New-LocalUser also fails outright if the account already exists,
           # which it does on a re-run, leaving the whole step half-applied.
+          # net user, not New-LocalUser.
+          #
+          # New-LocalUser marks the account as needing a password change at
+          # first logon, and clearing that afterwards has not stuck across
+          # three sessions - the client kept receiving
+          # LOGON_FAILED_UPDATE_PASSWORD. Deleting and recreating with net
+          # user, which never sets the flag, avoids the problem instead of
+          # fighting it.
           if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
-            Set-LocalUser -Name $user -Password $secure -PasswordNeverExpires $true
-            Write-Host "reused the existing account $user"
-          } else {
+            net user $user /delete | Out-Null
+            Write-Host "removed the previous $user account"
+          }
+          net user $user "$password" /add /active:yes /expires:never /passwordchg:no | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::net user /add returned $LASTEXITCODE; falling back to New-LocalUser"
             New-LocalUser -Name $user -Password $secure -AccountNeverExpires -PasswordNeverExpires | Out-Null
-            Write-Host "created the account $user"
+          } else {
+            Write-Host "created $user with net user"
           }
 
           # Clear "must change password at next logon".
@@ -690,6 +702,11 @@ jobs:
           Write-Host ("effective: NLA={0} SecurityLayer={1} MinEncryption={2}" -f `
             $eff.UserAuthentication, $eff.SecurityLayer, $eff.MinEncryptionLevel)
           $acct = Get-LocalUser -Name $user
+          # Carried to session.json so it is visible without the job log,
+          # which GitHub refuses to serve while the job is running - the
+          # reason this took three sessions to pin down.
+          "RDP_ACCOUNT_STATE=expired=$($acct.PasswordExpired) neverExpires=$($acct.PasswordNeverExpires) enabled=$($acct.Enabled)" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host ("password expired flag: {0} (must be False, or logon is refused)" -f `
             $acct.PasswordExpired)
           Write-Host ("account: {0}, member of Remote Desktop Users: {1}" -f $user, `
@@ -838,7 +855,8 @@ jobs:
               "kind=RDP" "os=windows" `
               "rdpHost=$endpoint" `
               "rdpUser=${{ steps.rdp.outputs.user }}" `
-              "rdpPass=${{ steps.rdp.outputs.password }}"
+              "rdpPass=${{ steps.rdp.outputs.password }}" `
+              "accountState=$env:RDP_ACCOUNT_STATE"
 
           }
       - name: Hold the session open
