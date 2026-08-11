@@ -1,12 +1,6 @@
 {
-  "kind": "Стол Windows",
-  "os": "windows",
-  "url": "https://genres-wind-organizing-pay.trycloudflare.com",
-  "deskUrl": "https://genres-wind-organizing-pay.trycloudflare.com/",
-  "auth": "без пароля",
-  "label": "desks",
-  "startedAt": "2026-08-11T20:19:44Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-11T20:23:47Z",
   "runId": "31532294159",
   "runNumber": "14",
   "repo": "sj0404-collab/eden-symbiosis"
