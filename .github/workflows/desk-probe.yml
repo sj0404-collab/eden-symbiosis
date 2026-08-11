@@ -41,6 +41,9 @@ jobs:
           foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
             Write-Host "screen $($s.DeviceName) $($s.Bounds)"
           }
+          # query.exe returns non-zero even when it printed what was asked, and
+          # the pwsh wrapper turns a stray $LASTEXITCODE into a failed step.
+          exit 0
 
       - name: Screenshot the bare desktop
         shell: pwsh
@@ -113,6 +116,21 @@ jobs:
           )
           $p = Start-Process msiexec -ArgumentList $args -Wait -PassThru
           Write-Host "msiexec exit: $($p.ExitCode)"
+
+          # Run the server as an application in this session, not as a service.
+          # The runner logs in on the console as runneradmin in session 2 with a
+          # real 1024x768 display and explorer running - measured, in the probe
+          # before this one. A service would sit in session 0 and serve a blank
+          # desktop; an application started here shares the session that has the
+          # screen.
+          Stop-Service tvnserver -ErrorAction SilentlyContinue
+          $exe = "C:\Program Files\TightVNC\tvnserver.exe"
+          if (Test-Path $exe) {
+            Start-Process $exe -ArgumentList "-run" -WindowStyle Hidden
+            Start-Sleep -Seconds 6
+            (Get-Process tvnserver -ErrorAction SilentlyContinue |
+              Select-Object Id, SessionId | Out-String) | Write-Host
+          } else { Write-Host "tvnserver.exe not where expected" }
           Start-Sleep -Seconds 5
           Get-Service tvnserver -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String | Write-Host
           (Get-NetTCPConnection -State Listen -LocalPort 5900 -ErrorAction SilentlyContinue | Out-String)
@@ -177,6 +195,7 @@ jobs:
             -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
             -OutFile "$env:TEMP\cloudflared.exe"
           & "$env:TEMP\cloudflared.exe" --version
+          exit 0
 
       - uses: actions/upload-artifact@v4
         if: always()
