@@ -265,8 +265,10 @@ class Handler(BaseHTTPRequestHandler):
                     # five frames, i.e. five seconds at best and much longer in
                     # practice, and a client with a 30s timeout gave up. Seen
                     # on a live desk: the thumbnail stream stalled and the read
-                    # timed out.
-                    if jpg == last and (now - last_sent) < 4.0:
+                    # timed out. Two seconds, not four: measured through a
+                    # live tunnel, a 4s keepalive showed a 6.1s worst-case gap
+                    # on an idle desk, which still reads as a freeze.
+                    if jpg == last and (now - last_sent) < 2.0:
                         time.sleep(delay)
                         continue
                     last_sent = now
