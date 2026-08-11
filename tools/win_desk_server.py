@@ -48,6 +48,12 @@ PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 6090
 QUALITY = 55
 FPS = 5.0
 
+# A full-size stream measured 4.28 Mbit/s at 4.35 fps - fine over a tunnel,
+# heavy for a phone showing two thumbnails at once. /stream?w=340&fps=1 lets the
+# panel's preview ask for something much cheaper, and an idle desk costs almost
+# nothing because identical frames are not resent.
+MIN_WIDTH = 160
+
 # ── Windows input, through SendInput ────────────────────────────────
 #
 # Guarded so the module imports on Linux, where it is only ever syntax-checked
@@ -128,11 +134,35 @@ def key_event(name, down):
         user32.keybd_event(0, ord(name), KEYEVENTF_UNICODE | flags, 0)
 
 
-def grab_jpeg(quality=QUALITY):
-    im = ImageGrab.grab()
+def grab_jpeg(quality=QUALITY, width=None):
+    im = ImageGrab.grab().convert("RGB")
+    if width and MIN_WIDTH <= width < im.width:
+        height = max(1, round(im.height * width / im.width))
+        im = im.resize((width, height))
     buf = io.BytesIO()
-    im.convert("RGB").save(buf, "JPEG", quality=quality)
+    im.save(buf, "JPEG", quality=quality)
     return buf.getvalue()
+
+
+def query(path):
+    """Parse ?w= and ?fps= off a request path, clamped to something sane."""
+    out = {}
+    if "?" in path:
+        for part in path.split("?", 1)[1].split("&"):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                out[k] = v
+    try:
+        width = int(out.get("w", 0)) or None
+    except ValueError:
+        width = None
+    try:
+        fps = float(out.get("fps", 0)) or None
+    except ValueError:
+        fps = None
+    if fps:
+        fps = min(max(fps, 0.2), 15.0)
+    return width, fps
 
 
 PAGE = """<!DOCTYPE html>
@@ -200,16 +230,29 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
 
+
         if path == "/stream":
+            width, fps = query(self.path)
             self.send_response(200)
             self.send_header("Content-Type",
                              "multipart/x-mixed-replace; boundary=frame")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
-            delay = 1.0 / FPS
+            delay = 1.0 / (fps or FPS)
+            last = None
+            idle = 0.0
             try:
                 while True:
-                    jpg = grab_jpeg()
+                    jpg = grab_jpeg(width=width)
+                    if jpg == last and idle < 5.0:
+                        # An unchanged desktop costs nothing to not send. The
+                        # 5-second ceiling still emits a keepalive frame, so a
+                        # proxy never decides the response has stalled.
+                        idle += delay
+                        time.sleep(delay)
+                        continue
+                    idle = 0.0
+                    last = jpg
                     self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
                                      b"Content-Length: " + str(len(jpg)).encode() +
                                      b"\r\n\r\n" + jpg + b"\r\n")
@@ -218,8 +261,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 return  # the client went away; that is the normal exit
 
-        if path == "/shot":
-            return self._bytes(grab_jpeg(), "image/jpeg")
+        if path.split("?")[0] == "/shot":
+            width, _ = query(self.path)
+            return self._bytes(grab_jpeg(width=width), "image/jpeg")
 
         if path == "/health":
             return self._bytes(b'{"ok":true}', "application/json")

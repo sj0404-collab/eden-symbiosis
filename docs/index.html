@@ -971,6 +971,19 @@ function collapsePreview() { previewOpen = false; renderPreview(); }
 let DESKS = { linux: null, windows: null };
 let deskOpen = null;   // 'linux' | 'windows' | null - which one is expanded
 
+// The signature of what is currently drawn. Rebuilding the card replaces the
+// iframes, and a replaced iframe reconnects from scratch - which is exactly
+// the "black for a couple of seconds, then fine again" that showed up on the
+// phone, on both desks, on a timer. Measured while it was happening: the
+// Windows stream itself was steady at 4.35 fps with a median 0.23s gap and no
+// disconnects, so nothing was wrong with either desk. refresh() simply ran
+// every 30 seconds and rewrote innerHTML underneath them.
+//
+// So the DOM is only rebuilt when something that matters actually changes -
+// an address, a desk appearing or going away, the expanded view. The minute
+// counter updates on its own, as text.
+let deskSig = '';
+
 async function loadDesks() {
   const box = $('desks');
   const card = $('desks-card');
@@ -980,7 +993,8 @@ async function loadDesks() {
     try {
       const f = await api(
         `${CTL()}/contents/session-${slot}.json?ref=session-state&t=${Date.now()}`);
-      const s = JSON.parse(atob((f.content || '').replace(/\n/g, '')));
+      const s = JSON.parse(decodeURIComponent(escape(
+        atob((f.content || '').replace(/\n/g, '')))));
       // A runner killed hard never clears its file, so an old entry lingers
       // and would advertise a desk that stopped answering hours ago.
       const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
@@ -993,8 +1007,29 @@ async function loadDesks() {
   const [lin, win] = await Promise.all([read('linux'), read('windows')]);
   DESKS = { linux: lin, windows: win };
 
-  if (!lin && !win) { card.style.display = 'none'; return; }
+  if (!lin && !win) {
+    card.style.display = 'none';
+    deskSig = '';
+    return;
+  }
   card.style.display = '';
+
+  const ageLine = s => `без пароля · идёт ${s._age} мин · осталось ~${Math.max(0, 360 - s._age)} мин`;
+
+  // Nothing structural changed: touch the counters and leave the iframes be.
+  const sig = JSON.stringify([
+    deskOpen,
+    lin && [lin.deskUrl || lin.url, lin.terminal || '', lin.runId || ''],
+    win && [win.deskUrl || win.url, win.terminal || '', win.runId || '']
+  ]);
+  if (sig === deskSig) {
+    for (const [slot, s] of [['linux', lin], ['windows', win]]) {
+      const el = $('desk-age-' + slot);
+      if (el && s) el.textContent = ageLine(s);
+    }
+    return;
+  }
+  deskSig = sig;
 
   const tile = (slot, s, title) => {
     if (!s) return `
@@ -1003,19 +1038,23 @@ async function loadDesks() {
         <b>${title}</b><div class="note" style="margin-top:4px">не запущен</div>
       </div>`;
     const url = s.deskUrl || s.url || '';
-    const left = Math.max(0, 360 - s._age);
+    // The thumbnail asks the Windows desk for a small, slow stream: measured
+    // 99% fewer bytes per frame at 340px, and an idle desktop sends almost
+    // nothing because identical frames are skipped. The Linux desk is noVNC
+    // and ignores these parameters harmlessly.
+    const thumb = slot === 'windows' ? (s.url || url) + '/stream?w=340&fps=1' : url;
     return `
       <div style="flex:1;min-width:150px;border:1px solid var(--line);border-radius:10px;
            padding:12px">
         <b>${title}</b>
-        <div class="note" style="margin:4px 0 8px">
-          без пароля · идёт ${s._age} мин · осталось ~${left} мин
-        </div>
+        <div class="note" style="margin:4px 0 8px" id="desk-age-${slot}">${esc(ageLine(s))}</div>
         <div style="position:relative;border:1px solid var(--line);border-radius:8px;
              overflow:hidden;background:#000;height:110px;margin-bottom:8px">
-          <iframe src="${esc(url)}" style="border:0;width:300%;height:330px;
-                  transform:scale(.333);transform-origin:0 0" scrolling="no"
-                  sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+          ${slot === 'windows'
+            ? `<img src="${esc(thumb)}" style="width:100%;height:100%;object-fit:cover;display:block">`
+            : `<iframe src="${esc(url)}" style="border:0;width:300%;height:330px;
+                 transform:scale(.333);transform-origin:0 0" scrolling="no"
+                 sandbox="allow-scripts allow-same-origin allow-forms"></iframe>`}
           <div onclick="expandDesk('${slot}')" style="position:absolute;inset:0;cursor:pointer"></div>
         </div>
         <div class="row">

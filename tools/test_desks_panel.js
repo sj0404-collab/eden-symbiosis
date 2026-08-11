@@ -11,7 +11,7 @@ const fs=require('fs');
 const path=require('path');
 const html=fs.readFileSync(path.join(__dirname,'..','docs','index.html'),'utf8');
 const js=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]).join('\n');
-const start=js.indexOf('async function loadDesks');
+const start=js.indexOf('let deskSig');
 const end=js.indexOf('function expandDesk');
 const body=js.slice(start,end);
 const els={};
@@ -45,6 +45,32 @@ eval(body+'\nglobal.loadDesks=loadDesks;');
   };
   let bad=0;
   for(const [k,v] of Object.entries(checks)){ console.log((v?'ok  ':'FAIL')+' '+k); if(!v)bad++; }
+  // The bug the phone showed: refresh() every 30s rewrote innerHTML, which
+  // replaces the iframes, which makes both desks reconnect - black for a
+  // couple of seconds, on a timer. A second load with identical data must not
+  // touch the markup at all.
+  const first = els['desks'].innerHTML;
+  els['desks'].innerHTML = 'SENTINEL';
+  await loadDesks();
+  console.log((els['desks'].innerHTML === 'SENTINEL' ? 'ok  ' : 'FAIL') +
+              ' повторный опрос не пересоздаёт iframe');
+  if (els['desks'].innerHTML !== 'SENTINEL') bad++;
+  els['desks'].innerHTML = first;
+
+  // A changed address must still redraw, or a restarted desk would show a
+  // dead iframe forever.
+  global.api = async path => {
+    const slot = path.includes('linux') ? 'linux' : 'windows';
+    const data = slot === 'linux'
+      ? {kind:'L',url:'https://NEW.example',deskUrl:'https://NEW.example/vnc.html',terminal:'https://NEW.example/term/',startedAt:now,state:'live',runId:'42'}
+      : {kind:'W',url:'https://w.example',deskUrl:'https://w.example/',startedAt:now,state:'live',runId:'42'};
+    return {content:Buffer.from(JSON.stringify(data),'utf8').toString('base64')};
+  };
+  await loadDesks();
+  const moved = els['desks'].innerHTML.includes('NEW.example');
+  console.log((moved ? 'ok  ' : 'FAIL') + ' новый адрес перерисовывается');
+  if (!moved) bad++;
+
   // stale entries must vanish
   const old=new Date(Date.now()-400*60000).toISOString();
   global.api=async()=>({content:Buffer.from(JSON.stringify({state:'live',startedAt:old,url:'x'}),'utf8').toString('base64')});

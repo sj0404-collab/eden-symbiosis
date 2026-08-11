@@ -152,17 +152,27 @@ async function readSlot(slot) {
 
 let OPEN = null;
 
+// What is currently drawn. Rewriting the markup replaces the iframes, and a
+// replaced iframe reconnects from scratch - the "black for two seconds, every
+// so often" seen on the phone. The desks themselves were fine: the Windows
+// stream measured 4.35 fps with a 0.23s median gap and no disconnects while
+// the flicker was happening. It was this page's own 20-second poll.
+let SIG = '';
+
 function tile(slot, s, title) {
   if (!s) return `<div class="tile off"><b>${title}</b>
     <div class="note">не запущен</div></div>`;
   const url = s.deskUrl || s.url || '';
+  const thumb = slot === 'windows' ? (s.url || url) + '/stream?w=340&fps=1' : url;
   const left = Math.max(0, 360 - s._age);
   return `<div class="tile">
     <b>${title}</b> <span class="ok">без пароля</span>
-    <div class="note">идёт ${s._age} мин · осталось ~${left} мин</div>
+    <div class="note" id="age-${slot}">идёт ${s._age} мин · осталось ~${left} мин</div>
     <div class="shot">
-      <iframe src="${esc(url)}" scrolling="no"
-              sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+      ${slot === 'windows'
+        ? `<img src="${esc(thumb)}" style="width:100%;height:100%;object-fit:cover;display:block">`
+        : `<iframe src="${esc(url)}" scrolling="no"
+             sandbox="allow-scripts allow-same-origin allow-forms"></iframe>`}
       <div class="hit" onclick="openDesk('${slot}')"></div>
     </div>
     <div class="row">
@@ -187,8 +197,23 @@ async function load() {
     : '<span class="note">столы не запущены — поднимите их в панели</span>';
 
   const card = $('desks-card');
-  if (!linux && !windows) { card.style.display = 'none'; return; }
+  if (!linux && !windows) { card.style.display = 'none'; SIG = ''; return; }
   card.style.display = '';
+
+  // Nothing structural changed: update the counters, leave the iframes alone.
+  const sig = JSON.stringify([
+    OPEN,
+    linux && [linux.deskUrl || linux.url, linux.terminal || ''],
+    windows && [windows.deskUrl || windows.url, windows.terminal || '']
+  ]);
+  if (sig === SIG) {
+    for (const [slot, s] of [['linux', linux], ['windows', windows]]) {
+      const el = $('age-' + slot);
+      if (el && s) el.textContent = `идёт ${s._age} мин · осталось ~${Math.max(0, 360 - s._age)} мин`;
+    }
+    return;
+  }
+  SIG = sig;
 
   if (OPEN && DESKS[OPEN]) {
     const s = DESKS[OPEN];
