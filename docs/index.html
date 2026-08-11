@@ -193,56 +193,38 @@
 <!-- ══ SESSIONS ═════════════════════════════════════════════════════ -->
 <div class="page" id="p-sess">
   <div class="card">
-    <h2>CLI-агент — 6 часов</h2>
+    <h2>Сессия</h2>
     <div class="note" style="margin-top:0">
-      <b>Zen agent</b>: чат с инструментами и терминалом. Это не «рабочий стол»
-      — та кнопка ниже поднимает XFCE.
+      Одна сессия на аккаунт. Она сама сохраняет работу в свою ветку и живёт
+      до шести часов.
     </div>
     <div class="row" style="margin-top:10px">
-      <button id="btn-agent-linux" onclick="startAgent('linux')">Включить Linux</button>
-      <button id="btn-agent-win" onclick="startAgent('windows')">Включить Windows</button>
+      <button id="btn-linux"  onclick="launch('linux')">Linux</button>
+      <button id="btn-windows" onclick="launch('windows')">Windows</button>
+      <button class="ghost" id="btn-agent" onclick="launchAgent()">CLI-агент</button>
     </div>
-    <div id="agent-live"><span class="spin">проверяю…</span></div>
-    <div class="warn" id="agent-conflict" style="display:none"></div>
+    <div class="note">
+      Linux — рабочий стол и терминал. Windows — рабочий стол по RDP.
+      CLI-агент — чат с инструментами; спросит, где его поднять.
+    </div>
+    <div id="agent-conflict" class="warn" style="display:none"></div>
   </div>
 
   <div class="card">
-    <h2>Экран сессии</h2>
+    <h2>Активная сессия</h2>
+    <div id="live"><span class="spin">проверяю…</span></div>
+  </div>
+
+  <div class="card" id="screen-card" style="display:none">
+    <h2>Экран</h2>
     <div id="preview"><span class="spin">проверяю…</span></div>
   </div>
 
-  <div class="card">
-    <h2>Доступы активной сессии</h2>
-    <div id="creds"><span class="spin">проверяю…</span></div>
+  <div class="card" id="creds-card" style="display:none">
+    <h2>Доступы</h2>
+    <div id="creds"></div>
     <div class="note">
-      Публикуются самой сессией в ветку <code>session-state</code> и стираются,
-      когда она заканчивается.
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Рабочий стол и терминал</h2>
-    <div class="row">
-      <select id="sess-os">
-        <option value="linux">Linux — стол, SSH, сборка APK</option>
-        <option value="windows">Windows — только RDP, 4 ядра / 16 ГБ</option>
-      </select>
-      <select id="mode">
-        <option value="web">Рабочий стол в браузере — постоянный адрес</option>
-        <option value="ssh">SSH — терминал, работает на плохой связи</option>
-        <option value="rdp">RDP — клиент Remote Desktop, адрес меняется</option>
-        <option value="both">Стол и терминал сразу</option>
-      </select>
-    </div>
-    <input id="label" placeholder="имя сессии" value="session-1">
-    <div class="row">
-      <button onclick="startSession()">Открыть сессию</button>
-      <button class="ghost" id="btn-desktop" onclick="openDesktop()">Рабочий стол</button>
-    </div>
-    <div id="sessions"><span class="spin">загрузка…</span></div>
-    <div class="warn">
-      Свободный ngrok даёт <b>один туннель</b>: агент и рабочий стол не живут
-      одновременно. Любая сессия убивается через 6 часов — это лимит платформы.
+      Публикуются самой сессией и стираются, когда она заканчивается.
     </div>
   </div>
 </div>
@@ -759,156 +741,78 @@ async function currentRuns() {
   catch (e) { return []; }
 }
 
-async function startAgent(os) {
-  if (!tok()) { alert('Сначала вставьте токен — без него запуск невозможен.'); return; }
-  const btn = $(os === 'windows' ? 'btn-agent-win' : 'btn-agent-linux');
-  const label = btn.textContent;
-  const say = t => { btn.textContent = t; };
-
-  const cur = await currentRuns();
-  if (liveAgents(cur).length) {
-    alert('Агент уже запущен. Остановите его, прежде чем поднимать другой.');
-    refresh(); return;
-  }
-  const desktops = liveDesktops(cur);
-  if (desktops.length) {
-    if (!confirm('Сейчас запущен рабочий стол, он держит единственный туннель ngrok.\n\n' +
-                 'Остановить его и поднять агента?')) return;
-    say('Останавливаю стол…');
-    for (const d of desktops) await cancelRun(d.id);
-    await new Promise(r => setTimeout(r, 8000));
-  }
-
-  btn.disabled = true; say('Запускаю…');
-  const r = await fetch(`${CTL()}/actions/workflows/agent.yml/dispatches`, {
-    method: 'POST', headers: hdr(),
-    body: JSON.stringify({ ref: 'main', inputs: {
-      os, branch: 'agent-work', repos: '', autosave_minutes: '2' } })
-  });
-  if (r.status !== 204) {
-    btn.disabled = false; say(label);
-    alert('Не вышло: ' + r.status + ' ' + await r.text());
-    return;
-  }
-  // Poll the published credentials rather than the tunnel: that file appearing
-  // is the moment the session is genuinely usable.
-  const budget = os === 'windows' ? 60 : 40;
-  for (let i = 0; i < budget; i++) {
-    say(`Поднимаю… ${i * 5}s`);
-    await new Promise(r => setTimeout(r, 5000));
-    const c = await loadCreds();
-    if (c) break;
-  }
-  btn.disabled = false; say(label);
-  await refresh();
-  const live = LIVE;
-  if (live && live.agentUrl) {
-    if (confirm('Агент готов. Открыть?')) window.open(live.agentUrl, '_blank');
-  } else {
-    alert('Агент запускается. Ссылка появится в «Доступах» через минуту.');
-  }
-}
-
-async function cancelRun(id, repo) {
-  const r = await fetch(`${GH}/repos/${repo || ctlRepo()}/actions/runs/${id}/cancel`,
-    { method: 'POST', headers: hdr() });
-  return r.status === 202 || r.status === 409;
-}
-
-async function stopRun(id, repo) {
-  if (!tok()) { alert('Нужен токен, чтобы останавливать.'); return; }
-  if (!confirm('Остановить эту сессию? Автосейв уже отправил работу в ветку.')) return;
-  const ok = await cancelRun(id, repo);
-  alert(ok ? 'Остановлено. Раннер сворачивается ~полминуты.' : 'Не вышло.');
-  setTimeout(() => { refresh(); if (page === 'act') loadActions(true); }, 4000);
-}
-
-function startSession() {
-  const os = $('sess-os').value;
-  if (os === 'windows') {
-    alert('Windows-сессия всегда RDP: рабочего стола в браузере там нет.');
-  }
-  run('remote.yml', {
-    os, mode: $('mode').value, prepare_build: 'true',
-    label: $('label').value || 'session'
-  });
-}
-
 // The address a session is actually on, not the one it hoped for.
 //
 // This is what produced the black screen. The free ngrok plan allows one
-// tunnel; when the static domain is already taken - by an agent, or by an
-// earlier session - the workflow falls back to a generated address and prints
-// that. The panel meanwhile opened the static domain unconditionally, so it
-// served whatever else was there, and /vnc.html on an agent is a 404: a blank
-// page with no explanation.
-//
-// Everything now comes from session.json, which the running session publishes,
-// so the panel opens the address that exists rather than the one it assumed.
+// tunnel; when the reserved domain is already taken the workflow falls back to
+// a generated address and prints that, while the panel opened the reserved one
+// unconditionally and served whatever else was there - a 404, i.e. a blank
+// page with no explanation. Everything now comes from session.json.
 let LIVE = null;
 
 function desktopUrl() {
-  if (LIVE && LIVE.vncUrl) return LIVE.vncUrl;
-  if (LIVE && LIVE.url) return LIVE.url + '/vnc.html?autoconnect=1&resize=remote';
+  if (!LIVE) return null;
+  if (LIVE.vncUrl) return LIVE.vncUrl;
+  // An agent publishes url + agentUrl and serves no VNC; deriving a desktop
+  // address from it produces the 404 that looked like a black screen.
+  if (LIVE.agentUrl) return null;
+  if (LIVE.url) return LIVE.url + '/vnc.html?autoconnect=1&resize=remote';
   return null;
 }
 
-async function reachable(url) {
-  // no-cors cannot read the status, so a 404 looks like success. Only good for
-  // "is anything answering at all"; the useful check is that a session has
-  // published, which loadCreds already does.
-  try { await fetch(url, { method: 'HEAD', mode: 'no-cors' }); return true; }
-  catch (e) { return false; }
-}
-
-async function openDesktop() {
-  if (!LIVE) await loadCreds();
-  const url = desktopUrl();
-  if (!url) {
-    alert('Рабочий стол не запущен.\n\nЗапустите сессию в режиме «рабочий стол» ' +
-          'и дождитесь, пока в «Доступах» появится адрес.');
-    return;
-  }
-  window.open(url, '_blank');
-}
-
-// A live thumbnail of the desktop, embedded in the panel.
-//
-// The tunnel sends no X-Frame-Options, so noVNC runs in an iframe. It is the
-// real desktop rather than a screenshot: tapping "expand" simply makes the
-// same frame full height, and the session is usable in place.
 let previewOpen = false;
+let previewTab = 'screen';   // screen | term
 
 function renderPreview() {
   const box = $('preview');
-  if (!box) return;
-  const url = desktopUrl();
+  const card = $('screen-card');
+  if (!box || !card) return;
 
-  if (!url) {
-    box.innerHTML = '<span class="note">рабочий стол не запущен — превью появится, ' +
-      'когда сессия опубликует адрес</span>';
+  const screen = desktopUrl();
+  const term = LIVE && LIVE.terminal ? LIVE.terminal : null;
+  const agent = LIVE && LIVE.agentUrl ? LIVE.agentUrl : null;
+
+  // Windows RDP has nothing embeddable: it is not HTTP. Saying so beats an
+  // empty black box that looks broken.
+  if (!screen && !term && !agent) {
+    if (LIVE && LIVE.rdpHost) {
+      card.style.display = '';
+      box.innerHTML = '<span class="note">Windows по RDP — встроить в браузер нельзя. ' +
+        'Адрес, логин и пароль ниже; открывайте в Microsoft Remote Desktop.</span>';
+    } else {
+      card.style.display = 'none';
+    }
     previewOpen = false;
     return;
   }
 
+  card.style.display = '';
+  if (previewTab === 'term' && !term) previewTab = 'screen';
+  const url = previewTab === 'term' ? term : (screen || agent);
+
+  const tabs = `
+    <div class="row" style="margin-bottom:8px">
+      ${screen || agent ? `<button class="${previewTab === 'screen' ? '' : 'ghost '}small"
+        onclick="previewTab='screen';renderPreview()">${agent && !screen ? 'Агент' : 'Экран'}</button>` : ''}
+      ${term ? `<button class="${previewTab === 'term' ? '' : 'ghost '}small"
+        onclick="previewTab='term';renderPreview()">Терминал</button>` : ''}
+    </div>`;
+
   if (!previewOpen) {
-    box.innerHTML = `
-      <div class="note" style="margin:0 0 8px">Экран сессии, живой:</div>
-      <div id="preview-frame" style="position:relative;border:1px solid var(--line);
-           border-radius:10px;overflow:hidden;background:#000;height:200px">
+    box.innerHTML = tabs + `
+      <div style="position:relative;border:1px solid var(--line);border-radius:10px;
+           overflow:hidden;background:#000;height:200px">
         <iframe src="${esc(url)}" style="border:0;width:200%;height:400px;
                 transform:scale(.5);transform-origin:0 0" scrolling="no"
                 sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
-        <div onclick="expandPreview()" title="Открыть"
-             style="position:absolute;inset:0;cursor:pointer"></div>
+        <div onclick="expandPreview()" style="position:absolute;inset:0;cursor:pointer"></div>
       </div>
       <div class="row" style="margin-top:8px">
         <button class="ghost small" onclick="expandPreview()">Развернуть</button>
         <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
       </div>`;
   } else {
-    box.innerHTML = `
-      <div class="note" style="margin:0 0 8px">Полный экран. Управление работает прямо здесь.</div>
+    box.innerHTML = tabs + `
       <iframe src="${esc(url)}" style="border:1px solid var(--line);border-radius:10px;
               width:100%;height:70vh;background:#000"
               sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
@@ -921,6 +825,158 @@ function renderPreview() {
 
 function expandPreview()   { previewOpen = true;  renderPreview(); }
 function collapsePreview() { previewOpen = false; renderPreview(); }
+
+// ── one session per account ─────────────────────────────────────────
+//
+// Three workflows and four modes were three too many decisions to make before
+// getting a screen. There is one session at a time now, and what it is decides
+// what opens: Windows means RDP, Linux means a desktop and a terminal, the
+// agent means its own hub. Free ngrok allows one tunnel anyway, so a second
+// concurrent session could never have been reachable - the old panel let you
+// start one regardless and then showed a blank page.
+
+const KIND_LABEL = { linux: 'Linux', windows: 'Windows', agent: 'CLI-агент' };
+
+function busyButtons(on, which) {
+  for (const id of ['btn-linux', 'btn-windows', 'btn-agent']) {
+    const b = $(id); if (!b) continue;
+    b.disabled = on;
+  }
+  const b = $(which); if (b) b.textContent = on ? 'Запускаю…' : (b.dataset.label || b.textContent);
+}
+
+// Anything already running, whatever kind.
+function anyLive(runs) {
+  return runs.filter(r => ['Zen agent', 'Remote session', 'opencode'].includes(r.name)
+                          && r.status !== 'completed');
+}
+
+async function launch(os) {
+  if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
+
+  const running = anyLive(await currentRuns());
+  if (running.length) {
+    const mins_ = mins(running[0].created_at);
+    const again = confirm(
+      `Сессия уже идёт (${mins_} мин).\n\n` +
+      'ОК — остановить её и начать заново.\n' +
+      'Отмена — подключиться к текущей.');
+    if (!again) { await refresh(); openLive(); return; }
+    for (const r of running) await cancelRun(r.id);
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
+  const btn = $(os === 'windows' ? 'btn-windows' : 'btn-linux');
+  btn.dataset.label = btn.dataset.label || btn.textContent;
+  busyButtons(true, btn.id);
+  try {
+    const r = await fetch(`${CTL()}/actions/workflows/remote.yml/dispatches`, {
+      method: 'POST', headers: hdr(),
+      body: JSON.stringify({ ref: 'main', inputs: {
+        os,
+        // Linux serves the desktop and the terminal from one tunnel; Windows
+        // has only its built-in RDP.
+        mode: os === 'windows' ? 'rdp' : 'web',
+        prepare_build: 'false',
+        label: (acct() && acct().login) || 'session'
+      } })
+    });
+    if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
+    await waitAndOpen(os);
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  } finally {
+    busyButtons(false, btn.id);
+    btn.textContent = btn.dataset.label;
+  }
+}
+
+async function launchAgent() {
+  if (!tok()) { alert('Сначала добавьте аккаунт на вкладке «Аккаунт».'); return; }
+  const where = confirm('Где поднять агента?\n\nОК — Linux (2 ядра, умеет собирать APK)\n' +
+                        'Отмена — Windows (4 ядра, 16 ГБ)') ? 'linux' : 'windows';
+
+  const running = anyLive(await currentRuns());
+  if (running.length) {
+    if (!confirm(`Сессия уже идёт (${mins(running[0].created_at)} мин).\n\n` +
+                 'ОК — остановить её и поднять агента.\nОтмена — оставить как есть.')) {
+      await refresh(); openLive(); return;
+    }
+    for (const r of running) await cancelRun(r.id);
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
+  const btn = $('btn-agent');
+  btn.dataset.label = btn.dataset.label || btn.textContent;
+  busyButtons(true, 'btn-agent');
+  try {
+    const r = await fetch(`${CTL()}/actions/workflows/agent.yml/dispatches`, {
+      method: 'POST', headers: hdr(),
+      body: JSON.stringify({ ref: 'main', inputs: {
+        os: where, branch: 'agent-work', repos: '', autosave_minutes: '2' } })
+    });
+    if (r.status !== 204) throw new Error(r.status + ' ' + (await r.text()).slice(0, 200));
+    await waitAndOpen('agent');
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  } finally {
+    busyButtons(false, 'btn-agent');
+    btn.textContent = btn.dataset.label;
+  }
+}
+
+// Poll until the session publishes an address, then go straight in. Waiting
+// for a link to appear in a log is the step people gave up at.
+async function waitAndOpen(kind) {
+  const btn = $(kind === 'windows' ? 'btn-windows' : kind === 'agent' ? 'btn-agent' : 'btn-linux');
+  const budget = kind === 'windows' ? 60 : 48;
+  for (let i = 0; i < budget; i++) {
+    if (btn) btn.textContent = `Поднимаю… ${i * 5}s`;
+    await new Promise(r => setTimeout(r, 5000));
+    const s = await loadCreds();
+    if (s && (s.agentUrl || s.vncUrl || s.rdpHost)) {
+      await refresh();
+      openLive();
+      return;
+    }
+  }
+  await refresh();
+  alert('Сессия ещё поднимается. Адрес появится в «Доступах» через минуту.');
+}
+
+// Open whatever the live session is, in the way that suits it.
+function openLive() {
+  const s = LIVE;
+  if (!s) { alert('Активной сессии нет.'); return; }
+  if (s.agentUrl) { window.open(s.agentUrl, '_blank'); return; }
+  if (s.vncUrl)   { window.open(s.vncUrl, '_blank'); return; }
+  if (s.rdpHost) {
+    // RDP is not HTTP: there is nothing to open in a browser, so hand over the
+    // details and let the RDP client take them.
+    alert('Windows: откройте Microsoft Remote Desktop и добавьте ПК\n\n' +
+          'Адрес: ' + s.rdpHost + '\nЛогин: ' + (s.rdpUser || 'zenrdp') +
+          '\nПароль: ' + (s.rdpPass || '—') +
+          '\n\nЭти же поля с кнопкой «копия» — ниже в «Доступах».');
+    go('sess');
+    return;
+  }
+  alert('Сессия ещё не сообщила адрес.');
+}
+
+async function cancelRun(id, repo) {
+  const r = await fetch(`${GH}/repos/${repo || ctlRepo()}/actions/runs/${id}/cancel`,
+    { method: 'POST', headers: hdr() });
+  // 202 accepted; 409 means it had already finished, which is fine here.
+  return r.status === 202 || r.status === 409;
+}
+
+async function stopRun(id, repo) {
+  if (!tok()) { alert('Нужен токен, чтобы останавливать.'); return; }
+  if (!confirm('Остановить сессию? Автосейв уже отправил работу в ветку.')) return;
+  const ok = await cancelRun(id, repo);
+  alert(ok ? 'Остановлено. Раннер сворачивается ~полминуты.' : 'Не вышло.');
+  setTimeout(() => { refresh(); if (page === 'act') loadActions(true); }, 4000);
+}
 
 // ── session credentials ─────────────────────────────────────────────
 //
@@ -975,6 +1031,7 @@ async function loadCreds() {
       ? '<span class="note">активных сессий нет</span>'
       : `<div class="danger">${esc(e.message)}</div>`;
     LIVE = null; renderPreview();
+    if ($('creds-card')) $('creds-card').style.display = 'none';
     return null;
   }
 }
@@ -1032,41 +1089,39 @@ async function refresh() {
   let runs = [];
   try { runs = (await api(`${CTL()}/actions/runs?per_page=20`)).workflow_runs || []; }
   catch (e) {
-    $('agent-live').innerHTML = `<div class="danger">${esc(e.message)}</div>`;
+    $('live').innerHTML = `<div class="danger">${esc(e.message)}</div>`;
     return;
   }
 
-  const agents = liveAgents(runs), desktops = liveDesktops(runs);
-  $('agent-live').innerHTML = agents.length
-    ? '<table>' + agents.map(r => {
-        const used = mins(r.created_at), left = Math.max(0, 360 - used);
-        return `<tr><td>#${r.run_number}</td>
-          <td><a href="${esc(r.html_url)}" target="_blank">сводка</a> ${pill(r)}
-            <div class="note">идёт ${used} мин · осталось ~${left} мин</div>
-            <button class="ghost small" onclick="stopRun(${r.id})">Выключить</button></td>
-          </tr>`;
-      }).join('') + '</table>'
-    : '<span class="note">агент не запущен</span>';
-
+  const live = anyLive(runs);
   const conflict = $('agent-conflict');
-  if (agents.length && desktops.length) {
+  if (live.length > 1) {
+    // Should not happen now that launching stops what is running, but an old
+    // session started before this change can still collide - and the free plan
+    // gives one tunnel, so the extra one is simply unreachable.
     conflict.style.display = '';
-    conflict.textContent = 'Одновременно запущены агент и рабочий стол. Туннель ' +
-      'достанется тому, кто стартовал первым — второй будет недоступен.';
+    conflict.innerHTML = 'Запущено несколько сессий. Туннель достанется первой, ' +
+      'остальные недоступны — лишние стоит выключить.';
   } else conflict.style.display = 'none';
 
-  $('sessions').innerHTML = desktops.length
-    ? '<table>' + desktops.map(r => {
-        const used = mins(r.created_at);
+  $('live').innerHTML = live.length
+    ? '<table>' + live.map(r => {
+        const used = mins(r.created_at), left = Math.max(0, 360 - used);
+        const kind = r.name === 'Zen agent' ? 'CLI-агент' : 'Рабочий стол';
         return `<tr><td>#${r.run_number}</td>
-          <td><a href="${esc(r.html_url)}" target="_blank">открыть</a> ${pill(r)}
-            <div class="note">идёт ${used} мин · осталось ~${Math.max(0, 360 - used)} мин</div>
+          <td><b>${esc(kind)}</b> ${pill(r)}
+            <div class="note">идёт ${used} мин · осталось ~${left} мин ·
+              <a href="${esc(r.html_url)}" target="_blank">журнал</a></div>
+            <button class="small" onclick="openLive()">Открыть</button>
             <button class="ghost small" onclick="stopRun(${r.id})">Выключить</button></td>
           </tr>`;
       }).join('') + '</table>'
-    : '<span class="note">активных сессий нет</span>';
+    : '<span class="note">сессия не запущена</span>';
 
-  loadCreds();
+  // Awaited: the credentials decide what the screen and access cards show, and
+  // firing this off unawaited left refresh() reporting a live session above two
+  // cards that were still empty.
+  await loadCreds();
 
   const build = runs.find(r => r.name === 'Build APK' && r.conclusion === 'success');
   const box = $('apk');

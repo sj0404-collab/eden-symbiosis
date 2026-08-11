@@ -98,7 +98,9 @@ class GameFoldersFragment : Fragment() {
     private fun showFolderContents(folder: GameFolderScanner.Folder) {
         viewLifecycleOwner.lifecycleScope.launch {
             val entries = withContext(Dispatchers.IO) {
-                GameFolderScanner.listGames(requireContext(), folder.uriString)
+                GameFolderScanner.listGames(
+                    requireContext(), folder.uriString, folder.depth
+                )
             }
             if (_binding == null) return@launch
 

@@ -18,8 +18,24 @@ import java.util.Locale
  */
 object GameFolderScanner {
 
-    /** Extensions the emulator will attempt to launch. */
-    private val ROM_EXTENSIONS = setOf("xci", "nsp", "nca", "nro", "nso", "kip")
+    /**
+     * Extensions the library will actually import.
+     *
+     * Must match Game.extensions upstream exactly. It did not: this listed nso
+     * and kip as well, so the status strip counted files the emulator then
+     * refused to show, and reported "1 game" over an empty list. A count the
+     * library cannot reproduce is worse than no count - it sends the user
+     * looking for a bug in the wrong place.
+     */
+    private val ROM_EXTENSIONS = setOf("xci", "nsp", "nca", "nro")
+
+    /**
+     * Extensions that look like content but are never listed as games.
+     *
+     * Worth naming separately so the folder screen can say "3 files here are
+     * not launchable" instead of pretending the folder is empty.
+     */
+    private val NON_GAME_EXTENSIONS = setOf("nso", "kip", "bin", "zip", "7z", "rar")
 
     data class Folder(
         val uriString: String,
@@ -27,6 +43,10 @@ object GameFolderScanner {
         val displayName: String,
         val gameCount: Int,
         val totalBytes: Long,
+        /** Files with a ROM-ish extension the library will not import. */
+        val skipped: Int = 0,
+        /** Depth this folder was scanned at, so the file list can match. */
+        val depth: Int = 1,
         /** True when the folder could not be read at all. */
         val unreadable: Boolean = false
     )
@@ -45,28 +65,44 @@ object GameFolderScanner {
     fun scan(context: Context): List<Folder> {
         val dirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return emptyList()
         return dirs.map { dir ->
-            scanOne(context, dir.uriString)
+            scanOne(context, dir.uriString, depthFor(dir.deepScan))
         }
     }
 
-    private fun scanOne(context: Context, uriString: String): Folder {
+    /**
+     * How deep the library looks: GameHelper uses 3 with deep scan on and 1
+     * without, counting the folder itself as one level.
+     *
+     * Matching it matters. This used to walk the whole tree regardless, so a
+     * game two directories down was counted here and ignored by the importer,
+     * and the strip claimed a game the list could never show.
+     */
+    fun depthFor(deepScan: Boolean): Int = if (deepScan) 3 else 1
+
+    /** Scan one folder, for callers that have a uri rather than the config. */
+    fun scanOneFolder(context: Context, uriString: String, deepScan: Boolean): Folder =
+        scanOne(context, uriString, depthFor(deepScan))
+
+    private fun scanOne(context: Context, uriString: String, maxDepth: Int): Folder {
         val name = displayNameOf(uriString)
         val tree = runCatching { Uri.parse(uriString) }.getOrNull()
-            ?: return Folder(uriString, name, 0, 0, unreadable = true)
+            ?: return Folder(uriString, name, 0, 0, depth = maxDepth, unreadable = true)
 
         var count = 0
         var bytes = 0L
+        var skipped = 0
         var readable = false
 
         // Iterative rather than recursive: a pathological tree should not be
         // able to overflow the stack on a screen this trivial.
-        val queue = ArrayDeque<Uri>()
-        queue.add(childrenUriFor(tree) ?: return Folder(uriString, name, 0, 0, unreadable = true))
+        val queue = ArrayDeque<Pair<Uri, Int>>()
+        queue.add((childrenUriFor(tree)
+            ?: return Folder(uriString, name, 0, 0, depth = maxDepth, unreadable = true)) to maxDepth)
 
         var guard = 0
         while (queue.isNotEmpty() && guard < MAX_DIRECTORIES) {
             guard++
-            val children = queue.removeFirst()
+            val (children, depth) = queue.removeFirst()
             val cursor = runCatching {
                 context.contentResolver.query(
                     children,
@@ -89,27 +125,30 @@ object GameFolderScanner {
                     val size = if (it.isNull(3)) 0L else it.getLong(3)
 
                     if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        runCatching {
-                            queue.add(
-                                DocumentsContract.buildChildDocumentsUriUsingTree(
-                                    tree, documentId
+                        if (depth > 1) {
+                            runCatching {
+                                queue.add(
+                                    DocumentsContract.buildChildDocumentsUriUsingTree(
+                                        tree, documentId
+                                    ) to depth - 1
                                 )
-                            )
+                            }
                         }
                         continue
                     }
 
-                    if (displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                        in ROM_EXTENSIONS
-                    ) {
+                    val ext = displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                    if (ext in ROM_EXTENSIONS) {
                         count++
                         bytes += size
+                    } else if (ext in NON_GAME_EXTENSIONS) {
+                        skipped++
                     }
                 }
             }
         }
 
-        return Folder(uriString, name, count, bytes, unreadable = !readable)
+        return Folder(uriString, name, count, bytes, skipped, maxDepth, unreadable = !readable)
     }
 
     data class Entry(
@@ -133,20 +172,20 @@ object GameFolderScanner {
      * so a file copied over USB a second ago is listed and one deleted a second
      * ago is not.
      */
-    fun listGames(context: Context, uriString: String): List<Entry> {
+    fun listGames(context: Context, uriString: String, maxDepth: Int = 1): List<Entry> {
         val tree = runCatching { Uri.parse(uriString) }.getOrNull() ?: return emptyList()
         val root = childrenUriFor(tree) ?: return emptyList()
         val out = mutableListOf<Entry>()
 
-        // Same iterative walk and the same guard as the counter, so the two
+        // Same walk, same guard and the same depth as the counter, so the two
         // cannot drift apart again.
-        val queue = ArrayDeque<Pair<Uri, String>>()
-        queue.add(root to "")
+        val queue = ArrayDeque<Triple<Uri, String, Int>>()
+        queue.add(Triple(root, "", maxDepth))
         var guard = 0
 
         while (queue.isNotEmpty() && guard < MAX_DIRECTORIES) {
             guard++
-            val (children, prefix) = queue.removeFirst()
+            val (children, prefix, depth) = queue.removeFirst()
             val cursor = runCatching {
                 context.contentResolver.query(
                     children,
@@ -168,11 +207,16 @@ object GameFolderScanner {
                     val size = if (it.isNull(3)) 0L else it.getLong(3)
 
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        runCatching {
-                            queue.add(
-                                DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId)
-                                    to if (prefix.isEmpty()) name else "$prefix/$name"
-                            )
+                        if (depth > 1) {
+                            runCatching {
+                                queue.add(
+                                    Triple(
+                                        DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId),
+                                        if (prefix.isEmpty()) name else "$prefix/$name",
+                                        depth - 1
+                                    )
+                                )
+                            }
                         }
                         continue
                     }

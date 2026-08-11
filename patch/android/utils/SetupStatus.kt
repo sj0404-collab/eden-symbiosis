@@ -109,19 +109,45 @@ object SetupStatus {
         // screen cannot report different numbers.
         var games = 0
         var bytes = 0L
+        var skipped = 0
         for (dir in dirs) {
             val entries = runCatching {
-                GameFolderScanner.listGames(context, dir.uriString)
+                // Same depth the library importer uses for this folder, so the
+                // strip cannot claim a game the game list will not show.
+                GameFolderScanner.listGames(
+                    context, dir.uriString, GameFolderScanner.depthFor(dir.deepScan)
+                )
             }.getOrDefault(emptyList())
             games += entries.size
             bytes += entries.sumOf { it.bytes }
+            skipped += runCatching {
+                GameFolderScanner.scanOneFolder(context, dir.uriString, dir.deepScan).skipped
+            }.getOrDefault(0)
         }
         val name = GameFolderScanner.displayNameOf(dirs.first().uriString)
+
+        // A count of files is not a count of games. The library also refuses a
+        // ROM whose header will not parse - no keys, wrong firmware, truncated
+        // download - and the emulator's own list is the authority on that.
+        // Comparing against it turns "I see a file but no game" from a mystery
+        // into a sentence.
+        val imported = runCatching { GameHelper.cachedGameList.size }.getOrDefault(-1)
+        val detail = when {
+            games == 0 && skipped > 0 ->
+                "файлы есть ($skipped), но это не игры — нужны .xci .nsp .nca .nro"
+            games == 0 ->
+                "в «$name» нет файлов игр"
+            imported in 0 until games ->
+                "$games файлов, распознано $imported — остальные не читаются: " +
+                "проверь ключи и прошивку"
+            dirs.size == 1 -> "$games в «$name»"
+            else -> "$games в ${dirs.size} папках"
+        }
         return Item(
             labelRes = R.string.status_games,
-            present = games > 0,
-            detail = if (dirs.size == 1) "$games в «$name»"
-                     else "$games в ${dirs.size} папках",
+            // Green only when the emulator agrees it has something to launch.
+            present = games > 0 && imported != 0,
+            detail = detail,
             bytes = bytes
         )
     }

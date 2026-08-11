@@ -334,6 +334,15 @@ jobs:
             exit 1
           fi
 
+          # An external SSH client would need a second tunnel: the one free
+          # ngrok connection is already carrying HTTP, and a bare sshd on the
+          # runner is unreachable from a phone. Rather than publish an address
+          # that only resolves on the runner - which looks usable and is not -
+          # the browser terminal at /term/ is the shell for this session, and
+          # the separate "SSH session" workflow (tmate) is there when a real
+          # client is wanted.
+          SSH_CMD=""; SSH_PASS=""
+
           URL="$ACTIVE_URL/vnc.html?autoconnect=1&resize=remote&password=$PASS"
           {
             echo ""
@@ -367,7 +376,9 @@ jobs:
               "kind=Рабочий стол" "os=linux" \
               "url=$ACTIVE_URL" "vncUrl=$URL" "vncPass=$PASS" \
               "vncUser=(без логина)" \
-              "terminal=$ACTIVE_URL/term/" "branch=$SESSION_BRANCH"
+              "terminal=$ACTIVE_URL/term/" \
+              "sshCmd=${SSH_CMD:-}" "sshPass=${SSH_PASS:-}" \
+              "branch=$SESSION_BRANCH"
 
       - name: Set up the desktop and RDP
         if: inputs.mode == 'rdp' || inputs.mode == 'both'
