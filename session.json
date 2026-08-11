@@ -1,0 +1,13 @@
+{
+  "kind": "CLI-агент",
+  "os": "linux",
+  "url": "https://filly-above-terrapin.ngrok-free.app",
+  "agentUrl": "https://filly-above-terrapin.ngrok-free.app/hub?token=zen-b41675546236b398fece09ef",
+  "agentToken": "zen-b41675546236b398fece09ef",
+  "branch": "agent-work",
+  "startedAt": "2026-08-11T09:14:55Z",
+  "state": "live",
+  "runId": "31476818082",
+  "runNumber": "10",
+  "repo": "sj0404-collab/eden-symbiosis"
+}
