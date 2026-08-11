@@ -49,7 +49,14 @@ for arg in "$@"; do
 done
 set -- ${ARGS+"${ARGS[@]}"}
 
-python3 - "$@" <<'PY' > /tmp/session.json
+# A unique staging file per invocation. A fixed /tmp/session.json is shared by
+# every caller on the machine, and two publishes running at once overwrote each
+# other's payload - caught by a local race test, where the Windows entry ended
+# up carrying the Linux address.
+STAGE="$(mktemp -t session.XXXXXX.json)"
+trap 'rm -f "$STAGE"' EXIT
+
+python3 - "$@" <<'PY' > "$STAGE"
 import json, os, sys, datetime
 
 data = {}
@@ -69,7 +76,7 @@ data['repo'] = os.environ.get('GITHUB_REPOSITORY', '')
 print(json.dumps(data, ensure_ascii=False, indent=2))
 PY
 
-if [ ! -s /tmp/session.json ]; then
+if [ ! -s "$STAGE" ]; then
   echo "publish_session: nothing to publish" >&2
   exit 0
 fi
@@ -96,7 +103,7 @@ fi
 # different session that is still live - which is what happened: a cancelled
 # agent erased the record of a running desktop, and the panel then reported no
 # session while the desktop was serving fine.
-if grep -q '"state": *"ended"' /tmp/session.json 2>/dev/null && [ -f "$FILE" ]; then
+if grep -q '"state": *"ended"' "$STAGE" 2>/dev/null && [ -f "$FILE" ]; then
   OWNER_RUN=$(python3 -c "
 import json,sys
 try:
@@ -110,7 +117,7 @@ except Exception:
   fi
 fi
 
-cp /tmp/session.json "$FILE"
+cp "$STAGE" "$FILE"
 git config user.email "session@eden-symbiosis"
 git config user.name  "Session state"
 git add "$FILE"
@@ -121,10 +128,39 @@ if git diff --cached --quiet; then
 fi
 
 git commit -q -m "session $(date -u '+%Y-%m-%d %H:%M:%S')"
-# Force: this branch is a mailbox, not a history. Racing sessions overwrite
-# rather than conflict, and the last writer is the one that is live.
-if git push -q -f origin "$BRANCH"; then
-  echo "publish_session: published to $BRANCH"
+
+# NOT a force push any more.
+#
+# Two desks publish to this branch at the same time, and -f made the second
+# writer erase the first: the Linux desk cloned the branch before the Windows
+# desk existed, then force-pushed its own single-file tree over it. Measured -
+# session-windows.json was written by a step that reported success, and the
+# branch afterwards held only session-linux.json.
+#
+# So: fetch, replay this one file on top of whatever is there now, push
+# normally, and retry if someone else got in between. Each desk only ever
+# touches its own file, so the merge is trivial and cannot conflict.
+pushed=0
+for attempt in 1 2 3 4 5; do
+  if git push -q origin "HEAD:$BRANCH" 2>/dev/null; then pushed=1; break; fi
+
+  # Rejected: someone else pushed. Take their tree, put our file back on it.
+  if git fetch -q origin "$BRANCH" 2>/dev/null; then
+    git reset -q --hard FETCH_HEAD
+  else
+    # The branch does not exist yet and the push still failed; nothing to
+    # rebase onto, so just try again.
+    sleep $((attempt * 2))
+    continue
+  fi
+  cp "$STAGE" "$FILE"
+  git add "$FILE"
+  git commit -q -m "session $(date -u '+%Y-%m-%d %H:%M:%S')" 2>/dev/null || true
+  sleep $((attempt * 2))
+done
+
+if [ "$pushed" = 1 ]; then
+  echo "publish_session: published $FILE to $BRANCH"
 else
-  echo "publish_session: push failed (session still works)" >&2
+  echo "publish_session: push failed after retries (the desk still works)" >&2
 fi
