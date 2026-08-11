@@ -1,12 +1,6 @@
 {
-  "kind": "Стол Windows",
-  "os": "windows",
-  "url": "https://convention-ban-lawyer-unlock.trycloudflare.com",
-  "deskUrl": "https://convention-ban-lawyer-unlock.trycloudflare.com/vnc.html?autoconnect=1&resize=remote",
-  "auth": "без пароля",
-  "label": "desks",
-  "startedAt": "2026-08-11T18:30:29Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-11T18:39:29Z",
   "runId": "31522830044",
   "runNumber": "3",
   "repo": "sj0404-collab/eden-symbiosis"
