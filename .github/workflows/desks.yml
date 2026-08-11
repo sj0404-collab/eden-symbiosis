@@ -207,6 +207,20 @@ jobs:
           PIDFILE=/tmp/cloudflared-8090.pid
           for i in $(seq 1 1400); do
             sleep 15
+
+            # Check what a visitor sees, not just a pid. On the Windows desk a
+            # dead server behind a live tunnel answered 502 and no pid check
+            # noticed; the same failure is possible here.
+            if ! curl -sf -o /dev/null -m 10 http://127.0.0.1:8090/vnc.html; then
+              echo "::warning::the local desk stopped answering; restarting its parts."
+              pgrep -f "websockify --web" >/dev/null 2>&1 || \
+                nohup websockify --web=/usr/share/novnc 6080 localhost:5901 \
+                  > /tmp/websockify2.log 2>&1 &
+              pgrep -x ttyd >/dev/null 2>&1 || nohup ttyd -p 7681 -W bash > /tmp/ttyd2.log 2>&1 &
+              sudo systemctl is-active --quiet nginx || sudo systemctl restart nginx
+              sleep 5
+            fi
+
             PID=$(cat "$PIDFILE" 2>/dev/null || echo)
             if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then continue; fi
             echo "::warning::the tunnel exited; restarting it."
@@ -297,7 +311,7 @@ jobs:
           Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
           $exe = "C:\Program Files\TightVNC\tvnserver.exe"
           if (-not (Test-Path $exe)) { throw "TightVNC did not install to $exe" }
-          Start-Process $exe -ArgumentList "-run" -WindowStyle Hidden
+          cmd /c start "" /b "$exe" -run
           Start-Sleep -Seconds 6
           $proc = Get-Process tvnserver -ErrorAction SilentlyContinue
           if (-not $proc) { throw "tvnserver did not stay running" }
@@ -352,10 +366,21 @@ jobs:
           Write-Host "noVNC at $web"
           "NOVNC_WEB=$web" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-          Start-Process python -ArgumentList "-m","websockify","--web=`"$web`"","6080","127.0.0.1:5900" `
-            -RedirectStandardOutput "$env:TEMP\ws.log" -RedirectStandardError "$env:TEMP\ws.err" `
-            -WindowStyle Hidden
-          Start-Sleep -Seconds 6
+          # cmd /c start, NOT Start-Process.
+          #
+          # A process launched with Start-Process is killed when the step that
+          # started it ends. Measured directly: three websockify servers were
+          # started in one step - Start-Process on 6080, cmd /c start on 6081,
+          # a scheduled task on 6082. All three answered 200 inside that step.
+          # In the very next step 6080 was gone (HTTP 000) while 6081 and 6082
+          # were still serving, and still serving two minutes later.
+          #
+          # That is exactly what made the Windows desk answer 502: the tunnel
+          # stayed up, and the thing behind it had been killed at the step
+          # boundary.
+          cmd /c start "" /b python -m websockify --web="$web" 6080 127.0.0.1:5900 `
+            "1>$env:TEMP\ws.log" "2>$env:TEMP\ws.err"
+          Start-Sleep -Seconds 8
           $r = try { Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:6080/vnc.html" -TimeoutSec 15 } catch { $null }
           if (-not $r -or $r.StatusCode -ne 200) {
             Get-Content "$env:TEMP\ws.log","$env:TEMP\ws.err" -ErrorAction SilentlyContinue | Write-Host
@@ -375,12 +400,10 @@ jobs:
           # A quick tunnel: no account, no token, and as many as we like - which
           # is why both desks can be up at the same time. ngrok's free plan
           # allows one, so it could never do this.
+          # Detached the same way as websockify, and for the same reason.
           $log = "$env:TEMP\cf.log"
-          $proc = Start-Process $cf `
-            -ArgumentList "tunnel","--url","http://localhost:6080","--no-autoupdate","--loglevel","info" `
-            -RedirectStandardOutput $log -RedirectStandardError "$env:TEMP\cf.err" `
-            -WindowStyle Hidden -PassThru
-          "TUNNEL_PID=$($proc.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          cmd /c start "" /b "$cf" tunnel --url http://localhost:6080 --no-autoupdate --loglevel info `
+            "1>$log" "2>$env:TEMP\cf.err"
 
           $url = $null
           foreach ($try in 1..40) {
@@ -427,18 +450,28 @@ jobs:
         run: |
           Write-Host "The desk stays up until you cancel this run, or for six hours."
           $cf = "$env:TEMP\cloudflared.exe"
-          $pid_ = $env:TUNNEL_PID
+          $web = $env:NOVNC_WEB
           for ($i = 0; $i -lt 1400; $i++) {
             Start-Sleep -Seconds 15
-            if ($pid_ -and (Get-Process -Id $pid_ -ErrorAction SilentlyContinue)) { continue }
+
+            # Watch what a visitor would see, not a process id. A dead
+            # websockify behind a live tunnel answers 502, which no PID check
+            # would ever notice - and that is the failure that actually
+            # happened.
+            $local = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:6080/vnc.html")
+            if ($local -ne "200") {
+              Write-Host "::warning::websockify stopped answering ($local); restarting it."
+              cmd /c start "" /b python -m websockify --web="$web" 6080 127.0.0.1:5900 `
+                "1>$env:TEMP\ws2.log" "2>$env:TEMP\ws2.err"
+              Start-Sleep -Seconds 8
+            }
+
+            if (Get-Process cloudflared -ErrorAction SilentlyContinue) { continue }
 
             Write-Host "::warning::the tunnel exited; restarting it."
             $log = "$env:TEMP\cf2.log"
-            $proc = Start-Process $cf `
-              -ArgumentList "tunnel","--url","http://localhost:6080","--no-autoupdate","--loglevel","info" `
-              -RedirectStandardOutput $log -RedirectStandardError "$env:TEMP\cf2.err" `
-              -WindowStyle Hidden -PassThru
-            $pid_ = $proc.Id
+            cmd /c start "" /b "$cf" tunnel --url http://localhost:6080 --no-autoupdate --loglevel info `
+              "1>$log" "2>$env:TEMP\cf2.err"
             $url = $null
             foreach ($try in 1..30) {
               Start-Sleep -Seconds 2
