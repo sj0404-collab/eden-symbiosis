@@ -1,7 +1,13 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-11T19:12:25Z",
-  "runId": "31525148247",
-  "runNumber": "6",
+  "kind": "Стол Windows",
+  "os": "windows",
+  "url": "https://podcasts-signs-lets-sky.trycloudflare.com",
+  "deskUrl": "https://podcasts-signs-lets-sky.trycloudflare.com/",
+  "auth": "без пароля",
+  "label": "desks",
+  "startedAt": "2026-08-11T19:13:04Z",
+  "state": "live",
+  "runId": "31526664924",
+  "runNumber": "8",
   "repo": "sj0404-collab/eden-symbiosis"
 }
