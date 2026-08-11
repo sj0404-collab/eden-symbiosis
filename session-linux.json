@@ -1,13 +1,6 @@
 {
-  "kind": "Стол Linux",
-  "os": "linux",
-  "url": "https://museums-dim-processed-sarah.trycloudflare.com",
-  "deskUrl": "https://museums-dim-processed-sarah.trycloudflare.com/vnc.html?autoconnect=1&resize=remote",
-  "terminal": "https://museums-dim-processed-sarah.trycloudflare.com/term/",
-  "auth": "без пароля",
-  "label": "desks",
-  "startedAt": "2026-08-11T19:14:44Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-11T19:37:47Z",
   "runId": "31526664924",
   "runNumber": "8",
   "repo": "sj0404-collab/eden-symbiosis"
