@@ -142,8 +142,8 @@ object SetupStatus {
             !SharedDataDirectory.hasAllFilesAccess()
 
         val detail = when {
-            noAccess && games > 0 ->
-                "$games найдено, но нет доступа к файлам — выдай «Все файлы» в настройках"
+            noAccess ->
+                "нет доступа к файлам — нажми сюда, чтобы выдать «Все файлы»"
             games == 0 && skipped > 0 ->
                 "файлы есть ($skipped), но это не игры — нужны .xci .nsp .nca .nro"
             games == 0 ->

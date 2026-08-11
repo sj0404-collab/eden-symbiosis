@@ -1442,4 +1442,5 @@
     <string name="folders_open_list">Папки с играми</string>
     <string name="folder_in_subfolder">в %1$s</string>
     <string name="status_storage_needed">Нужен доступ к файлам</string>
+    <string name="status_storage_manual">Откройте: Настройки → Приложения → Специальный доступ → Доступ ко всем файлам</string>
 </resources>

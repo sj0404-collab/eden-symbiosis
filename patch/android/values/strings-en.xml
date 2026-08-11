@@ -2109,4 +2109,5 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="folders_open_list">Game folders</string>
     <string name="folder_in_subfolder">in %1$s</string>
     <string name="status_storage_needed">Storage access needed</string>
+    <string name="status_storage_manual">Open Settings, Apps, Special app access, All files access</string>
 </resources>

@@ -71,8 +71,6 @@ class GamesFragment : Fragment() {
     private var fallbackBottomInset: Int = 0
 
     companion object {
-        /** Set once the storage prompt has been shown, so it is not repeated. */
-        private const val PREF_ASKED_STORAGE = "SymbiosisAskedStorage"
 
         private const val SEARCH_TEXT = "SearchText"
         private const val PREF_SORT_TYPE = "GamesSortType"
@@ -262,9 +260,20 @@ class GamesFragment : Fragment() {
         // Status strip. Refreshed in onResume too, because keys and firmware are
         // usually installed from another screen and the answer changes while
         // this one is in the background.
-        // The strip no longer hides its own detail - tapping it now refreshes,
-        // which is what a user pokes a status line for when it looks stale.
-        binding.statusStrip?.setOnClickListener { refreshStatusStrip() }
+        // Tapping the strip refreshes it - or, when storage access is what is
+        // missing, opens the screen that grants it. All Files Access is a
+        // "special app access", so it does not appear on the normal
+        // Permissions page and cannot be granted by a runtime prompt; a user
+        // looking there finds nothing and concludes the app never asked.
+        binding.statusStrip?.setOnClickListener {
+            if (SharedDataDirectory.needsAllFilesAccess() &&
+                !SharedDataDirectory.hasAllFilesAccess()
+            ) {
+                openAllFilesAccessSettings()
+            } else {
+                refreshStatusStrip()
+            }
+        }
 
         // A plain button. The folder list used to be reachable only by long
         // pressing "+" or by digging through the Tools tab, which is to say:
@@ -611,37 +620,61 @@ class GamesFragment : Fragment() {
     private fun maybeAskForStorage() {
         if (!SharedDataDirectory.needsAllFilesAccess()) return
         if (SharedDataDirectory.hasAllFilesAccess()) return
-        val prefs = PreferenceManager.getDefaultSharedPreferences(requireContext())
-        if (prefs.getBoolean(PREF_ASKED_STORAGE, false)) return
-        prefs.edit().putBoolean(PREF_ASKED_STORAGE, true).apply()
+
+        // Ask again while the permission is still missing.
+        //
+        // The flag used to be set before the dialog was even shown, so
+        // "ask once" became "never ask again": dismissing it, or the dialog
+        // failing to appear at all, permanently silenced the only prompt the
+        // app has. Since the emulator cannot read a single ROM without this,
+        // being asked on each launch until it is granted is the correct
+        // trade - and it stops the moment the permission is there. Only a
+        // deliberate "not now" quietens it for the rest of the session.
+        if (askedForStorageThisSession) return
+        askedForStorageThisSession = true
 
         MessageDialogFragment.newInstance(
             requireActivity(),
             titleId = R.string.status_storage_needed,
             descriptionId = R.string.need_all_files_access,
             positiveButtonTitleId = R.string.open_settings,
-            positiveAction = {
-                runCatching {
-                    startActivity(
-                        Intent(
-                            android.provider.Settings
-                                .ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                            android.net.Uri.parse("package:${requireContext().packageName}")
-                        )
-                    )
-                }.onFailure {
-                    // Some vendor builds lack the per-app screen; the global
-                    // list is better than nothing.
-                    runCatching {
-                        startActivity(
-                            Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                        )
-                    }
-                }
-            },
+            positiveAction = { openAllFilesAccessSettings() },
             showNegativeButton = true,
             negativeButtonTitleId = android.R.string.cancel
         ).show(childFragmentManager, MessageDialogFragment.TAG)
+    }
+
+    /** True once the prompt has been shown in this run of the app. */
+    private var askedForStorageThisSession = false
+
+    /**
+     * Opens the All Files Access screen for this app.
+     *
+     * Falls back to the global list, because some vendor builds - MIUI among
+     * them - do not implement the per-app intent and would otherwise throw.
+     */
+    private fun openAllFilesAccessSettings() {
+        val ok = runCatching {
+            startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    android.net.Uri.parse("package:${requireContext().packageName}")
+                )
+            )
+        }.isSuccess
+        if (!ok) {
+            runCatching {
+                startActivity(
+                    Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                )
+            }.onFailure {
+                Toast.makeText(
+                    requireContext(),
+                    getString(R.string.status_storage_manual),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     /**

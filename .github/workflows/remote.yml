@@ -614,8 +614,20 @@ jobs:
 
           # TCP, because RDP is not HTTP. Free ngrok hands out a random
           # host:port here - the reserved domain only applies to HTTP.
-          Start-Process -FilePath "ngrok" -ArgumentList "tcp 3389 --log stdout --log-format json --log-level info" `
-            -RedirectStandardOutput "$env:TEMP\ngrok.log" -NoNewWindow
+          # Detached, not -NoNewWindow.
+          #
+          # -NoNewWindow attaches ngrok to this step's console, and the console
+          # goes away when the step does: the tunnel's edge stays registered so
+          # the port still accepts TCP, but nothing is behind it and every
+          # connection is closed immediately. That is exactly what a client
+          # sees as "connection reset" - measured against a live session, four
+          # attempts in a row, before this changed.
+          $ngrok = Start-Process -FilePath "ngrok" `
+            -ArgumentList "tcp 3389 --log stdout --log-format json --log-level info" `
+            -RedirectStandardOutput "$env:TEMP\ngrok.log" `
+            -RedirectStandardError "$env:TEMP\ngrok.err" `
+            -WindowStyle Hidden -PassThru
+          "NGROK_PID=$($ngrok.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
           $endpoint = $null
           foreach ($attempt in 1..30) {
@@ -665,7 +677,35 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "The desktop stays up until you cancel this run, or for six hours."
-          Start-Sleep -Seconds 21000
+          # Watch the tunnel rather than sleeping blindly. If ngrok dies the
+          # port keeps accepting connections and dropping them, which looks to
+          # the user like a broken RDP client rather than a dead tunnel.
+          for ($i = 0; $i -lt 1400; $i++) {
+            Start-Sleep -Seconds 15
+            $alive = Get-Process -Id $env:NGROK_PID -ErrorAction SilentlyContinue
+            if (-not $alive) {
+              Write-Host "::warning::ngrok exited; restarting the tunnel."
+              $ngrok = Start-Process -FilePath "ngrok" `
+                -ArgumentList "tcp 3389 --log stdout --log-format json --log-level info" `
+                -RedirectStandardOutput "$env:TEMP\ngrok2.log" `
+                -WindowStyle Hidden -PassThru
+              $env:NGROK_PID = $ngrok.Id
+              Start-Sleep -Seconds 8
+              try {
+                $t = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
+                $tcp = $t.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
+                if ($tcp) {
+                  $addr = $tcp.public_url -replace '^tcp://', ''
+                  Write-Host "new address: $addr"
+                  $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+                  bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+                    "kind=RDP" "os=windows" "rdpHost=$addr" `
+                    "rdpUser=${{ steps.rdp.outputs.user }}" `
+                    "rdpPass=${{ steps.rdp.outputs.password }}"
+                }
+              } catch { }
+            }
+          }
 
       - name: Clear the published session
         if: always()
