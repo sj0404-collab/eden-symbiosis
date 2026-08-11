@@ -253,7 +253,7 @@ JNIEXPORT jstring JNICALL
  * yields ErrorNSPMissingProgramNCA (nsp.cpp:100), which is not a key problem
  * and cannot be fixed by reinstalling prod.keys.
  */
-extern "C" JNIEXPORT jstring JNICALL
+JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
                                                           jstring j_path) {
     const std::string path = Common::Android::GetJString(env, j_path);
@@ -338,7 +338,7 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
     return Common::Android::ToJString(env, message);
 }
 
-extern "C" JNIEXPORT jstring JNICALL
+JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getThermalState(JNIEnv* env, jobject) {
     const auto reading = Symbiosis::GetThermalMonitor().Sample();
     std::string out = Symbiosis::ToString(reading.state);

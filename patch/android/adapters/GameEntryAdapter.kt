@@ -41,8 +41,16 @@ class GameEntryAdapter(
             // is what the file is called, not what the game is called, and the
             // bracketed title id is noise at a glance. The full name stays in
             // the second line so nothing is hidden.
-            binding.textFolderName.text = model.name
-                .substringBeforeLast('.')
+            // An unpacked game is a file literally called "main" inside a
+            // folder named after the title, so showing the filename would list
+            // every such game as "main". The folder is the name in that case.
+            val bare = model.name.lowercase() in setOf("main", "00")
+            val label = if (bare && model.relativePath.isNotEmpty()) {
+                model.relativePath.substringAfterLast('/')
+            } else {
+                model.name.substringBeforeLast('.')
+            }
+            binding.textFolderName.text = label
                 .replace(Regex("\\s*\\[[^\\]]*\\]"), "")
                 .trim()
                 .ifBlank { model.name }
