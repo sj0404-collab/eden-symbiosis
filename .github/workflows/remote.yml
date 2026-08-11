@@ -591,12 +591,26 @@ jobs:
             Write-Host "generated a password; set the RDP_PASSWORD secret to keep it fixed"
           }
 
-          # Remote Desktop is present on the image but switched off, and NLA
-          # would reject the fresh local account from most phone clients.
+          # Remote Desktop is present on the image but switched off.
+          #
+          # Three settings, not one. Turning the service on is obvious; the
+          # other two are why a phone client could complete the TLS handshake
+          # and still be refused:
+          #
+          #   UserAuthentication=0  drops the NLA requirement. A fresh local
+          #     account plus CredSSP is what most Android clients fail on.
+          #   SecurityLayer=1       negotiate rather than force. Left at the
+          #     default the server demanded SSL and answered a plain request
+          #     with SSL_REQUIRED_BY_SERVER - measured against the live
+          #     session, not guessed.
+          #   MinEncryptionLevel=2  "client compatible" instead of FIPS/high,
+          #     which some older clients cannot satisfy.
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
             -Name 'fDenyTSConnections' -Value 0
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-            -Name 'UserAuthentication' -Value 0
+          $rdpTcp = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+          Set-ItemProperty -Path $rdpTcp -Name 'UserAuthentication'  -Value 0
+          Set-ItemProperty -Path $rdpTcp -Name 'SecurityLayer'       -Value 1
+          Set-ItemProperty -Path $rdpTcp -Name 'MinEncryptionLevel'  -Value 2
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
 
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
@@ -609,6 +623,18 @@ jobs:
 
           $listening = @(Get-NetTCPConnection -State Listen -LocalPort 3389 -ErrorAction SilentlyContinue).Count
           if ($listening -eq 0) { throw "RDP is not listening on 3389." }
+
+          # What the service ended up with, read back after the restart. The
+          # registry is written before TermService restarts and some of these
+          # are only read at start, so printing the values afterwards is the
+          # only honest confirmation they took effect.
+          $eff = Get-ItemProperty -Path $rdpTcp |
+                 Select-Object UserAuthentication, SecurityLayer, MinEncryptionLevel
+          Write-Host ("effective: NLA={0} SecurityLayer={1} MinEncryption={2}" -f `
+            $eff.UserAuthentication, $eff.SecurityLayer, $eff.MinEncryptionLevel)
+          Write-Host ("account: {0}, member of Remote Desktop Users: {1}" -f $user, `
+            [bool](Get-LocalGroupMember -Group "Remote Desktop Users" -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Name -like "*$user" }))
 
           "user=$user"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "password=$password" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
