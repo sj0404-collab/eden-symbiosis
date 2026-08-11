@@ -159,6 +159,9 @@
     <h2>Репозитории <button class="ghost small" style="float:right"
         onclick="loadRepos(true)">Обновить</button></h2>
     <input id="repo-filter" placeholder="фильтр по имени" oninput="renderRepos()">
+    <div class="note" style="margin-top:0">
+      🔒 приватный · 🌐 публичный — нажатие на значок меняет видимость.
+    </div>
     <div id="repos"><span class="spin">загрузка…</span></div>
   </div>
 </div>
@@ -201,6 +204,11 @@
     </div>
     <div id="agent-live"><span class="spin">проверяю…</span></div>
     <div class="warn" id="agent-conflict" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>Экран сессии</h2>
+    <div id="preview"><span class="spin">проверяю…</span></div>
   </div>
 
   <div class="card">
@@ -282,8 +290,10 @@ const GH = 'https://api.github.com';
 const DEFAULT_OWNER = 'sj0404-collab';
 const DEFAULT_REPO  = DEFAULT_OWNER + '/eden-symbiosis';
 
-const DESKTOP_BASE = 'https://filly-above-terrapin.ngrok-free.app';
-const DESKTOP = DESKTOP_BASE + '/vnc.html?autoconnect=1&resize=remote';
+// No hardcoded tunnel address. The reserved domain is only used when the
+// session actually got it; whichever address a session reports is the one the
+// panel opens. Assuming the static domain is what showed a blank page when
+// something else already held it.
 
 // ── accounts ────────────────────────────────────────────────────────
 //
@@ -545,14 +555,16 @@ function renderRepos() {
   const q = ($('repo-filter').value || '').toLowerCase();
   const list = REPOS.filter(r => !q || r.full_name.toLowerCase().includes(q));
   $('repos').innerHTML = list.length ? list.map(r => `
-    <div class="item" onclick="openRepo('${esc(r.full_name)}')">
-      <div class="ico">${r.private ? '🔒' : '▤'}</div>
-      <div class="grow">
+    <div class="item">
+      <div class="ico" title="${r.private ? 'приватный' : 'публичный'}"
+           onclick="setVisibility('${esc(r.full_name)}', ${r.private ? 'false' : 'true'})"
+           style="cursor:pointer">${r.private ? '🔒' : '🌐'}</div>
+      <div class="grow" onclick="openRepo('${esc(r.full_name)}')">
         <div class="name">${esc(r.name)}</div>
         <div class="meta">${esc(r.description || 'без описания').slice(0, 70)}</div>
         <div class="meta">${esc(r.default_branch)} · обновлён ${ago(r.updated_at)}</div>
       </div>
-      <div class="ico">›</div>
+      <div class="ico" onclick="openRepo('${esc(r.full_name)}')">›</div>
     </div>`).join('')
     : '<span class="note">ничего не найдено</span>';
 }
@@ -565,6 +577,41 @@ function openRepo(full) {
   $('act-repo').textContent = full;
   ACT_REPO = full;
   openPath('');
+}
+
+// Flip a repository between private and public.
+//
+// Going public is the irreversible-feeling direction - the history becomes
+// readable by anyone, including any secret ever committed to it - so it asks
+// twice and says that plainly. Going private is offered too, since the useful
+// operation is "change this", not "publish this".
+async function setVisibility(full, makePrivate) {
+  if (!tok()) { alert('Нужен токен с правом repo.'); return; }
+  const warning = makePrivate
+    ? 'Сделать ' + full + ' приватным?\n\nGitHub Pages на бесплатном плане ' +
+      'работает только для публичных репозиториев — панель по адресу github.io ' +
+      'перестанет открываться.'
+    : 'Сделать ' + full + ' публичным?\n\nВся история станет видна любому: ' +
+      'файлы, коммиты, и любой токен или пароль, который когда-либо попадал ' +
+      'в репозиторий. Ветка session-state с паролями сессий — тоже.';
+  if (!confirm(warning)) return;
+  if (!makePrivate && !confirm('Точно? Это видно всему интернету сразу.')) return;
+
+  try {
+    const r = await fetch(`${GH}/repos/${full}`, {
+      method: 'PATCH', headers: hdr(),
+      body: JSON.stringify({ private: !!makePrivate })
+    });
+    if (r.status === 403) throw new Error('403: у токена нет права repo, ' +
+      'либо смена видимости запрещена настройками организации.');
+    if (r.status === 422) throw new Error('422: GitHub отказал — ' +
+      'обычно это лимит плана на приватные репозитории.');
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+    alert(full + ' теперь ' + (makePrivate ? 'приватный' : 'публичный') + '.');
+    await loadRepos(true);
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  }
 }
 
 async function openPath(path) {
@@ -753,7 +800,13 @@ async function startAgent(os) {
     if (c) break;
   }
   btn.disabled = false; say(label);
-  refresh();
+  await refresh();
+  const live = LIVE;
+  if (live && live.agentUrl) {
+    if (confirm('Агент готов. Открыть?')) window.open(live.agentUrl, '_blank');
+  } else {
+    alert('Агент запускается. Ссылка появится в «Доступах» через минуту.');
+  }
 }
 
 async function cancelRun(id, repo) {
@@ -781,17 +834,93 @@ function startSession() {
   });
 }
 
-async function tunnelReady() {
-  try { await fetch(DESKTOP_BASE + '/', { method: 'HEAD', mode: 'no-cors' }); return true; }
+// The address a session is actually on, not the one it hoped for.
+//
+// This is what produced the black screen. The free ngrok plan allows one
+// tunnel; when the static domain is already taken - by an agent, or by an
+// earlier session - the workflow falls back to a generated address and prints
+// that. The panel meanwhile opened the static domain unconditionally, so it
+// served whatever else was there, and /vnc.html on an agent is a 404: a blank
+// page with no explanation.
+//
+// Everything now comes from session.json, which the running session publishes,
+// so the panel opens the address that exists rather than the one it assumed.
+let LIVE = null;
+
+function desktopUrl() {
+  if (LIVE && LIVE.vncUrl) return LIVE.vncUrl;
+  if (LIVE && LIVE.url) return LIVE.url + '/vnc.html?autoconnect=1&resize=remote';
+  return null;
+}
+
+async function reachable(url) {
+  // no-cors cannot read the status, so a 404 looks like success. Only good for
+  // "is anything answering at all"; the useful check is that a session has
+  // published, which loadCreds already does.
+  try { await fetch(url, { method: 'HEAD', mode: 'no-cors' }); return true; }
   catch (e) { return false; }
 }
 
 async function openDesktop() {
-  const btn = $('btn-desktop');
-  const say = t => { btn.textContent = t; };
-  if (await tunnelReady()) { window.open(DESKTOP, '_blank'); say('Рабочий стол'); return; }
-  alert('Туннель не отвечает — сначала запустите сессию в режиме «рабочий стол».');
+  if (!LIVE) await loadCreds();
+  const url = desktopUrl();
+  if (!url) {
+    alert('Рабочий стол не запущен.\n\nЗапустите сессию в режиме «рабочий стол» ' +
+          'и дождитесь, пока в «Доступах» появится адрес.');
+    return;
+  }
+  window.open(url, '_blank');
 }
+
+// A live thumbnail of the desktop, embedded in the panel.
+//
+// The tunnel sends no X-Frame-Options, so noVNC runs in an iframe. It is the
+// real desktop rather than a screenshot: tapping "expand" simply makes the
+// same frame full height, and the session is usable in place.
+let previewOpen = false;
+
+function renderPreview() {
+  const box = $('preview');
+  if (!box) return;
+  const url = desktopUrl();
+
+  if (!url) {
+    box.innerHTML = '<span class="note">рабочий стол не запущен — превью появится, ' +
+      'когда сессия опубликует адрес</span>';
+    previewOpen = false;
+    return;
+  }
+
+  if (!previewOpen) {
+    box.innerHTML = `
+      <div class="note" style="margin:0 0 8px">Экран сессии, живой:</div>
+      <div id="preview-frame" style="position:relative;border:1px solid var(--line);
+           border-radius:10px;overflow:hidden;background:#000;height:200px">
+        <iframe src="${esc(url)}" style="border:0;width:200%;height:400px;
+                transform:scale(.5);transform-origin:0 0" scrolling="no"
+                sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+        <div onclick="expandPreview()" title="Открыть"
+             style="position:absolute;inset:0;cursor:pointer"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost small" onclick="expandPreview()">Развернуть</button>
+        <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
+      </div>`;
+  } else {
+    box.innerHTML = `
+      <div class="note" style="margin:0 0 8px">Полный экран. Управление работает прямо здесь.</div>
+      <iframe src="${esc(url)}" style="border:1px solid var(--line);border-radius:10px;
+              width:100%;height:70vh;background:#000"
+              sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost small" onclick="collapsePreview()">Свернуть</button>
+        <button class="ghost small" onclick="window.open('${esc(url)}','_blank')">В новой вкладке</button>
+      </div>`;
+  }
+}
+
+function expandPreview()   { previewOpen = true;  renderPreview(); }
+function collapsePreview() { previewOpen = false; renderPreview(); }
 
 // ── session credentials ─────────────────────────────────────────────
 //
@@ -811,6 +940,7 @@ async function loadCreds() {
     const age = (Date.now() - new Date(s.startedAt).getTime()) / 60000;
     if (s.state === 'ended' || age > 361) {
       box.innerHTML = '<span class="note">активных сессий нет</span>';
+      LIVE = null; renderPreview();
       return null;
     }
     const left = Math.max(0, 360 - Math.round(age));
@@ -837,12 +967,14 @@ async function loadCreds() {
       (open ? `<button onclick="window.open('${esc(open)}','_blank')">Открыть</button>` : '') +
       (s.runId && tok()
         ? `<button class="ghost" onclick="stopRun(${s.runId})">Выключить</button>` : '');
+    LIVE = s; renderPreview();
     return s;
   } catch (e) {
     // 404 simply means nothing has published yet, which is the normal state.
     box.innerHTML = /404/.test(e.message)
       ? '<span class="note">активных сессий нет</span>'
       : `<div class="danger">${esc(e.message)}</div>`;
+    LIVE = null; renderPreview();
     return null;
   }
 }
