@@ -1,7 +1,12 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-11T16:57:34Z",
-  "runId": "31514528199",
-  "runNumber": "22",
+  "kind": "RDP",
+  "os": "windows",
+  "rdpHost": "bore.pub:47311",
+  "rdpUser": "zenrdp",
+  "rdpPass": "eV9A8@X7pxk^2W",
+  "startedAt": "2026-08-11T16:58:56Z",
+  "state": "live",
+  "runId": "31515144080",
+  "runNumber": "23",
   "repo": "sj0404-collab/eden-symbiosis"
 }
