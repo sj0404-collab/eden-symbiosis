@@ -360,6 +360,15 @@ jobs:
           echo " Password: $PASS"
           echo "=================================================="
 
+          # Hand the same details to the panel, which is where the session was
+          # started and where they are actually wanted.
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "kind=Рабочий стол" "os=linux" \
+              "url=$ACTIVE_URL" "vncUrl=$URL" "vncPass=$PASS" \
+              "vncUser=(без логина)" \
+              "terminal=$ACTIVE_URL/term/" "branch=$SESSION_BRANCH"
+
       - name: Set up the desktop and RDP
         if: inputs.mode == 'rdp' || inputs.mode == 'both'
         env:
@@ -428,6 +437,12 @@ jobs:
           echo " pass $PASS"
           echo "=============================================="
 
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "kind=RDP" "os=linux" \
+              "rdpHost=$HOSTPORT" "rdpUser=runner" "rdpPass=$PASS" \
+              "branch=$SESSION_BRANCH"
+
       - name: Open the SSH session
         if: inputs.mode == 'ssh' || inputs.mode == 'both'
         uses: mxschmitt/action-tmate@v3
@@ -443,6 +458,12 @@ jobs:
           echo "RDP is up. This job stays alive until you cancel it, or for six"
           echo "hours - whichever comes first."
           sleep 21000
+
+      - name: Clear the published session
+        if: always()
+        run: |
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "state=ended" || true
 
       - name: Save work before the runner is destroyed
         if: always()
@@ -582,11 +603,28 @@ jobs:
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
           Write-Host "RDP ready at $endpoint  user ${{ steps.rdp.outputs.user }}"
 
+          # Publish for the panel. bash ships with the Windows runner, so the
+          # same script serves both platforms rather than a second copy that
+          # would drift.
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "kind=RDP" "os=windows" `
+            "rdpHost=$endpoint" `
+            "rdpUser=${{ steps.rdp.outputs.user }}" `
+            "rdpPass=${{ steps.rdp.outputs.password }}"
+
       - name: Hold the session open
         shell: pwsh
         run: |
           Write-Host "The desktop stays up until you cancel this run, or for six hours."
           Start-Sleep -Seconds 21000
+
+      - name: Clear the published session
+        if: always()
+        shell: pwsh
+        run: |
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "state=ended"
 
       - name: Save work before the runner is destroyed
         if: always()

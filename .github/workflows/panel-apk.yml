@@ -1,0 +1,114 @@
+name: Panel APK
+
+# Builds the panel app: a WebView shell around docs/index.html, which is served
+# from GitHub Pages.
+#
+# WHY A SHELL RATHER THAN A PACKAGED PAGE
+#   The panel changes constantly - a new button, a reworded warning - and the
+#   phone should not need a reinstall for any of that. Loading the page from
+#   the network means a push to docs/ is live on the next launch. The APK only
+#   needs rebuilding when the shell itself changes: the URL it points at, the
+#   download handling, the icon.
+#
+#   The trade is that the app needs a connection on first run and shows a retry
+#   screen without one. That is deliberate; a bundled copy would go stale and
+#   hide the very updates this exists to deliver.
+#
+#   Signed with the debug key. It is sideloaded from a link and never goes to
+#   Play; a release build with no signing config produces an APK that cannot be
+#   installed at all, which is worse than a well-understood debug signature.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'panel-app/**'
+      - '.github/workflows/panel-apk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: panel-gradle-${{ hashFiles('panel-app/**/*.gradle.kts') }}
+          restore-keys: panel-gradle-
+
+      - name: Check the panel URL resolves
+        # A shell pointing at a 404 builds perfectly and is useless on the
+        # phone. Catch that here rather than after installing.
+        run: |
+          URL=$(grep -oP 'PANEL_URL = "\K[^"]+' \
+            panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt)
+          echo "panel URL: $URL"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 "$URL" || echo 000)
+          echo "HTTP $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::warning::the panel URL answered $CODE - Pages may still be deploying"
+          fi
+
+      - name: Build
+        working-directory: panel-app
+        run: |
+          gradle wrapper --gradle-version 8.7 --no-daemon
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Report and upload
+        run: |
+          APK=$(find panel-app -name '*.apk' -path '*release*' | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::no APK was produced"
+            find panel-app -name '*.apk' || true
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$APK")
+          MD5=$(md5sum "$APK" | cut -d' ' -f1)
+          cp "$APK" symbiosis-panel.apk
+          echo "APK: $APK ($((SIZE/1024)) KB)"
+          echo "MD5: $MD5"
+
+          LINK=""
+          SERVER=$(curl -s -m 20 https://api.gofile.io/servers \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['data']['servers'][0]['name'])" 2>/dev/null || true)
+          if [ -n "$SERVER" ]; then
+            LINK=$(curl -s -m 300 -F "file=@symbiosis-panel.apk" \
+              "https://$SERVER.gofile.io/contents/uploadfile" \
+              | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('data',{}).get('downloadPage',''))" 2>/dev/null || true)
+          fi
+
+          {
+            echo "## Panel APK"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Size | $((SIZE/1024)) KB |"
+            echo "| MD5 | \`$MD5\` |"
+            [ -n "$LINK" ] && echo "| Download | $LINK |"
+            echo ""
+            echo "The app loads the panel from GitHub Pages, so changes to"
+            echo "\`docs/index.html\` appear on the next launch. Reinstall only"
+            echo "when the shell itself changes."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: symbiosis-panel-apk
+          path: symbiosis-panel.apk
+          if-no-files-found: error

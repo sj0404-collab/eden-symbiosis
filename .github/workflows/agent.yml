@@ -234,10 +234,22 @@ jobs:
           echo " Branch: $WORK_BRANCH"
           echo "=================================================="
 
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
+              "kind=CLI-агент" "os=linux" \
+              "url=$URL" "agentUrl=$URL/hub?token=$TOKEN" \
+              "agentToken=$TOKEN" "branch=$WORK_BRANCH"
+
       - name: Keep the session alive
         run: |
           echo "Running until cancelled, or for six hours."
           sleep 21000
+
+      - name: Clear the published session
+        if: always()
+        run: |
+          GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "state=ended" || true
 
       - name: Final save
         if: always()
@@ -454,11 +466,24 @@ jobs:
           Write-Host " Agent: $url/hub?token=$token"
           Write-Host "=================================================="
 
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "kind=CLI-агент" "os=windows" `
+            "url=$url" "agentUrl=$url/hub?token=$token" `
+            "agentToken=$token" "branch=$env:WORK_BRANCH"
+
       - name: Keep the session alive
         shell: pwsh
         run: |
           Write-Host "Running until cancelled, or for six hours."
           Start-Sleep -Seconds 21000
+
+      - name: Clear the published session
+        if: always()
+        shell: pwsh
+        run: |
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "state=ended"
 
       - name: Final save
         if: always()
