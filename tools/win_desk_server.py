@@ -240,18 +240,22 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             delay = 1.0 / (fps or FPS)
             last = None
-            idle = 0.0
+            last_sent = 0.0
             try:
                 while True:
                     jpg = grab_jpeg(width=width)
-                    if jpg == last and idle < 5.0:
-                        # An unchanged desktop costs nothing to not send. The
-                        # 5-second ceiling still emits a keepalive frame, so a
-                        # proxy never decides the response has stalled.
-                        idle += delay
+                    now = time.monotonic()
+                    # An unchanged desktop costs nothing to not send. The
+                    # keepalive is measured in SECONDS, not in loop iterations:
+                    # counting iterations meant a slow stream (fps=1) waited
+                    # five frames, i.e. five seconds at best and much longer in
+                    # practice, and a client with a 30s timeout gave up. Seen
+                    # on a live desk: the thumbnail stream stalled and the read
+                    # timed out.
+                    if jpg == last and (now - last_sent) < 4.0:
                         time.sleep(delay)
                         continue
-                    idle = 0.0
+                    last_sent = now
                     last = jpg
                     self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
                                      b"Content-Length: " + str(len(jpg)).encode() +
