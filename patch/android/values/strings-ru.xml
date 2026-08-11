@@ -1443,4 +1443,6 @@
     <string name="folder_in_subfolder">в %1$s</string>
     <string name="status_storage_needed">Нужен доступ к файлам</string>
     <string name="status_storage_manual">Откройте: Настройки → Приложения → Специальный доступ → Доступ ко всем файлам</string>
+    <string name="folder_launch_failed">Не удалось открыть файл игры</string>
+    <string name="folder_launch_unreadable">Файл не читается — проверь ключи и прошивку</string>
 </resources>

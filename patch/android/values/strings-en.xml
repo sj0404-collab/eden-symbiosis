@@ -2110,4 +2110,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="folder_in_subfolder">in %1$s</string>
     <string name="status_storage_needed">Storage access needed</string>
     <string name="status_storage_manual">Open Settings, Apps, Special app access, All files access</string>
+    <string name="folder_launch_failed">Could not open the game file</string>
+    <string name="folder_launch_unreadable">The file cannot be read - check keys and firmware</string>
 </resources>

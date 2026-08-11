@@ -237,6 +237,27 @@ object GameFolderScanner {
         )
     }.getOrNull()
 
+    /**
+     * The document URI of a file this scanner listed.
+     *
+     * The scanner records a name and a sub-path rather than a URI, because a
+     * URI is large and most callers only want to count. Rebuilding it here
+     * keeps that trade without making the folder screen re-walk the tree.
+     *
+     * Document ids under a tree are the tree's own id plus the relative path,
+     * which is how the storage framework addresses children; when a provider
+     * does not follow that shape the caller gets null and says so rather than
+     * launching something wrong.
+     */
+    fun childUri(treeUriString: String, entry: Entry): Uri? = runCatching {
+        val tree = Uri.parse(treeUriString)
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        val suffix = if (entry.relativePath.isEmpty()) entry.name
+                     else entry.relativePath + "/" + entry.name
+        val childId = if (rootId.endsWith("/")) rootId + suffix else "$rootId/$suffix"
+        DocumentsContract.buildDocumentUriUsingTree(tree, childId)
+    }.getOrNull()
+
     /** The part of the path a person would call the folder's name. */
     fun displayNameOf(uriString: String): String {
         val decoded = runCatching { Uri.decode(uriString) }.getOrDefault(uriString)
