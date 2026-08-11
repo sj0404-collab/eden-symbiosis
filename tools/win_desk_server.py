@@ -54,6 +54,20 @@ FPS = 5.0
 # nothing because identical frames are not resent.
 MIN_WIDTH = 160
 
+# Cloudflare buffers a slow response until it has roughly 64 KB, and only then
+# forwards the lot. Measured through a live quick tunnel, first frame arriving:
+#
+#   /stream                 (full size, ~85 KB/frame)   0.6 s
+#   /stream?w=340&fps=4     (small, but frequent)       4.1 s
+#   /stream?w=340&fps=1     (small and slow, ~15 KB)   28.4 s, then a burst
+#
+# That burst is exactly what looked like "black for a couple of seconds, then
+# it works again": the picture froze while bytes piled up at the edge. Padding
+# each part with a comment header to clear the buffer keeps small frames moving
+# at the rate they were produced. Browsers ignore unknown MIME headers, so the
+# padding is invisible to the client.
+PAD_TO = 70 * 1024
+
 # ── Windows input, through SendInput ────────────────────────────────
 #
 # Guarded so the module imports on Linux, where it is only ever syntax-checked
@@ -257,9 +271,12 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                     last_sent = now
                     last = jpg
-                    self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
-                                     b"Content-Length: " + str(len(jpg)).encode() +
-                                     b"\r\n\r\n" + jpg + b"\r\n")
+                    head = (b"--frame\r\nContent-Type: image/jpeg\r\n"
+                            b"Content-Length: " + str(len(jpg)).encode() + b"\r\n")
+                    short = PAD_TO - len(jpg) - len(head)
+                    if short > 0:
+                        head += b"X-Pad: " + (b"." * short) + b"\r\n"
+                    self.wfile.write(head + b"\r\n" + jpg + b"\r\n")
                     self.wfile.flush()
                     time.sleep(delay)
             except Exception:
