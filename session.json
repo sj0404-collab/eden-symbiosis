@@ -1,12 +1,12 @@
 {
   "kind": "RDP",
   "os": "windows",
-  "rdpHost": "2.tcp.us-cal-1.ngrok.io:24615",
+  "rdpHost": "bore.pub:47311",
   "rdpUser": "zenrdp",
   "rdpPass": "eV9A8@X7pxk^2W",
-  "startedAt": "2026-08-11T13:22:12Z",
+  "startedAt": "2026-08-11T15:45:14Z",
   "state": "live",
-  "runId": "31495672656",
-  "runNumber": "17",
+  "runId": "31508636911",
+  "runNumber": "19",
   "repo": "sj0404-collab/eden-symbiosis"
 }
