@@ -614,9 +614,39 @@ jobs:
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
 
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name $user -Password $secure -AccountNeverExpires -PasswordNeverExpires | Out-Null
-          Add-LocalGroupMember -Group "Administrators" -Member $user
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user
+
+          # Create or update - and then clear "must change password at next
+          # logon".
+          #
+          # This is what actually blocked the client. The protocol was fine all
+          # along: FreeRDP got through TLS, licensing and channel setup and
+          # then received LOGON_FAILED_UPDATE_PASSWORD, which Android clients
+          # report as the generic "could not connect". Windows sets that flag
+          # on a fresh local account, and RDP has no way to present a
+          # change-password dialog, so the logon is refused every time.
+          #
+          # New-LocalUser also fails outright if the account already exists,
+          # which it does on a re-run, leaving the whole step half-applied.
+          if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
+            Set-LocalUser -Name $user -Password $secure -PasswordNeverExpires $true
+            Write-Host "reused the existing account $user"
+          } else {
+            New-LocalUser -Name $user -Password $secure -AccountNeverExpires -PasswordNeverExpires | Out-Null
+            Write-Host "created the account $user"
+          }
+
+          # PasswordExpired $false is the part that clears the flag; the WMI
+          # call is the belt-and-braces version for images where the cmdlet
+          # silently leaves it set.
+          Set-LocalUser -Name $user -PasswordNeverExpires $true
+          try {
+            $wmiUser = Get-WmiObject Win32_UserAccount -Filter "Name='$user' AND LocalAccount=True"
+            if ($wmiUser) { $wmiUser.PasswordExpires = $false; $wmiUser.Put() | Out-Null }
+          } catch { }
+          net user $user /logonpasswordchg:no | Out-Null
+
+          Add-LocalGroupMember -Group "Administrators" -Member $user -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user -ErrorAction SilentlyContinue
 
           Restart-Service -Name TermService -Force
           Start-Sleep -Seconds 5
@@ -632,6 +662,9 @@ jobs:
                  Select-Object UserAuthentication, SecurityLayer, MinEncryptionLevel
           Write-Host ("effective: NLA={0} SecurityLayer={1} MinEncryption={2}" -f `
             $eff.UserAuthentication, $eff.SecurityLayer, $eff.MinEncryptionLevel)
+          $acct = Get-LocalUser -Name $user
+          Write-Host ("password expired flag: {0} (must be False, or logon is refused)" -f `
+            $acct.PasswordExpired)
           Write-Host ("account: {0}, member of Remote Desktop Users: {1}" -f $user, `
             [bool](Get-LocalGroupMember -Group "Remote Desktop Users" -ErrorAction SilentlyContinue |
                    Where-Object { $_.Name -like "*$user" }))
