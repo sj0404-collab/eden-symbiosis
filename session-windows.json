@@ -1,7 +1,13 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-11T19:36:54Z",
-  "runId": "31528717848",
-  "runNumber": "9",
+  "kind": "Стол Windows",
+  "os": "windows",
+  "url": "https://tones-shore-profit-established.trycloudflare.com",
+  "deskUrl": "https://tones-shore-profit-established.trycloudflare.com/",
+  "auth": "без пароля",
+  "label": "desks",
+  "startedAt": "2026-08-11T19:38:11Z",
+  "state": "live",
+  "runId": "31528781749",
+  "runNumber": "10",
   "repo": "sj0404-collab/eden-symbiosis"
 }
