@@ -154,7 +154,11 @@ jobs:
           retention-days: 30
 
       - name: Upload to gofile.io
-        if: inputs.upload_to_gofile
+        # Default to uploading. inputs.* is empty for a push-triggered run, so
+        # the plain condition silently skipped the step and the summary carried
+        # no download link - the APK existed only as an artifact, which needs a
+        # signed-in browser and expires. Only an explicit false opts out.
+        if: github.event_name != 'workflow_dispatch' || inputs.upload_to_gofile
         run: |
           APK=$(find eden -name "*legacy-debug.apk" | head -1)
           SRV=$(curl -s https://api.gofile.io/servers | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['servers'][0]['name'])")
