@@ -26,8 +26,9 @@ on:
       - 'panel-app/**'
       - '.github/workflows/panel-apk.yml'
 
+# A release is written, so read alone is not enough.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -91,6 +92,8 @@ jobs:
           ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Report and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           APK=$(find panel-app -name '*.apk' -path '*release*' | head -1)
           if [ -z "$APK" ]; then
@@ -104,14 +107,30 @@ jobs:
           echo "APK: $APK ($((SIZE/1024)) KB)"
           echo "MD5: $MD5"
 
+          # gofile is convenient because it needs no GitHub login, but it is a
+          # third party that fails quietly; the first run produced no link at
+          # all and the summary simply omitted the row. Report what happened
+          # and always fall back to the release, which cannot disappear.
           LINK=""
           SERVER=$(curl -s -m 20 https://api.gofile.io/servers \
             | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['data']['servers'][0]['name'])" 2>/dev/null || true)
           if [ -n "$SERVER" ]; then
+            echo "gofile server: $SERVER"
             LINK=$(curl -s -m 300 -F "file=@symbiosis-panel.apk" \
               "https://$SERVER.gofile.io/contents/uploadfile" \
               | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('data',{}).get('downloadPage',''))" 2>/dev/null || true)
           fi
+          [ -n "$LINK" ] && echo "gofile: $LINK" || echo "gofile upload produced no link"
+
+          # A rolling release tag, so there is one permanent address for the
+          # current app instead of an artifact that expires in 90 days and
+          # needs a signed-in browser to fetch.
+          gh release delete panel-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create panel-latest symbiosis-panel.apk \
+            --title "Panel APK (latest)" \
+            --notes "Оболочка над панелью. Содержимое грузится из сети, поэтому обновлять APK нужно только при изменении самой оболочки. MD5 \`$MD5\`." \
+            && DIRECT="https://github.com/${GITHUB_REPOSITORY}/releases/download/panel-latest/symbiosis-panel.apk" \
+            || DIRECT=""
 
           {
             echo "## Panel APK"
@@ -120,7 +139,8 @@ jobs:
             echo "|---|---|"
             echo "| Size | $((SIZE/1024)) KB |"
             echo "| MD5 | \`$MD5\` |"
-            [ -n "$LINK" ] && echo "| Download | $LINK |"
+            [ -n "$DIRECT" ] && echo "| Скачать | $DIRECT |"
+            [ -n "$LINK" ] && echo "| Зеркало | $LINK |"
             echo ""
             echo "The app loads the panel from GitHub Pages, so changes to"
             echo "\`docs/index.html\` appear on the next launch. Reinstall only"
