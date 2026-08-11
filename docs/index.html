@@ -102,8 +102,12 @@
     <button onclick="run('build.yml',{upload_to_gofile:'true'})">Собрать APK</button>
     <button class="ghost" onclick="run('tests.yml',{})">Тесты</button>
   </div>
-  <label>Удалённая сессия</label>
+  <label>Удалённая сессия (рабочий стол / терминал, не агент)</label>
   <div class="row">
+    <select id="sess-os">
+      <option value="linux">Linux — стол, SSH, сборка APK</option>
+      <option value="windows">Windows — только RDP, 4 ядра / 16 ГБ</option>
+    </select>
     <select id="mode">
       <option value="web">Рабочий стол в браузере — постоянный адрес</option>
       <option value="ssh">SSH — терминал, работает на плохой связи</option>
@@ -116,6 +120,30 @@
   <div class="warn">
     Любая сессия убивается через 6 часов — это лимит платформы, не настройка.
     Всё, что не выгружено с раннера, пропадает вместе с ним.
+  </div>
+</div>
+
+<div class="card">
+  <h2>CLI-агент — 6 часов</h2>
+  <div class="note" style="margin-top:0">
+    Это <b>Zen agent</b>: чат с инструментами, терминалом и правкой файлов.
+    Отдельно от «рабочего стола» ниже — та кнопка поднимает XFCE в браузере,
+    а не агента.
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button id="btn-agent-linux" onclick="startAgent('linux')">Включить Linux</button>
+    <button id="btn-agent-win" onclick="startAgent('windows')">Включить Windows</button>
+  </div>
+  <div id="agent-live"><span class="note">проверяю…</span></div>
+  <div class="warn" id="agent-conflict" style="display:none"></div>
+  <div class="note">
+    Свободный ngrok даёт <b>один туннель</b>, поэтому агент и рабочий стол не
+    живут одновременно: включите один — второй не получит адрес. Кнопка
+    «Выключить» останавливает лишнюю сессию.
+  </div>
+  <div class="note">
+    Linux — 2 ядра, 7 ГБ, умеет собирать APK. Windows — 4 ядра, 16 ГБ,
+    PowerShell и RDP, APK не собирает.
   </div>
 </div>
 
@@ -223,8 +251,105 @@ async function run(wf, inputs) {
   setTimeout(refresh, 2500);
 }
 
+// ── CLI agent sessions ──────────────────────────────────────────────
+//
+// The agent lives in agent.yml, which is a different workflow from the
+// desktop in remote.yml. Opening the tunnel and finding a directory listing
+// of noVNC - a desktop session someone left running - is what "I logged in
+// and the agent was not there" looks like, so this section reports which
+// kind of session is actually up and offers to stop the other one.
+
+// A run is ours if it is the agent workflow and has not finished.
+const liveAgents = runs =>
+  runs.filter(r => r.name === 'Zen agent' && r.status !== 'completed');
+const liveDesktops = runs =>
+  runs.filter(r => (r.name === 'Remote session' || r.name === 'opencode')
+                   && r.status !== 'completed');
+
+async function startAgent(os) {
+  if (!tok()) { alert('Сначала вставьте токен — без него запуск невозможен.'); return; }
+
+  const btn = document.getElementById(os === 'windows' ? 'btn-agent-win' : 'btn-agent-linux');
+  const label = btn.textContent;
+  const say = t => { btn.textContent = t; };
+
+  // Refuse rather than start a second tunnel that cannot get an address.
+  const current = await currentRuns();
+  if (liveAgents(current).length) {
+    alert('Агент уже запущен. Остановите его, прежде чем поднимать другой.');
+    refresh(); return;
+  }
+  const desktops = liveDesktops(current);
+  if (desktops.length) {
+    const ok = confirm(
+      'Сейчас запущен рабочий стол, он держит единственный туннель ngrok.\n\n' +
+      'Остановить его и поднять агента?');
+    if (!ok) return;
+    say('Останавливаю стол…');
+    for (const d of desktops) await cancelRun(d.id);
+    // Cancellation is not instant; the runner still has to unwind.
+    await new Promise(r => setTimeout(r, 8000));
+  }
+
+  btn.disabled = true;
+  say('Запускаю…');
+  const r = await fetch(`${API}/actions/workflows/agent.yml/dispatches`, {
+    method: 'POST', headers: hdr(),
+    body: JSON.stringify({ ref: 'main', inputs: {
+      os, branch: 'agent-work', repos: '', autosave_minutes: '2' } })
+  });
+  if (r.status !== 204) {
+    btn.disabled = false; say(label);
+    alert('Не вышло: ' + r.status + ' ' + await r.text());
+    return;
+  }
+
+  // Wait for the summary to carry a link. Windows takes longer: chocolatey
+  // has to fetch ngrok before the tunnel can exist.
+  const budget = os === 'windows' ? 90 : 60;
+  for (let i = 0; i < budget; i++) {
+    say(`Поднимаю… ${i * 5}s`);
+    await new Promise(r => setTimeout(r, 5000));
+    if (await tunnelReady()) break;
+  }
+  btn.disabled = false; say(label);
+  refresh();
+  alert('Агент поднимается. Ссылку с паролем берите в сводке запуска — ' +
+        'она открывается из списка сессий.');
+}
+
+async function cancelRun(id) {
+  const r = await fetch(`${API}/actions/runs/${id}/cancel`, { method: 'POST', headers: hdr() });
+  // 202 accepted; 409 means it had already finished, which is fine here.
+  return r.status === 202 || r.status === 409;
+}
+
+async function stopRun(id) {
+  if (!tok()) { alert('Нужен токен, чтобы останавливать.'); return; }
+  if (!confirm('Остановить эту сессию? Несохранённое на раннере пропадёт, ' +
+               'но автосейв уже отправил работу в ветку.')) return;
+  const ok = await cancelRun(id);
+  alert(ok ? 'Остановлено. Раннер сворачивается ~полминуты.' : 'Не вышло.');
+  setTimeout(refresh, 4000);
+}
+
+async function currentRuns() {
+  try {
+    const r = await fetch(`${API}/actions/runs?per_page=20`, { headers: hdr() });
+    return (await r.json()).workflow_runs || [];
+  } catch (e) { return []; }
+}
+
 function startSession() {
+  const os = document.getElementById('sess-os').value;
+  if (os === 'windows') {
+    // remote.yml ignores `mode` on Windows: there is no noVNC path and no
+    // SSH server, only the built-in RDP service. Saying so beats letting the
+    // dropdown imply a choice that does not exist.
+    alert('Windows-сессия всегда RDP: рабочего стола в браузере там нет.');
+  }
   run('remote.yml', {
+    os,
     mode: document.getElementById('mode').value,
     prepare_build: 'true',
     label: document.getElementById('label').value || 'session'
@@ -325,15 +450,49 @@ async function refresh() {
     return;
   }
 
-  // Sessions: live remote runs, each one attachable independently.
+  // CLI agent: its own workflow, its own box, with a stop button. Six hours
+  // is the platform ceiling, so the remaining time is worth stating outright.
+  const agents = liveAgents(runs);
+  const desktops = liveDesktops(runs);
+  document.getElementById('agent-live').innerHTML = agents.length
+    ? '<table>' + agents.map(r => {
+        const used = mins(r.created_at);
+        const left = Math.max(0, 360 - used);
+        const os = /windows/i.test(r.display_title || '') ? 'Windows' : '';
+        return `<tr>
+          <td>#${r.run_number}</td>
+          <td><a href="${r.html_url}" target="_blank">ссылка и пароль — в сводке</a>
+              ${pill(r)} ${os}
+              <div class="note">идёт ${used} мин · осталось ~${left} мин</div>
+              <button class="ghost" style="margin-top:6px;padding:6px 10px;min-height:0"
+                onclick="stopRun(${r.id})">Выключить</button></td>
+        </tr>`;
+      }).join('') + '</table>'
+    : '<span class="note">агент не запущен</span>';
+
+  // The single-tunnel rule is the most common reason a session "does not
+  // work", so say it while it is true rather than only in the small print.
+  const conflict = document.getElementById('agent-conflict');
+  if (agents.length && desktops.length) {
+    conflict.style.display = '';
+    conflict.innerHTML = 'Одновременно запущены агент и рабочий стол. Туннель ' +
+      'достанется тому, кто стартовал первым — второй будет недоступен.';
+  } else {
+    conflict.style.display = 'none';
+  }
+
+  // Sessions: live desktop runs, each one attachable independently.
   const live = runs.filter(r => r.name === 'Remote session' && r.status !== 'completed');
   window.__liveSession = live[0] || null;
   document.getElementById('sessions').innerHTML = live.length
     ? '<table>' + live.map(r => `<tr>
         <td>#${r.run_number}</td>
         <td><a href="${r.html_url}" target="_blank">открыть</a> ·
-            ${pill(r)} · ${mins(r.created_at)} мин
-            <div class="note">адрес и пароль — в сводке запуска</div></td>
+            ${pill(r)} · ${mins(r.created_at)} мин ·
+            осталось ~${Math.max(0, 360 - mins(r.created_at))} мин
+            <div class="note">адрес и пароль — в сводке запуска</div>
+            <button class="ghost" style="margin-top:6px;padding:6px 10px;min-height:0"
+              onclick="stopRun(${r.id})">Выключить</button></td>
       </tr>`).join('') + '</table>'
     : '<span class="note">активных сессий нет</span>';
 

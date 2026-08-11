@@ -25,6 +25,11 @@ name: Zen agent
 on:
   workflow_dispatch:
     inputs:
+      os:
+        description: "Runner OS"
+        type: choice
+        options: [linux, windows]
+        default: linux
       branch:
         description: "Branch to keep the work on (created if absent)"
         type: string
@@ -43,6 +48,7 @@ permissions:
 
 jobs:
   agent:
+    if: inputs.os == 'linux'
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -245,3 +251,225 @@ jobs:
           else
             echo "Nothing left to save."
           fi
+
+  # ── Windows ────────────────────────────────────────────────────────
+  #
+  #  The same agent on a windows-latest runner. Node and pwsh are on the image
+  #  already, so the agent itself needs nothing extra; capabilities then pick
+  #  the PowerShell runtime automatically and the windows_* blueprints become
+  #  the ones on offer.
+  #
+  #  Why a separate job rather than a matrix: every shell line differs, and a
+  #  matrix with `if: runner.os` on each step is harder to read than two jobs
+  #  that each say what they do. The Windows runner is also the better machine
+  #  for interactive work - 4 cores and 16 GB against 2 and 7 - it just cannot
+  #  build the Android APK.
+
+  agent-windows:
+    if: inputs.os == 'windows'
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prepare the working branch
+        working-directory: fork
+        shell: pwsh
+        run: |
+          git config user.email "agent@eden-symbiosis"
+          git config user.name  "Zen agent"
+          $branch = "${{ inputs.branch }}-windows"
+
+          # Same rule as the Linux job: move the pointer to HEAD so the session
+          # runs current code instead of whatever the branch held last time.
+          git ls-remote --exit-code --heads origin $branch *> $null
+          if ($LASTEXITCODE -eq 0) {
+            git branch -f $branch HEAD
+            git checkout -q $branch
+            git push -q --force-with-lease origin $branch
+            if ($LASTEXITCODE -ne 0) { git push -q -f origin $branch }
+          } else {
+            git checkout -q -b $branch
+            git push -q -u origin $branch
+          }
+          "WORK_BRANCH=$branch" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "branch $branch at $(git rev-parse --short HEAD)"
+
+      - name: Clone the repositories to work on
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\fork\work" | Out-Null
+          Set-Location "$env:GITHUB_WORKSPACE\fork\work"
+
+          git config --global credential.helper store
+          "https://x-access-token:$env:GH_TOKEN@github.com" |
+            Out-File -FilePath "$env:USERPROFILE\.git-credentials" -Encoding ascii
+
+          foreach ($repo in ("${{ inputs.repos }}" -split '\s+' | Where-Object { $_ })) {
+            $name = Split-Path $repo -Leaf
+            git clone -q "https://github.com/$repo.git" $name 2>$null
+            if ($LASTEXITCODE -eq 0) { Write-Host "cloned $repo" }
+            else { Write-Host "::warning::could not clone $repo" }
+          }
+
+      - name: Start autosave
+        shell: pwsh
+        run: |
+          # Built line by line rather than with a here-string: a PowerShell
+          # here-string has to start at column zero, which breaks out of this
+          # indented YAML block scalar and corrupts the whole file. Same trap
+          # as the shebang-in-a-heredoc one on the Linux side.
+          $lines = @(
+            'param($Root, $Seconds)',
+            'Set-Location $Root',
+            'while ($true) {',
+            '  Start-Sleep -Seconds $Seconds',
+            '  if (git status --porcelain) {',
+            '    git add -A',
+            '    git commit -q -m ("agent autosave " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss")) 2>$null',
+            '    git push -q origin HEAD 2>$null',
+            '  }',
+            '}'
+          )
+          $path = Join-Path $env:USERPROFILE 'autosave.ps1'
+          $lines | Out-File -FilePath $path -Encoding utf8
+          $seconds = [int]"${{ inputs.autosave_minutes }}" * 60
+          Start-Process pwsh -ArgumentList @(
+            "-NoProfile", "-File", $path,
+            "-Root", "$env:GITHUB_WORKSPACE\fork", "-Seconds", "$seconds"
+          ) -WindowStyle Hidden
+          Write-Host "autosave every ${{ inputs.autosave_minutes }} min"
+
+      - name: Start the agent and open the tunnel
+        env:
+          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+          NGROK_DOMAIN: filly-above-terrapin.ngrok-free.app
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          if (-not $env:NGROK_TOKEN) {
+            Write-Host "::error::NGROK_AUTH_TOKEN is not set; the hub would only be reachable on the runner."
+            exit 1
+          }
+
+          $token = "zen-" + [guid]::NewGuid().ToString("N").Substring(0, 24)
+          Set-Location "$env:GITHUB_WORKSPACE\fork"
+
+          $env:ZEN_BIND_HOST     = "0.0.0.0"
+          $env:ZEN_REMOTE_TOKEN  = $token
+          $env:MCP_PORT          = "8765"
+          $env:ZEN_LONG_TASKS    = "1"
+          $env:ZEN_LONG_MAX_STEPS = "250"
+          $env:SESSION_STARTED_MS = [string][int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+          $env:SESSION_LIMIT_MS  = "21600000"
+          $env:GITHUB_TOKEN      = $env:GH_TOKEN
+
+          Start-Process node -ArgumentList "agent/zen-agent.js" -NoNewWindow `
+            -RedirectStandardOutput "$env:TEMP\agent.log" `
+            -RedirectStandardError  "$env:TEMP\agent.err"
+
+          $up = $false
+          foreach ($i in 1..30) {
+            Start-Sleep -Seconds 2
+            try {
+              Invoke-WebRequest -Uri "http://127.0.0.1:8765/mcp/status" -TimeoutSec 3 -UseBasicParsing | Out-Null
+              $up = $true; break
+            } catch { }
+          }
+          if (-not $up) {
+            Write-Host "::error::the agent did not start."
+            Get-Content "$env:TEMP\agent.log", "$env:TEMP\agent.err" -Tail 40 -ErrorAction SilentlyContinue
+            exit 1
+          }
+          Write-Host "agent is up on 8765"
+
+          choco install ngrok -y --no-progress --limit-output | Out-Null
+          ngrok config add-authtoken $env:NGROK_TOKEN
+
+          Start-Process ngrok -ArgumentList "http 8765 --url=https://$env:NGROK_DOMAIN --log stdout" `
+            -RedirectStandardOutput "$env:TEMP\ngrok.log" -NoNewWindow
+          Start-Sleep -Seconds 8
+
+          $log = Get-Content "$env:TEMP\ngrok.log" -Raw -ErrorAction SilentlyContinue
+          if ($log -match "ERR_NGROK_105") {
+            Write-Host "::error::ngrok rejected the authtoken."
+            exit 1
+          }
+          if ($log -match "ERR_NGROK_334" -or $log -match "ERR_NGROK_108") {
+            # The reserved domain is taken - by a Cloud Endpoint, or by another
+            # session, because the free plan allows exactly one tunnel.
+            Write-Host "::warning::$env:NGROK_DOMAIN is taken; falling back to a generated address."
+            Get-Process ngrok -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 2
+            Start-Process ngrok -ArgumentList "http 8765 --log stdout" `
+              -RedirectStandardOutput "$env:TEMP\ngrok2.log" -NoNewWindow
+            Start-Sleep -Seconds 8
+          }
+
+          $url = $null
+          foreach ($i in 1..20) {
+            try {
+              $t = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
+              if ($t.tunnels.Count -gt 0) { $url = $t.tunnels[0].public_url; break }
+            } catch { }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $url) {
+            Write-Host "::error::no tunnel came up."
+            Get-Content "$env:TEMP\ngrok.log" -Tail 25 -ErrorAction SilentlyContinue
+            exit 1
+          }
+
+          # Array of lines, not a here-string, for the same YAML reason as
+          # the autosave script above.
+          $summary = @(
+            "## Zen agent (Windows)",
+            "",
+            "**[Open the agent]($url/hub?token=$token)**",
+            "",
+            "| | |",
+            "|---|---|",
+            "| Address | ``$url`` |",
+            "| Token | ``$token`` |",
+            "| Branch | ``$env:WORK_BRANCH`` |",
+            "| Runner | windows-latest, 4 cores, 16 GB |",
+            "| Capabilities | PowerShell runtime; windows_rdp, windows_screenshot, windows_adb, windows_system |",
+            "",
+            "The link carries the token and sets a cookie on first load. Treat it",
+            "as a password. This runner cannot build the Android APK - use the",
+            "Linux session for that."
+          ) -join "`n"
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host "=================================================="
+          Write-Host " Agent: $url/hub?token=$token"
+          Write-Host "=================================================="
+
+      - name: Keep the session alive
+        shell: pwsh
+        run: |
+          Write-Host "Running until cancelled, or for six hours."
+          Start-Sleep -Seconds 21000
+
+      - name: Final save
+        if: always()
+        shell: pwsh
+        run: |
+          Set-Location "$env:GITHUB_WORKSPACE\fork"
+          if (git status --porcelain) {
+            git add -A
+            git commit -q -m "agent final save $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+            git push -q origin HEAD
+            Write-Host "Pushed the last changes."
+          } else {
+            Write-Host "Nothing left to save."
+          }
