@@ -1,31 +1,26 @@
 name: Desk probe
 
-# Round six. The Windows desk serves, accepts with no password, and shows a
-# BLACK SCREEN. Everything else is proven; this is the last unknown.
+# Round seven. TightVNC serves a black screen from a session whose desktop is
+# demonstrably not black.
 #
-# WHAT IS ALREADY FACT, measured on real runners:
-#   * the runner is logged in on the console as runneradmin, session 2, with a
-#     1024x768 display, explorer running, and a genuine Windows Server 2025
-#     desktop - a screenshot taken by a step shows the taskbar and a Notepad
-#     window
-#   * TightVNC accepts with security type 1 (None): no password anywhere
-#   * the page is reachable through a Cloudflare quick tunnel from outside
-#   * a framebuffer captured through that tunnel is 1024x768 and entirely
-#     black - one single colour, checked pixel by pixel
+# THE CONTRADICTION, in one run's numbers:
+#   0-reference.png   26508 distinct colours   (GDI CopyFromScreen, this step)
+#   1-service.png         1 distinct colour    (TightVNC as a service)
+#   2-app.png             1 distinct colour    (TightVNC as an application)
 #
-# So the server is capturing the wrong desktop, or a blanked one. Two
-# candidates, and I do not intend to guess between them again:
+# GDI can read the desktop. TightVNC cannot. So the desktop is fine and
+# TightVNC's own capture path is what fails - most likely its mirror driver
+# hook, which has nothing to hook on a runner with no real display driver.
 #
-#   A. run as an APPLICATION, started by the task scheduler. That is what the
-#      workflow does now.
-#   B. run as a SERVICE. I previously wrote off service mode as "session 0, so
-#      blank" - that was reasoning, not measurement, and it may well be
-#      backwards: a VNC service on Windows runs as SYSTEM specifically so it
-#      can attach to whichever desktop is current.
-#
-# This job tries both, in order, and after each one captures an actual frame
-# from the server with a real VNC client and counts the distinct colours. One
-# colour means black. The PNGs are uploaded either way.
+# Three things get tested here, cheapest first:
+#   1. UseMirrorDriver=0, forcing TightVNC onto plain GDI polling. If its
+#      capture then matches the reference, the fix is one registry value.
+#   2. Who actually owns port 5900, so a stale instance cannot be mistaken for
+#      a working one - two tvnserver processes were alive last round and I
+#      never confirmed which answered.
+#   3. A fallback that uses the capture path already proven to work: GDI
+#      screenshots streamed as MJPEG over HTTP, with mouse and keyboard fed
+#      back through SendInput. If TightVNC cannot be fixed, this is the desk.
 
 on:
   workflow_dispatch:
@@ -39,39 +34,38 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Tools and a reference screenshot
+      - name: Install and take a reference frame
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
           New-Item -ItemType Directory -Force -Path shots | Out-Null
           python -m pip install --quiet --disable-pip-version-check vncdotool pillow
 
-          # What the session really looks like, captured by this step - the
-          # yardstick every VNC frame below is compared against.
           Add-Type -AssemblyName System.Drawing
           Add-Type -AssemblyName System.Windows.Forms
           $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
           $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
           [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size)
           $bmp.Save("shots\0-reference.png")
-          Write-Host "reference saved, $($b.Width)x$($b.Height)"
-          (query session 2>&1 | Out-String) | Write-Host
-          exit 0
 
-      - name: Install TightVNC
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
           curl.exe -sL --retry 3 -o "$env:TEMP\tightvnc.msi" `
             "https://www.tightvnc.com/download/2.8.85/tightvnc-2.8.85-gpl-setup-64bit.msi"
-          # Registered as a service here, because case B needs it and case A can
-          # simply stop it.
-          $a = @("/i", "`"$env:TEMP\tightvnc.msi`"", "/quiet", "/norestart",
-                 "ADDLOCAL=Server", "SERVER_REGISTER_AS_SERVICE=1",
-                 "SERVER_ADD_FIREWALL_EXCEPTION=1",
-                 "SET_USEVNCAUTHENTICATION=1", "VALUE_OF_USEVNCAUTHENTICATION=0",
-                 "SET_USECONTROLAUTHENTICATION=1", "VALUE_OF_USECONTROLAUTHENTICATION=0")
-          Start-Process msiexec -ArgumentList $a -Wait | Out-Null
+          Start-Process msiexec -Wait -ArgumentList @(
+            "/i", "`"$env:TEMP\tightvnc.msi`"", "/quiet", "/norestart",
+            "ADDLOCAL=Server", "SERVER_REGISTER_AS_SERVICE=0",
+            "SET_USEVNCAUTHENTICATION=1", "VALUE_OF_USEVNCAUTHENTICATION=0",
+            "SET_USECONTROLAUTHENTICATION=1", "VALUE_OF_USECONTROLAUTHENTICATION=0") | Out-Null
+          Write-Host "installed"
+          exit 0
+
+      - name: TightVNC without its mirror driver
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          Stop-Service tvnserver -Force -ErrorAction SilentlyContinue
+          Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 3
+
           foreach ($k in @("HKLM:\SOFTWARE\TightVNC\Server",
                            "HKLM:\SOFTWARE\Wow6432Node\TightVNC\Server",
                            "HKCU:\SOFTWARE\TightVNC\Server")) {
@@ -80,59 +74,126 @@ jobs:
             Set-ItemProperty -Path $k -Name "LoopbackOnly"             -Value 1 -Type DWord
             Set-ItemProperty -Path $k -Name "UseVncAuthentication"     -Value 0 -Type DWord
             Set-ItemProperty -Path $k -Name "UseControlAuthentication" -Value 0 -Type DWord
+            # The suspects: a mirror driver that cannot attach, and the
+            # "blank the physical screen" and "remove wallpaper" options, any
+            # of which could plausibly paint the frame black.
+            Set-ItemProperty -Path $k -Name "UseMirrorDriver"          -Value 0 -Type DWord
+            Set-ItemProperty -Path $k -Name "BlankScreen"              -Value 0 -Type DWord
             Set-ItemProperty -Path $k -Name "RemoveWallpaper"          -Value 0 -Type DWord
+            Set-ItemProperty -Path $k -Name "GrabTransparentWindows"   -Value 1 -Type DWord
             Set-ItemProperty -Path $k -Name "AlwaysShared"             -Value 1 -Type DWord
           }
-          Write-Host "installed"
-
-      - name: Case B - as a service
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
-          Start-Sleep -Seconds 2
-          Restart-Service tvnserver -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 8
-          (Get-Service tvnserver | Out-String) | Write-Host
-          (Get-Process tvnserver -ErrorAction SilentlyContinue |
-            Select-Object Id, SessionId | Out-String) | Write-Host
-
-          python -m vncdotool.command -s 127.0.0.1::5900 capture shots\1-service.png 2>&1 | Write-Host
-          exit 0
-
-      - name: Case A - as an application in the console session
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          Stop-Service tvnserver -Force -ErrorAction SilentlyContinue
-          Get-Process tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
-          Start-Sleep -Seconds 3
 
           $exe = "C:\Program Files\TightVNC\tvnserver.exe"
           $me  = "$env:USERDOMAIN\$env:USERNAME"
-          schtasks /Create /TN "symbiosis-vnc" /TR "`"$exe`" -run" /SC ONCE /ST 00:00 `
-            /RU $me /IT /F | Out-Null
+          schtasks /Create /TN "symbiosis-vnc" /TR "`"$exe`" -run" /SC ONCE /ST 00:00 /RU $me /IT /F | Out-Null
           schtasks /Run /TN "symbiosis-vnc" | Out-Null
-          Start-Sleep -Seconds 8
-          (Get-Process tvnserver -ErrorAction SilentlyContinue |
-            Select-Object Id, SessionId | Out-String) | Write-Host
+          Start-Sleep -Seconds 10
 
-          python -m vncdotool.command -s 127.0.0.1::5900 capture shots\2-app.png 2>&1 | Write-Host
+          # Which process actually holds 5900 - last round two were alive and I
+          # never checked which one answered.
+          $owner = Get-NetTCPConnection -State Listen -LocalPort 5900 -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+          if ($owner) {
+            $p = Get-Process -Id $owner.OwningProcess -ErrorAction SilentlyContinue
+            Write-Host ("port 5900 held by pid {0} ({1}) in session {2}" -f `
+              $owner.OwningProcess, $p.ProcessName, $p.SessionId)
+          } else { Write-Host "nothing is listening on 5900" }
+
+          python -m vncdotool.command -s 127.0.0.1::5900 capture shots\1-nomirror.png 2>&1 | Write-Host
           exit 0
 
-      - name: Count the colours in each frame
+      - name: The fallback - stream GDI screenshots, which are known to work
         shell: pwsh
         run: |
-          # One distinct colour means a black rectangle. The reference frame is
-          # there to prove the counting itself is sound.
+          $ErrorActionPreference = "Continue"
+          # A desk built on the capture path that already produced a real
+          # 26508-colour frame in this very job: GDI. MJPEG over HTTP for the
+          # picture, SendInput for mouse and keyboard. No VNC, no password, and
+          # a plain browser is the client.
+          #
+          # Written out here only to prove it captures and serves; wiring it
+          # into the workflow happens once the numbers say it works.
+          $src = @'
+          import io, time, threading, json, ctypes
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          from ctypes import wintypes
+          from PIL import ImageGrab
+
+          user32 = ctypes.windll.user32
+          user32.SetProcessDPIAware()
+          W = user32.GetSystemMetrics(0)
+          H = user32.GetSystemMetrics(1)
+
+          def grab():
+              im = ImageGrab.grab()
+              buf = io.BytesIO()
+              im.convert("RGB").save(buf, "JPEG", quality=60)
+              return buf.getvalue()
+
+          class H_(BaseHTTPRequestHandler):
+              protocol_version = "HTTP/1.1"
+              def log_message(self, *a): pass
+
+              def do_GET(self):
+                  if self.path.startswith("/stream"):
+                      self.send_response(200)
+                      self.send_header("Content-Type",
+                                       "multipart/x-mixed-replace; boundary=f")
+                      self.end_headers()
+                      try:
+                          while True:
+                              jpg = grab()
+                              self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\n"
+                                               b"Content-Length: " + str(len(jpg)).encode() +
+                                               b"\r\n\r\n" + jpg + b"\r\n")
+                              time.sleep(0.2)
+                      except Exception:
+                          return
+                  if self.path.startswith("/shot"):
+                      jpg = grab()
+                      self.send_response(200)
+                      self.send_header("Content-Type", "image/jpeg")
+                      self.send_header("Content-Length", str(len(jpg)))
+                      self.end_headers()
+                      self.wfile.write(jpg)
+                      return
+                  body = ("<html><body style='margin:0;background:#000'>"
+                          "<img src='/stream' style='width:100%'></body></html>").encode()
+                  self.send_response(200)
+                  self.send_header("Content-Type", "text/html")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+          ThreadingHTTPServer(("127.0.0.1", 6090), H_).serve_forever()
+          '@
+          $src -replace '(?m)^          ', '' | Out-File -FilePath "$env:TEMP\deskserve.py" -Encoding utf8
+
+          python -m pip install --quiet --disable-pip-version-check pillow
+          cmd /c start "" /b python "$env:TEMP\deskserve.py" "1>$env:TEMP\ds.log" "2>$env:TEMP\ds.err"
+          Start-Sleep -Seconds 8
+
+          curl.exe -s -o "shots\2-mjpeg.jpg" -m 20 "http://127.0.0.1:6090/shot"
+          $code = (curl.exe -s -o NUL -w "%{http_code}" -m 20 "http://127.0.0.1:6090/")
+          Write-Host "fallback page: HTTP $code"
+          Get-Content "$env:TEMP\ds.log","$env:TEMP\ds.err" -ErrorAction SilentlyContinue | Write-Host
+          exit 0
+
+      - name: Count the colours
+        shell: pwsh
+        run: |
           $py = @(
             'from PIL import Image',
-            'import os, glob',
-            'for f in sorted(glob.glob("shots/*.png")):',
-            '    im = Image.open(f).convert("RGB")',
-            '    cols = im.getcolors(maxcolors=500000)',
-            '    n = len(cols) if cols else 500000',
-            '    print(f"{os.path.basename(f):20s} {im.size}  distinct colours: {n}  ",',
+            'import glob, os',
+            'for f in sorted(glob.glob("shots/*")):',
+            '    try:',
+            '        im = Image.open(f).convert("RGB")',
+            '    except Exception as e:',
+            '        print(f"{os.path.basename(f)}: unreadable ({e})"); continue',
+            '    c = im.getcolors(maxcolors=500000)',
+            '    n = len(c) if c else 500000',
+            '    print(f"{os.path.basename(f):20s} {im.size}  colours: {n:6d}  ",',
             '          "BLACK" if n <= 2 else "REAL DESKTOP")'
           ) -join "`n"
           $py | Out-File -FilePath count.py -Encoding utf8
