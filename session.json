@@ -1,7 +1,15 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-11T09:26:12Z",
-  "runId": "31476818082",
-  "runNumber": "10",
+  "kind": "Рабочий стол",
+  "os": "linux",
+  "url": "https://83be-172-183-94-128.ngrok-free.app",
+  "vncUrl": "https://83be-172-183-94-128.ngrok-free.app/vnc.html?autoconnect=1&resize=remote&password=70f68db6",
+  "vncPass": "70f68db6",
+  "vncUser": "(без логина)",
+  "terminal": "https://83be-172-183-94-128.ngrok-free.app/term/",
+  "branch": "session/session-1-20260811-0917",
+  "startedAt": "2026-08-11T09:19:50Z",
+  "state": "live",
+  "runId": "31476953668",
+  "runNumber": "11",
   "repo": "sj0404-collab/eden-symbiosis"
 }
