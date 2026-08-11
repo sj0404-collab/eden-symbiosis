@@ -687,6 +687,27 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member $user -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user -ErrorAction SilentlyContinue
 
+          # Machine password policy, not just the account.
+          #
+          # Every per-account flag was cleared and the client still received
+          # LOGON_FAILED_UPDATE_PASSWORD, so the demand is coming from the
+          # local security policy rather than the user object: a maximum
+          # password age of 42 days is the Windows default, and an account
+          # whose password predates it is told to change at logon regardless
+          # of its own settings. net accounts removes the age entirely.
+          net accounts /maxpwage:unlimited | Out-Null
+          net accounts /minpwlen:0 | Out-Null
+          Write-Host "machine password policy: $(net accounts | Select-String 'password age' -Raw)"
+
+          # Re-apply after the policy change, because setting maxpwage does not
+          # retroactively clear a flag already raised on the account.
+          try {
+            $adsi = [ADSI]"WinNT://./$user,user"
+            $adsi.Put("PasswordExpired", 0)
+            $adsi.SetInfo()
+            Write-Host "PasswordExpired re-cleared after the policy change"
+          } catch { Write-Host "second ADSI pass failed: $($_.Exception.Message)" }
+
           Restart-Service -Name TermService -Force
           Start-Sleep -Seconds 5
 
@@ -702,6 +723,10 @@ jobs:
           Write-Host ("effective: NLA={0} SecurityLayer={1} MinEncryption={2}" -f `
             $eff.UserAuthentication, $eff.SecurityLayer, $eff.MinEncryptionLevel)
           $acct = Get-LocalUser -Name $user
+          $adsiFlag = try {
+            ([ADSI]"WinNT://./$user,user").Get("PasswordExpired")
+          } catch { "unreadable" }
+          Write-Host "ADSI PasswordExpired = $adsiFlag (0 means no change demanded)"
           # Carried to session.json so it is visible without the job log,
           # which GitHub refuses to serve while the job is running - the
           # reason this took three sessions to pin down.
