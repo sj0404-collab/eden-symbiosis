@@ -137,15 +137,16 @@
   </div>
 
   <div class="card">
-    <h2>Доступ</h2>
+    <h2>Добавить аккаунт</h2>
     <label>Токен GitHub</label>
     <input id="tok" type="password" placeholder="ghp_…" autocomplete="off">
     <div class="row">
-      <button onclick="saveTok()">Сохранить</button>
-      <button class="ghost" onclick="clearTok()">Удалить</button>
+      <button id="btn-add" onclick="addAccount()">Добавить</button>
+      <button class="ghost" onclick="window.open('https://github.com/settings/tokens/new?scopes=repo,workflow&description=Symbiosis%20panel','_blank')">Создать токен</button>
     </div>
     <div class="note">
-      Хранится только в этом браузере (localStorage) и уходит исключительно на
+      Аккаунтов может быть несколько — переключайтесь кнопкой выше. Токен
+      хранится только в этом браузере (localStorage) и уходит исключительно на
       api.github.com. Нужны права <code>repo</code> и <code>workflow</code>.
       Без токена видны только публичные репозитории и статусы.
     </div>
@@ -274,32 +275,166 @@
 <script>
 'use strict';
 
-const OWNER = 'sj0404-collab';
-const REPO  = OWNER + '/eden-symbiosis';
-const GH    = 'https://api.github.com';
-const API   = `${GH}/repos/${REPO}`;
+const GH = 'https://api.github.com';
+
+// Where the panel points when nobody has signed in yet. Any account can be
+// added later; this is only the read-only starting view.
+const DEFAULT_OWNER = 'sj0404-collab';
+const DEFAULT_REPO  = DEFAULT_OWNER + '/eden-symbiosis';
+
 const DESKTOP_BASE = 'https://filly-above-terrapin.ngrok-free.app';
 const DESKTOP = DESKTOP_BASE + '/vnc.html?autoconnect=1&resize=remote';
+
+// ── accounts ────────────────────────────────────────────────────────
+//
+// Several GitHub accounts can be kept side by side and switched between. Each
+// carries its own token and its own control repository - the fork whose
+// workflows this panel starts - because a second account will not have the
+// first one's fork, and firing a workflow into the wrong repository is the
+// mistake worth designing out.
+//
+// Tokens sit in localStorage, on the device, and are sent only to
+// api.github.com. Switching accounts is a local operation: nothing is revoked
+// and nothing is uploaded.
+const STORE_KEY = 'panel_accounts';
+
+function loadStore() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) { s = null; }
+  if (!s || !Array.isArray(s.accounts)) s = { v: 1, active: 0, accounts: [] };
+
+  // Carry over the single token the panel used before accounts existed, so an
+  // upgrade does not silently log the user out.
+  const legacy = localStorage.getItem('gh_token');
+  if (legacy && !s.accounts.some(a => a.token === legacy)) {
+    s.accounts.push({ login: '', token: legacy, avatar: '', control: DEFAULT_REPO });
+    s.active = s.accounts.length - 1;
+    localStorage.removeItem('gh_token');
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) {}
+  }
+  if (s.active >= s.accounts.length) s.active = Math.max(0, s.accounts.length - 1);
+  return s;
+}
+
+function saveStore(s) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) {}
+}
+
+let STORE = loadStore();
+
+const acct   = () => STORE.accounts[STORE.active] || null;
+const tok    = () => (acct() && acct().token) || '';
+const owner  = () => (acct() && acct().login) || DEFAULT_OWNER;
+const ctlRepo = () => (acct() && acct().control) || DEFAULT_REPO;
+
+// The control repository is chosen per account, so this cannot be a constant.
+const CTL = () => `${GH}/repos/${ctlRepo()}`;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-const tok = () => localStorage.getItem('gh_token') || '';
 function hdr() {
   const h = { 'Accept': 'application/vnd.github+json' };
   if (tok()) h['Authorization'] = 'token ' + tok();
   return h;
 }
-function saveTok() {
-  const v = $('tok').value.trim();
-  if (!v) { alert('Пусто.'); return; }
-  localStorage.setItem('gh_token', v);
-  $('tok').value = '';
-  alert('Сохранено на этом устройстве.');
-  loadAccount(); loadRepos(true); refresh();
+
+// Adding an account verifies the token before storing it. A token that is
+// expired or missing a scope otherwise turns into an empty panel with no
+// explanation, which is the failure this avoids.
+async function addAccount() {
+  const value = $('tok').value.trim();
+  if (!value) { alert('Вставьте токен.'); return; }
+  const btn = $('btn-add'); const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Проверяю…';
+  try {
+    const r = await fetch(`${GH}/user`, {
+      headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'token ' + value }
+    });
+    if (r.status === 401) throw new Error('Токен недействителен (401).');
+    if (!r.ok) throw new Error('GitHub ответил ' + r.status);
+    const u = await r.json();
+    const scopes = r.headers.get('x-oauth-scopes') || '';
+
+    const existing = STORE.accounts.findIndex(a => a.login === u.login);
+    const entry = {
+      login: u.login,
+      token: value,
+      avatar: u.avatar_url || '',
+      scopes,
+      // Default the control repository to this account's own fork if it has
+      // one; otherwise leave the shared default, which is still readable.
+      control: await guessControl(u.login, value)
+    };
+    if (existing >= 0) { STORE.accounts[existing] = entry; STORE.active = existing; }
+    else { STORE.accounts.push(entry); STORE.active = STORE.accounts.length - 1; }
+    saveStore(STORE);
+    $('tok').value = '';
+
+    if (!/repo/.test(scopes) || !/workflow/.test(scopes)) {
+      alert('Аккаунт ' + u.login + ' добавлен, но у токена нет прав repo/workflow — ' +
+            'запуск и остановка сессий работать не будут.');
+    }
+    switchTo(STORE.active);
+  } catch (e) {
+    alert('Не вышло: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
 }
-function clearTok() { localStorage.removeItem('gh_token'); alert('Удалено.'); loadAccount(); }
+
+// Which repository holds the workflows this panel drives. A fork keeps the
+// upstream name, so looking for it by name is right far more often than not;
+// when it is missing the user picks one by hand.
+async function guessControl(login, token) {
+  const mine = `${login}/eden-symbiosis`;
+  try {
+    const r = await fetch(`${GH}/repos/${mine}`, {
+      headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'token ' + token }
+    });
+    if (r.ok) return mine;
+  } catch (e) { /* fall through to the shared default */ }
+  return DEFAULT_REPO;
+}
+
+function switchTo(index) {
+  STORE.active = index;
+  saveStore(STORE);
+  REPOS = [];
+  ACT_REPO = ctlRepo();
+  if ($('act-repo')) $('act-repo').textContent = ACT_REPO;
+  loadAccount();
+  if (page === 'repo') loadRepos(true);
+  if (page === 'act')  loadActions(true);
+  refresh();
+}
+
+function removeAccount(index) {
+  const a = STORE.accounts[index];
+  if (!a) return;
+  if (!confirm('Убрать ' + (a.login || 'этот аккаунт') + ' с этого устройства?\n\n' +
+               'Токен удаляется только здесь — на GitHub он продолжает действовать. ' +
+               'Отозвать его можно в настройках GitHub.')) return;
+  STORE.accounts.splice(index, 1);
+  if (STORE.active >= STORE.accounts.length) STORE.active = Math.max(0, STORE.accounts.length - 1);
+  saveStore(STORE);
+  switchTo(STORE.active);
+}
+
+// The control repository can be set by hand: a fork under a different name, or
+// somebody else's repository the token can reach.
+function setControl() {
+  const a = acct();
+  if (!a) { alert('Сначала добавьте аккаунт.'); return; }
+  const value = prompt('Репозиторий с workflow (owner/name):', a.control || DEFAULT_REPO);
+  if (!value) return;
+  const clean = value.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '');
+  if (!/^[\w.-]+\/[\w.-]+$/.test(clean)) { alert('Ожидается owner/name.'); return; }
+  a.control = clean;
+  saveStore(STORE);
+  switchTo(STORE.active);
+}
 
 // A single place for API calls so an expired token reports itself once, in
 // words, instead of every panel silently rendering empty.
@@ -334,12 +469,33 @@ function go(p) {
 // ── account ─────────────────────────────────────────────────────────
 async function loadAccount() {
   const box = $('acc');
+  const rows = [];
+
+  // The switcher comes first: with several accounts stored, which one is
+  // active decides what every other tab shows, so it should be the first
+  // thing on screen rather than a detail under the profile.
+  if (STORE.accounts.length) {
+    rows.push('<div style="margin-bottom:10px">' + STORE.accounts.map((a, i) => `
+      <div class="item" style="${i === STORE.active ? 'background:#1d1d29;border-radius:10px' : ''}">
+        <div class="ico">${i === STORE.active ? '●' : '○'}</div>
+        <div class="grow" onclick="switchTo(${i})">
+          <div class="name">${esc(a.login || 'без имени')}${
+            i === STORE.active ? ' <span class="pill ok">активен</span>' : ''}</div>
+          <div class="meta">workflow: ${esc(a.control || DEFAULT_REPO)}</div>
+        </div>
+        <button class="ghost small" onclick="event.stopPropagation();removeAccount(${i})">✕</button>
+      </div>`).join('') + '</div>');
+  }
+
   try {
-    // /user needs a token; fall back to the public profile so the page still
-    // says who it is looking at before anything is pasted.
-    const u = tok() ? await api(`${GH}/user`) : await api(`${GH}/users/${OWNER}`);
-    const scopes = tok() ? await tokenScopes() : null;
-    box.innerHTML = `
+    // /user needs a token; without one fall back to the public profile so the
+    // page still says whose repositories it is showing.
+    const u = tok() ? await api(`${GH}/user`) : await api(`${GH}/users/${DEFAULT_OWNER}`);
+    if (tok() && acct() && !acct().login) {
+      // A token carried over from the old single-token panel has no name yet.
+      acct().login = u.login; acct().avatar = u.avatar_url || ''; saveStore(STORE);
+    }
+    rows.push(`
       <div class="head">
         <img class="avatar" src="${esc(u.avatar_url)}" alt="">
         <div class="grow">
@@ -352,22 +508,19 @@ async function loadAccount() {
         <tr><td>Репозитории</td><td>${u.public_repos ?? '—'} публичных${
           u.total_private_repos != null ? ' · ' + u.total_private_repos + ' приватных' : ''}</td></tr>
         <tr><td>Токен</td><td>${tok()
-          ? '<span class="pill ok">есть</span>' + (scopes ? ' <span class="note">' + esc(scopes) + '</span>' : '')
+          ? '<span class="pill ok">есть</span>' +
+            (acct() && acct().scopes ? ' <span class="note">' + esc(acct().scopes) + '</span>' : '')
           : '<span class="pill idle">нет</span> <span class="note">только чтение публичного</span>'}</td></tr>
-      </table>`;
+        <tr><td>Workflow</td><td><code>${esc(ctlRepo())}</code>
+          <div class="note"><a onclick="setControl()">сменить репозиторий</a> —
+            отсюда запускаются сессии и сборки</div></td></tr>
+      </table>`);
+    box.innerHTML = rows.join('');
   } catch (e) {
-    box.innerHTML = `<div class="danger">${esc(e.message)}</div>`;
+    box.innerHTML = rows.join('') + `<div class="danger">${esc(e.message)}</div>`;
   }
 }
 
-// Scopes come back in a header, which fetch exposes only for simple headers;
-// x-oauth-scopes is allowed here because GitHub marks it exposed.
-async function tokenScopes() {
-  try {
-    const r = await fetch(`${GH}/user`, { headers: hdr() });
-    return r.headers.get('x-oauth-scopes') || '';
-  } catch (e) { return ''; }
-}
 
 // ── repositories ────────────────────────────────────────────────────
 let REPOS = [];
@@ -380,7 +533,7 @@ async function loadRepos(force) {
     // ones, which is still enough to browse this fork.
     const url = tok()
       ? `${GH}/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member`
-      : `${GH}/users/${OWNER}/repos?per_page=100&sort=updated`;
+      : `${GH}/users/${owner()}/repos?per_page=100&sort=updated`;
     REPOS = await api(url);
     renderRepos();
   } catch (e) {
@@ -405,7 +558,7 @@ function renderRepos() {
 }
 
 // ── file browser ────────────────────────────────────────────────────
-let CUR = { repo: REPO, path: '', branch: '' };
+let CUR = { repo: ctlRepo(), path: '', branch: '' };
 
 function openRepo(full) {
   CUR = { repo: full, path: '', branch: '' };
@@ -490,7 +643,7 @@ function showFile(f) {
 }
 
 // ── actions ─────────────────────────────────────────────────────────
-let ACT_REPO = REPO;
+let ACT_REPO = ctlRepo();
 async function loadActions(force) {
   $('act-repo').textContent = ACT_REPO;
   const wbox = $('workflows'), rbox = $('runs');
@@ -542,7 +695,7 @@ async function runIn(repo, wf) {
 
 async function run(wf, inputs) {
   if (!tok()) { alert('Сначала вставьте токен — без него запуск невозможен.'); return; }
-  const r = await fetch(`${API}/actions/workflows/${wf}/dispatches`, {
+  const r = await fetch(`${CTL()}/actions/workflows/${wf}/dispatches`, {
     method: 'POST', headers: hdr(), body: JSON.stringify({ ref: 'main', inputs })
   });
   alert(r.status === 204 ? 'Запущено.' : 'Не вышло: ' + r.status + ' ' + await r.text());
@@ -555,7 +708,7 @@ const liveDesktops = rs => rs.filter(r => (r.name === 'Remote session' || r.name
                                           && r.status !== 'completed');
 
 async function currentRuns() {
-  try { return (await api(`${API}/actions/runs?per_page=20`)).workflow_runs || []; }
+  try { return (await api(`${CTL()}/actions/runs?per_page=20`)).workflow_runs || []; }
   catch (e) { return []; }
 }
 
@@ -580,7 +733,7 @@ async function startAgent(os) {
   }
 
   btn.disabled = true; say('Запускаю…');
-  const r = await fetch(`${API}/actions/workflows/agent.yml/dispatches`, {
+  const r = await fetch(`${CTL()}/actions/workflows/agent.yml/dispatches`, {
     method: 'POST', headers: hdr(),
     body: JSON.stringify({ ref: 'main', inputs: {
       os, branch: 'agent-work', repos: '', autosave_minutes: '2' } })
@@ -604,7 +757,7 @@ async function startAgent(os) {
 }
 
 async function cancelRun(id, repo) {
-  const r = await fetch(`${GH}/repos/${repo || REPO}/actions/runs/${id}/cancel`,
+  const r = await fetch(`${GH}/repos/${repo || ctlRepo()}/actions/runs/${id}/cancel`,
     { method: 'POST', headers: hdr() });
   return r.status === 202 || r.status === 409;
 }
@@ -650,7 +803,7 @@ async function loadCreds() {
   const box = $('creds');
   try {
     const f = await api(
-      `${API}/contents/session.json?ref=session-state&t=${Date.now()}`);
+      `${CTL()}/contents/session.json?ref=session-state&t=${Date.now()}`);
     const raw = atob((f.content || '').replace(/\n/g, ''));
     const s = JSON.parse(raw);
 
@@ -710,7 +863,7 @@ function copy(text) {
 async function loadPanelApk() {
   const box = $('apk-panel');
   try {
-    const d = await api(`${API}/actions/runs?per_page=20`);
+    const d = await api(`${CTL()}/actions/runs?per_page=20`);
     const b = (d.workflow_runs || []).find(r =>
       r.name === 'Panel APK' && r.conclusion === 'success');
     if (!b) {
@@ -745,7 +898,7 @@ const kb = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' МБ'
 
 async function refresh() {
   let runs = [];
-  try { runs = (await api(`${API}/actions/runs?per_page=20`)).workflow_runs || []; }
+  try { runs = (await api(`${CTL()}/actions/runs?per_page=20`)).workflow_runs || []; }
   catch (e) {
     $('agent-live').innerHTML = `<div class="danger">${esc(e.message)}</div>`;
     return;
@@ -787,7 +940,7 @@ async function refresh() {
   const box = $('apk');
   if (!build) { box.innerHTML = '<span class="note">успешных сборок пока нет</span>'; return; }
   try {
-    const a = await api(`${API}/actions/runs/${build.id}/artifacts`);
+    const a = await api(`${CTL()}/actions/runs/${build.id}/artifacts`);
     const arts = a.artifacts || [];
     box.innerHTML = `<table>
       <tr><td>Сборка</td><td>#${build.run_number} · ${ago(build.updated_at)}</td></tr>
