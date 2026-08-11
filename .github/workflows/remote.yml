@@ -759,33 +759,63 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "The desktop stays up until you cancel this run, or for six hours."
-          # Watch the tunnel rather than sleeping blindly. If ngrok dies the
-          # port keeps accepting connections and dropping them, which looks to
-          # the user like a broken RDP client rather than a dead tunnel.
+          Write-Host "tunnel: $env:TUNNEL_KIND on pid $env:TUNNEL_PID"
+          
+          # Watch the tunnel rather than sleeping blindly: when it dies the port
+          # keeps accepting connections and dropping them, which looks like a
+          # broken RDP client rather than a dead tunnel.
+          #
+          # Restart whichever tunnel this session actually used. The previous
+          # version always relaunched ngrok, so a bore session whose watchdog
+          # fired tried to run a binary that had never been installed and killed
+          # the whole job - which is exactly what happened on the first run.
+          $borePath = Get-ChildItem -Path "$env:TEMP\boredir" -Filter "bore.exe" -Recurse -ErrorAction SilentlyContinue |
+                      Select-Object -First 1 -ExpandProperty FullName
+          $pid_ = $env:TUNNEL_PID
+          
           for ($i = 0; $i -lt 1400; $i++) {
             Start-Sleep -Seconds 15
-            $alive = Get-Process -Id $env:TUNNEL_PID -ErrorAction SilentlyContinue
-            if (-not $alive) {
-              Write-Host "::warning::ngrok exited; restarting the tunnel."
+            if (-not $pid_) { continue }
+            $alive = Get-Process -Id $pid_ -ErrorAction SilentlyContinue
+            if ($alive) { continue }
+          
+            Write-Host "::warning::the tunnel exited; restarting it."
+            $addr = $null
+            if ($env:TUNNEL_KIND -eq "bore" -and $borePath) {
+              $port = if ($env:BORE_PORT) { [int]$env:BORE_PORT } else { 47311 }
+              $bp = Start-Process -FilePath $borePath `
+                -ArgumentList "local 3389 --to bore.pub --port $port" `
+                -RedirectStandardOutput "$env:TEMP\bore2.log" `
+                -RedirectStandardError  "$env:TEMP\bore2.err" `
+                -WindowStyle Hidden -PassThru
+              $pid_ = $bp.Id
+              Start-Sleep -Seconds 8
+              $blog = (Get-Content "$env:TEMP\bore2.log","$env:TEMP\bore2.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+              if ($blog -match "listening at (bore\.pub:\d+)") { $addr = $Matches[1] }
+            } elseif (Get-Command ngrok -ErrorAction SilentlyContinue) {
               $ngrok = Start-Process -FilePath "ngrok" `
                 -ArgumentList "tcp 3389 --log stdout --log-format json --log-level info" `
                 -RedirectStandardOutput "$env:TEMP\ngrok2.log" `
                 -WindowStyle Hidden -PassThru
-              $env:TUNNEL_PID = $ngrok.Id
+              $pid_ = $ngrok.Id
               Start-Sleep -Seconds 8
               try {
                 $t = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
                 $tcp = $t.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
-                if ($tcp) {
-                  $addr = $tcp.public_url -replace '^tcp://', ''
-                  Write-Host "new address: $addr"
-                  $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
-                  bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-                    "kind=RDP" "os=windows" "rdpHost=$addr" `
-                    "rdpUser=${{ steps.rdp.outputs.user }}" `
-                    "rdpPass=${{ steps.rdp.outputs.password }}"
-                }
+                if ($tcp) { $addr = $tcp.public_url -replace '^tcp://', '' }
               } catch { }
+            } else {
+              Write-Host "::warning::no tunnel binary available to restart; the session stays local."
+              continue
+            }
+          
+            if ($addr) {
+              Write-Host "tunnel back up on $addr"
+              $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+              bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+                "kind=RDP" "os=windows" "rdpHost=$addr" `
+                "rdpUser=${{ steps.rdp.outputs.user }}" `
+                "rdpPass=${{ steps.rdp.outputs.password }}"
             }
           }
 
