@@ -358,6 +358,43 @@ const caps = createCapabilities({
     assert.ok(after.error, 'deleted capability must be gone');
   });
 
+  await check('a capability that never reads stdin cannot crash the agent', async () => {
+    // EPIPE arrives as an asynchronous 'error' event on the stdin stream, not
+    // as a throw, so the try/catch around the write did not cover it and an
+    // unhandled error took down the whole process. It surfaced only on CI
+    // (Node 22, slower disk) and never locally, which is precisely why the
+    // stream now has an explicit error handler rather than a hopeful catch.
+    let crashed = null;
+    const onUncaught = e => { crashed = e; };
+    process.once('uncaughtException', onUncaught);
+    try {
+      await caps.handle('capability_create', {
+        name: 'ignores_stdin', description: 'exits without reading stdin',
+        runtime: 'bash', code: 'exit 0\n', overwrite: true
+      });
+      // Large payloads make the pipe fill and fail rather than being buffered.
+      for (let i = 0; i < 12; i++) {
+        const r = await caps.handle('capability_run', {
+          name: 'ignores_stdin', args: { payload: 'x'.repeat(500000) }
+        });
+        assert.ok(!r.error, `run ${i} errored: ${r.error}`);
+      }
+      // Also the SIGKILL path: the reader dies mid-write.
+      await caps.handle('capability_create', {
+        name: 'killed_midwrite', description: 'sleeps until killed',
+        runtime: 'bash', code: 'sleep 30\n', overwrite: true
+      });
+      const killed = await caps.handle('capability_run', {
+        name: 'killed_midwrite', timeout_ms: 1000, args: { payload: 'y'.repeat(500000) }
+      });
+      assert.ok(killed.timedOut || killed.exit !== 0, 'the runaway should be stopped');
+      await new Promise(r => setTimeout(r, 200));
+      assert.strictEqual(crashed, null, `unhandled ${crashed && crashed.code}`);
+    } finally {
+      process.removeListener('uncaughtException', onUncaught);
+    }
+  });
+
   await check('running a missing capability fails clearly', async () => {
     const run = await caps.handle('capability_run', { name: 'never_made' });
     assert.ok(run.error && /не найдена/i.test(run.error));

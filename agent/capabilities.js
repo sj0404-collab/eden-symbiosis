@@ -1064,8 +1064,17 @@ function createCapabilities(ctx) {
       child.on('error', err => finish(1, err.message));
       child.on('close', code => finish(typeof code === 'number' ? code : 1));
 
+      // Args go in on stdin as well as through the environment. A capability
+      // is free to ignore stdin and exit immediately - several blueprints do,
+      // and a script with a syntax error never reads anything - which closes
+      // the pipe under us. Node reports that as an asynchronous 'error' event
+      // on the stream, not as a throw, so the try/catch here caught nothing
+      // and an unhandled EPIPE took down the whole agent. Swallow it: the
+      // child having gone is the child's business, and its exit code is
+      // already being collected.
+      child.stdin.on('error', () => {});
       try {
-        child.stdin.write(JSON.stringify(callArgs));
+        child.stdin.write(JSON.stringify(callArgs), () => {});
         child.stdin.end();
       } catch {}
     });
