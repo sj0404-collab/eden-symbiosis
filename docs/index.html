@@ -1004,26 +1004,28 @@ async function loadDesks() {
     } catch (e) { return null; }
   };
 
-  const [lin, win] = await Promise.all([read('linux'), read('windows')]);
-  DESKS = { linux: lin, windows: win };
+  const [lin, win, agent] = await Promise.all(
+    [read('linux'), read('windows'), read('agent')]);
+  DESKS = { linux: lin, windows: win, agent: agent };
 
-  if (!lin && !win) {
+  if (!lin && !win && !agent) {
     card.style.display = 'none';
     deskSig = '';
     return;
   }
   card.style.display = '';
 
-  const ageLine = s => `без пароля · идёт ${s._age} мин · осталось ~${Math.max(0, 360 - s._age)} мин`;
+  const ageLine = s => `${s.agentUrl ? 'по ссылке с токеном' : 'без пароля'} · идёт ${s._age} мин · осталось ~${Math.max(0, 360 - s._age)} мин`;
 
   // Nothing structural changed: touch the counters and leave the iframes be.
   const sig = JSON.stringify([
     deskOpen,
     lin && [lin.deskUrl || lin.url, lin.terminal || '', lin.runId || ''],
-    win && [win.deskUrl || win.url, win.terminal || '', win.runId || '']
+    win && [win.deskUrl || win.url, win.terminal || '', win.runId || ''],
+    agent && [agent.agentUrl || agent.url, agent.runId || '']
   ]);
   if (sig === deskSig) {
-    for (const [slot, s] of [['linux', lin], ['windows', win]]) {
+    for (const [slot, s] of [['linux', lin], ['windows', win], ['agent', agent]]) {
       const el = $('desk-age-' + slot);
       if (el && s) el.textContent = ageLine(s);
     }
@@ -1083,10 +1085,21 @@ async function loadDesks() {
               width:100%;height:70vh;background:#000"
               sandbox="allow-scripts allow-same-origin allow-forms"></iframe>`;
   } else {
+    // The agent has no screen to show - it is a chat page - so it gets a row
+    // of its own rather than an empty black thumbnail pretending to be a desk.
+    const agentRow = agent ? `
+      <div style="margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:12px">
+        <b>CLI-агент</b>
+        <div class="note" style="margin:4px 0 8px" id="desk-age-agent">${esc(ageLine(agent))}</div>
+        <div class="row">
+          <button class="small" onclick="window.open('${esc(agent.agentUrl || agent.url)}','_blank')">Открыть чат</button>
+          ${agent.runId && tok() ? `<button class="ghost small" onclick="stopRun(${agent.runId})">Выключить</button>` : ''}
+        </div>
+      </div>` : '';
     box.innerHTML = `<div class="row" style="gap:10px;align-items:stretch">
       ${tile('linux', lin, 'Linux')}
       ${tile('windows', win, 'Windows')}
-    </div>`;
+    </div>` + agentRow;
   }
 }
 

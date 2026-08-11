@@ -20,10 +20,11 @@
 #   way.
 #
 # TWO DESKS AT ONCE
-#   Pass slot=linux or slot=windows and the entry lands in its own file,
-#   session-linux.json or session-windows.json, so the two desks never
-#   overwrite each other. Without a slot the old single session.json is used,
-#   which keeps the older workflows working unchanged.
+#   Pass slot=linux, slot=windows or slot=agent and the entry lands in its own
+#   file - session-linux.json, session-windows.json, session-agent.json - so
+#   the two desks and the agent never overwrite each other. Without a slot the
+#   old single session.json is used, which keeps the older workflows working
+#   unchanged.
 #
 #   The panel reads all three and shows whichever are live.
 #
@@ -43,6 +44,7 @@ for arg in "$@"; do
   case "$arg" in
     slot=linux)   FILE="session-linux.json" ;;
     slot=windows) FILE="session-windows.json" ;;
+    slot=agent)   FILE="session-agent.json" ;;
     slot=*)       ;;   # unknown slot: ignore rather than write a stray file
     *)            ARGS+=("$arg") ;;
   esac

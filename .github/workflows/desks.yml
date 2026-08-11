@@ -116,9 +116,19 @@ jobs:
           #
           # -localhost yes keeps the raw VNC port unreachable from outside; the
           # only way in is the tunnel, which speaks WebSocket.
+          # 1024x600, not 1280x720: a phone screen is nowhere near 720p, and
+          # the smaller desktop means less scaling and larger text.
+          #
+          # -AcceptSetDesktopSize=1 lets a client ask the X server to match its
+          # own window, which is what makes a desk fill the screen properly
+          # rather than being squeezed. Checked against a real Xtigervnc here
+          # before committing: the option is accepted and the server starts.
+          # (The obvious-looking "-randr" does NOT exist - it is rejected with
+          # "Unrecognized option" and the whole desk fails to start. Found by
+          # trying it locally rather than on a live session.)
           vncserver -kill :1 >/dev/null 2>&1 || true
-          vncserver :1 -geometry 1280x720 -depth 24 -localhost yes \
-            -SecurityTypes None > /tmp/vnc.log 2>&1
+          vncserver :1 -geometry 1024x600 -depth 24 -localhost yes \
+            -SecurityTypes None -AcceptSetDesktopSize=1 > /tmp/vnc.log 2>&1
           sleep 4
           ss -lnt | grep -q 5901 || { echo "::error::VNC is not listening"; cat /tmp/vnc.log; exit 1; }
 
@@ -181,7 +191,15 @@ jobs:
         run: |
           # autoconnect=1 and no password parameter: the page connects on its
           # own and never shows a credential prompt.
-          OPEN="$DESK_URL/vnc.html?autoconnect=1&resize=remote"
+          # resize=scale, not resize=remote.
+          #
+          # "remote" asks the X server to change resolution and does nothing at
+          # all if it declines - which is what a phone saw: a 1280x720 desktop
+          # at native size in a narrow window, so only the top-left corner was
+          # visible. "scale" always fits the picture to the window, and the
+          # -randr list above still lets the desktop snap to a sensible size.
+          # quality/compression are tuned for a phone on mobile data.
+          OPEN="$DESK_URL/vnc.html?autoconnect=1&resize=scale&quality=6&compression=6&show_dot=true"
           {
             echo "## Linux desk"
             echo ""
@@ -230,7 +248,7 @@ jobs:
             GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
               bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
                 "slot=linux" "kind=Стол Linux" "os=linux" \
-                "url=$URL" "deskUrl=$URL/vnc.html?autoconnect=1&resize=remote" \
+                "url=$URL" "deskUrl=$URL/vnc.html?autoconnect=1&resize=scale&quality=6&compression=6&show_dot=true" \
                 "terminal=$URL/term/" "auth=без пароля" "label=${{ inputs.label }}"
           done
 

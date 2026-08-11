@@ -1,7 +1,8 @@
 name: Zen agent
 
 # Runs the fork's own agent (agent/zen-agent.js) on a runner and publishes its
-# web hub through ngrok, so it is usable from a phone browser.
+# web hub through a cloudflared quick tunnel, so it is usable from a phone
+# browser with no account, no token and no one-tunnel limit.
 #
 # Why this instead of the opencode workflow: opencode was slow to start, could
 # not reach other repositories, and its free models were mostly dead ends. This
@@ -16,7 +17,7 @@ name: Zen agent
 #   continues the same branch.
 #
 # ACCESS
-#   The hub binds to 0.0.0.0 so ngrok can reach it, and the agent refuses
+#   The hub binds to 0.0.0.0 so the tunnel can reach it, and the agent refuses
 #   non-loopback requests without ZEN_REMOTE_TOKEN. A token is generated per
 #   run and embedded in the link printed in the summary, which sets a cookie on
 #   first load. Anyone with that link has the session, so treat it as a
@@ -140,19 +141,13 @@ jobs:
 
       - name: Start the agent and open the tunnel
         env:
-          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-          NGROK_DOMAIN: filly-above-terrapin.ngrok-free.app
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "$NGROK_TOKEN" ]; then
-            echo "::error::NGROK_AUTH_TOKEN is not set; the hub would only be reachable on the runner."
-            exit 1
-          fi
-
+          # No tunnel secret any more - see the cloudflared note below.
           TOKEN="zen-$(openssl rand -hex 12)"
           cd "$GITHUB_WORKSPACE/fork"
 
-          # 0.0.0.0 so ngrok can reach it; the agent then requires the token for
+          # 0.0.0.0 so the tunnel can reach it; the agent then requires the token for
           # every non-loopback request.
           # ZEN_LONG_TASKS raises the round ceiling from 25 to 250 and allows
           # longer-running commands. A short question still finishes in one
@@ -176,36 +171,22 @@ jobs:
           fi
           echo "agent is up on 8765"
 
-          curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz \
-            | sudo tar xz -C /usr/local/bin
-          ngrok config add-authtoken "$NGROK_TOKEN"
-
-          nohup ngrok http 8765 --url="https://$NGROK_DOMAIN" --log stdout \
-            > /tmp/ngrok.log 2>&1 &
-          sleep 8
-
-          if grep -q "ERR_NGROK_105" /tmp/ngrok.log; then
-            echo "::error::ngrok rejected the authtoken."
-            exit 1
-          fi
-          if grep -q "ERR_NGROK_334" /tmp/ngrok.log; then
-            # The reserved domain is held by a Cloud Endpoint or another agent.
-            echo "::warning::$NGROK_DOMAIN is taken; falling back to a generated address."
-            pkill -f "ngrok http" || true
-            sleep 2
-            nohup ngrok http 8765 --log stdout > /tmp/ngrok.log 2>&1 &
-            sleep 8
-          fi
-
-          for i in $(seq 1 20); do
-            URL=$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null \
-              | python3 -c "import sys,json;t=json.load(sys.stdin).get('tunnels',[]);print(t[0]['public_url'] if t else '')" 2>/dev/null)
-            [ -n "$URL" ] && break
-            sleep 2
-          done
+          # cloudflared, not ngrok.
+          #
+          # ngrok's free plan allows one tunnel per account, so the agent and a
+          # desk could never be up at the same time - and it needed an
+          # authtoken kept alive as a secret. A cloudflared quick tunnel needs
+          # no account and no token, and there is no limit on how many run at
+          # once. Same tool the desks use, so there is one thing to understand
+          # instead of two.
+          #
+          # The trade is an address that changes every run. Nobody types it:
+          # the panel reads it from session-state, and the link carries the
+          # token.
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8765 /tmp/tunnel.log)
           if [ -z "$URL" ]; then
             echo "::error::no tunnel came up."
-            tail -25 /tmp/ngrok.log
+            tail -25 /tmp/tunnel.log
             exit 1
           fi
 
@@ -236,7 +217,7 @@ jobs:
 
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" \
-              "kind=CLI-агент" "os=linux" \
+              "slot=agent" "kind=CLI-агент" "os=linux" \
               "url=$URL" "agentUrl=$URL/hub?token=$TOKEN" \
               "agentToken=$TOKEN" "branch=$WORK_BRANCH"
 
@@ -249,7 +230,7 @@ jobs:
         if: always()
         run: |
           GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
-            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "state=ended" || true
+            bash "$GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent" "state=ended" || true
 
       - name: Final save
         if: always()
@@ -364,16 +345,9 @@ jobs:
 
       - name: Start the agent and open the tunnel
         env:
-          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-          NGROK_DOMAIN: filly-above-terrapin.ngrok-free.app
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
-          if (-not $env:NGROK_TOKEN) {
-            Write-Host "::error::NGROK_AUTH_TOKEN is not set; the hub would only be reachable on the runner."
-            exit 1
-          }
-
           $token = "zen-" + [guid]::NewGuid().ToString("N").Substring(0, 24)
           Set-Location "$env:GITHUB_WORKSPACE\fork"
 
@@ -405,41 +379,42 @@ jobs:
           }
           Write-Host "agent is up on 8765"
 
-          choco install ngrok -y --no-progress --limit-output | Out-Null
-          ngrok config add-authtoken $env:NGROK_TOKEN
+          # cloudflared, not ngrok - no account, no token, no one-tunnel
+          # limit, and the same tool the desks use.
+          #
+          # curl.exe rather than Invoke-WebRequest: the .NET stack on this
+          # image fails GitHub's redirect to objects.githubusercontent.com with
+          # RemoteCertificateNameMismatch. Measured on a live runner.
+          $cf = "$env:TEMP\cloudflared.exe"
+          curl.exe -sL --retry 3 -o $cf `
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          if (-not (Test-Path $cf)) { throw "could not download cloudflared" }
 
-          Start-Process ngrok -ArgumentList "http 8765 --url=https://$env:NGROK_DOMAIN --log stdout" `
-            -RedirectStandardOutput "$env:TEMP\ngrok.log" -NoNewWindow
-          Start-Sleep -Seconds 8
-
-          $log = Get-Content "$env:TEMP\ngrok.log" -Raw -ErrorAction SilentlyContinue
-          if ($log -match "ERR_NGROK_105") {
-            Write-Host "::error::ngrok rejected the authtoken."
-            exit 1
-          }
-          if ($log -match "ERR_NGROK_334" -or $log -match "ERR_NGROK_108") {
-            # The reserved domain is taken - by a Cloud Endpoint, or by another
-            # session, because the free plan allows exactly one tunnel.
-            Write-Host "::warning::$env:NGROK_DOMAIN is taken; falling back to a generated address."
-            Get-Process ngrok -ErrorAction SilentlyContinue | Stop-Process -Force
-            Start-Sleep -Seconds 2
-            Start-Process ngrok -ArgumentList "http 8765 --log stdout" `
-              -RedirectStandardOutput "$env:TEMP\ngrok2.log" -NoNewWindow
-            Start-Sleep -Seconds 8
-          }
+          # cmd /c start with redirects, not Start-Process: a process started
+          # with Start-Process is killed when its step ends, and one started
+          # without redirects keeps the step waiting on it forever. Both were
+          # measured on live runners.
+          $log = "$env:TEMP\cf.log"
+          cmd /c start "" /b "$cf" tunnel --url http://localhost:8765 --no-autoupdate --loglevel info `
+            "1>$log" "2>$env:TEMP\cf.err"
 
           $url = $null
-          foreach ($i in 1..20) {
-            try {
-              $t = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
-              if ($t.tunnels.Count -gt 0) { $url = $t.tunnels[0].public_url; break }
-            } catch { }
+          foreach ($i in 1..40) {
             Start-Sleep -Seconds 2
+            $text = (Get-Content $log, "$env:TEMP\cf.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+            if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
           }
           if (-not $url) {
             Write-Host "::error::no tunnel came up."
-            Get-Content "$env:TEMP\ngrok.log" -Tail 25 -ErrorAction SilentlyContinue
+            Get-Content $log, "$env:TEMP\cf.err" -Tail 25 -ErrorAction SilentlyContinue
             exit 1
+          }
+
+          # The hostname resolves before the edge will serve it; a client that
+          # opens it too early sees 502 and blames the agent.
+          foreach ($i in 1..20) {
+            if ((curl.exe -s -o NUL -w "%{http_code}" -m 15 "$url/mcp/status") -match "^[234]") { break }
+            Start-Sleep -Seconds 3
           }
 
           # Array of lines, not a here-string, for the same YAML reason as
@@ -468,7 +443,7 @@ jobs:
 
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-            "kind=CLI-агент" "os=windows" `
+            "slot=agent" "kind=CLI-агент" "os=windows" `
             "url=$url" "agentUrl=$url/hub?token=$token" `
             "agentToken=$token" "branch=$env:WORK_BRANCH"
 
@@ -483,7 +458,7 @@ jobs:
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
-          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "state=ended"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "slot=agent" "state=ended"
 
       - name: Final save
         if: always()

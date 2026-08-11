@@ -181,48 +181,207 @@ def query(path):
 
 PAGE = """<!DOCTYPE html>
 <html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Windows desk</title>
 <style>
   html,body{margin:0;height:100%;background:#000;overflow:hidden;
-            font:14px -apple-system,Segoe UI,Roboto,sans-serif;color:#ddd}
+            font:14px -apple-system,Segoe UI,Roboto,sans-serif;color:#ddd;
+            -webkit-user-select:none;user-select:none}
   #wrap{position:relative;width:100%;height:100%;display:flex;
         align-items:center;justify-content:center}
-  img{max-width:100%;max-height:100%;display:block;touch-action:none}
-  #kb{position:fixed;left:-1000px;top:0;opacity:0}
-  #bar{position:fixed;right:8px;bottom:8px;display:flex;gap:6px;z-index:5}
-  button{font:inherit;border:0;border-radius:8px;padding:8px 10px;
-         background:#222;color:#8fe;opacity:.85}
+  img{max-width:100%;max-height:100%;display:block;touch-action:none;
+      -webkit-touch-callout:none;pointer-events:none}
+  /* The pointer surface sits ON TOP of the picture. Events used to be bound to
+     the <img> itself, and an <img> being repainted several times a second by
+     an MJPEG stream is a poor event target on mobile - taps landed on a node
+     that was mid-replacement. A transparent overlay never changes. */
+  #pad{position:absolute;inset:0;touch-action:none;cursor:crosshair}
+  #kb{position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;border:0;padding:0}
+  #bar{position:fixed;right:8px;bottom:8px;display:flex;gap:6px;z-index:5;
+       flex-wrap:wrap;justify-content:flex-end;max-width:60%}
+  button{font:inherit;border:0;border-radius:8px;padding:10px 12px;
+         background:#1b1b24;color:#8fe;opacity:.9;min-height:42px}
+  button.on{background:#8fe;color:#111}
+  #hint{position:fixed;left:8px;bottom:8px;z-index:5;font-size:12px;
+        color:#7a7a8c;background:#00000080;padding:6px 8px;border-radius:8px}
 </style></head>
 <body>
-<div id="wrap"><img id="d" src="/stream" draggable="false"></div>
-<input id="kb" autocapitalize="off" autocomplete="off" spellcheck="false">
+<div id="wrap"><img id="d" src="/stream" draggable="false"><div id="pad"></div></div>
+<input id="kb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
 <div id="bar">
-  <button onclick="document.getElementById('kb').focus()">Клавиатура</button>
-  <button onclick="send({t:'key',k:'Meta',d:true});send({t:'key',k:'Meta',d:false})">Пуск</button>
+  <button id="b-kb" onclick="openKeyboard()">Клавиатура</button>
+  <button id="b-drag" onclick="toggleDrag()">Перетаскивание</button>
+  <button onclick="tapKey('Meta')">Пуск</button>
+  <button onclick="rightClick()">ПКМ</button>
 </div>
+<div id="hint">тап — клик · двумя пальцами — прокрутка · долгое нажатие — ПКМ</div>
 <script>
-const img = document.getElementById('d');
+const img  = document.getElementById('d');
+const pad  = document.getElementById('pad');
+const kb   = document.getElementById('kb');
+
 function send(o){
-  o.w = img.clientWidth; o.h = img.clientHeight;
-  fetch('/input', {method:'POST', body: JSON.stringify(o)}).catch(()=>{});
+  // The server maps browser pixels onto the screen, so it needs the size the
+  // picture is actually drawn at - not the window, and not the natural size.
+  o.w = img.clientWidth || img.width;
+  o.h = img.clientHeight || img.height;
+  fetch('/input', {method:'POST', body: JSON.stringify(o), keepalive:true}).catch(()=>{});
 }
+
+// Coordinates relative to the PICTURE, which is letterboxed inside the pad:
+// the img keeps its aspect ratio, so the pad is usually wider or taller than
+// what is on screen. Measuring against the pad put every tap off by the size
+// of the black bars.
 function at(e){
   const r = img.getBoundingClientRect();
-  const p = e.touches ? e.touches[0] : e;
+  const p = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
   return {x: p.clientX - r.left, y: p.clientY - r.top};
 }
-img.addEventListener('mousemove', e => { const p = at(e); send({t:'move', x:p.x, y:p.y}); });
-img.addEventListener('mousedown', e => { const p = at(e); send({t:'down', x:p.x, y:p.y, b:e.button}); e.preventDefault(); });
-img.addEventListener('mouseup',   e => { const p = at(e); send({t:'up',   x:p.x, y:p.y, b:e.button}); e.preventDefault(); });
-img.addEventListener('contextmenu', e => e.preventDefault());
-img.addEventListener('wheel', e => { const p = at(e); send({t:'wheel', x:p.x, y:p.y, d:-e.deltaY}); e.preventDefault(); }, {passive:false});
-// Touch: a tap is a left click at that point.
-img.addEventListener('touchstart', e => { const p = at(e); send({t:'down', x:p.x, y:p.y, b:0}); e.preventDefault(); }, {passive:false});
-img.addEventListener('touchend',   e => { send({t:'up', x:-1, y:-1, b:0}); e.preventDefault(); }, {passive:false});
-img.addEventListener('touchmove',  e => { const p = at(e); send({t:'move', x:p.x, y:p.y}); e.preventDefault(); }, {passive:false});
-document.addEventListener('keydown', e => { send({t:'key', k:e.key, d:true});  e.preventDefault(); });
-document.addEventListener('keyup',   e => { send({t:'key', k:e.key, d:false}); e.preventDefault(); });
+
+// ── mouse (an OTG mouse, or a desktop browser) ─────────────────────
+pad.addEventListener('mousemove', e => { const p = at(e); send({t:'move', x:p.x, y:p.y}); });
+pad.addEventListener('mousedown', e => { const p = at(e); send({t:'down', x:p.x, y:p.y, b:e.button}); e.preventDefault(); });
+pad.addEventListener('mouseup',   e => { const p = at(e); send({t:'up',   x:p.x, y:p.y, b:e.button}); e.preventDefault(); });
+pad.addEventListener('contextmenu', e => e.preventDefault());
+pad.addEventListener('wheel', e => { const p = at(e); send({t:'wheel', x:p.x, y:p.y, d:-e.deltaY}); e.preventDefault(); }, {passive:false});
+
+// ── touch ──────────────────────────────────────────────────────────
+//
+// The old version sent a plain down/up pair on every touch and nothing else,
+// so dragging a window was impossible and a long press did nothing. This
+// distinguishes:
+//   tap            - click where you tapped
+//   press and move - drag with the button held (only after a real move, so a
+//                    shaky tap is still a tap)
+//   two fingers    - scroll
+//   long press     - right click
+//   drag mode      - button stays down between taps, for stubborn drags
+let dragMode = false, touching = false, moved = false, holding = false;
+let startX = 0, startY = 0, lastY = 0, longTimer = null, twoFinger = false;
+const MOVE_EPS = 8;   // px before a tap becomes a drag
+
+function toggleDrag(){
+  dragMode = !dragMode;
+  document.getElementById('b-drag').classList.toggle('on', dragMode);
+  if (!dragMode && holding) { send({t:'up', x:startX, y:startY, b:0}); holding = false; }
+}
+
+pad.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const p = at(e);
+  startX = p.x; startY = p.y; lastY = p.y;
+  moved = false; touching = true;
+  twoFinger = e.touches.length > 1;
+  if (twoFinger) return;
+
+  // Move the pointer first: Windows opens a menu where the cursor IS, and
+  // without this the right click landed wherever the pointer happened to be.
+  send({t:'move', x:p.x, y:p.y});
+
+  clearTimeout(longTimer);
+  longTimer = setTimeout(() => {
+    if (touching && !moved) {
+      send({t:'down', x:startX, y:startY, b:2});
+      send({t:'up',   x:startX, y:startY, b:2});
+      touching = false;
+      navigator.vibrate && navigator.vibrate(15);
+    }
+  }, 550);
+}, {passive:false});
+
+pad.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const p = at(e);
+
+  if (e.touches.length > 1) {           // two fingers: scroll
+    twoFinger = true;
+    clearTimeout(longTimer);
+    const dy = p.y - lastY; lastY = p.y;
+    if (Math.abs(dy) > 1) send({t:'wheel', x:p.x, y:p.y, d: dy * 6});
+    return;
+  }
+
+  if (!moved && Math.hypot(p.x - startX, p.y - startY) > MOVE_EPS) {
+    moved = true;
+    clearTimeout(longTimer);
+    if (!holding) { send({t:'down', x:startX, y:startY, b:0}); holding = true; }
+  }
+  send({t:'move', x:p.x, y:p.y});
+}, {passive:false});
+
+pad.addEventListener('touchend', e => {
+  e.preventDefault();
+  clearTimeout(longTimer);
+  const p = at(e);
+  if (twoFinger) { twoFinger = false; touching = false; return; }
+
+  if (moved) {
+    if (holding && !dragMode) { send({t:'up', x:p.x, y:p.y, b:0}); holding = false; }
+  } else if (touching) {
+    if (dragMode) {
+      // In drag mode a tap toggles the button: press once, move, tap again.
+      if (holding) { send({t:'up', x:p.x, y:p.y, b:0}); holding = false; }
+      else         { send({t:'down', x:p.x, y:p.y, b:0}); holding = true; }
+    } else {
+      send({t:'down', x:p.x, y:p.y, b:0});
+      send({t:'up',   x:p.x, y:p.y, b:0});
+    }
+  }
+  touching = false; moved = false;
+}, {passive:false});
+
+pad.addEventListener('touchcancel', () => {
+  clearTimeout(longTimer);
+  if (holding && !dragMode) { send({t:'up', x:startX, y:startY, b:0}); holding = false; }
+  touching = false; moved = false; twoFinger = false;
+}, {passive:false});
+
+function rightClick(){
+  send({t:'down', x:startX, y:startY, b:2});
+  send({t:'up',   x:startX, y:startY, b:2});
+}
+function tapKey(k){ send({t:'key', k:k, d:true}); send({t:'key', k:k, d:false}); }
+
+// ── keyboard ───────────────────────────────────────────────────────
+//
+// A phone keyboard does not produce usable keydown events: Android composes
+// text and reports key "Unidentified", which is why typing did nothing. So the
+// characters are read from the input's VALUE as it changes, and sent one by
+// one. keydown is still used for the keys that have no character - Enter,
+// Backspace, arrows - which Android does report properly.
+function openKeyboard(){
+  kb.value = '';
+  kb.focus();
+  document.getElementById('b-kb').classList.add('on');
+}
+kb.addEventListener('blur', () => document.getElementById('b-kb').classList.remove('on'));
+
+kb.addEventListener('input', () => {
+  const text = kb.value;
+  kb.value = '';
+  for (const ch of text) { send({t:'key', k:ch, d:true}); send({t:'key', k:ch, d:false}); }
+});
+
+kb.addEventListener('keydown', e => {
+  const named = ['Enter','Backspace','Tab','Escape','Delete','ArrowUp','ArrowDown',
+                 'ArrowLeft','ArrowRight','Home','End','PageUp','PageDown'];
+  if (named.includes(e.key)) { tapKey(e.key); e.preventDefault(); }
+});
+
+// A hardware keyboard (OTG) types into the page, not the hidden input.
+document.addEventListener('keydown', e => {
+  if (e.target === kb) return;
+  send({t:'key', k:e.key, d:true});  e.preventDefault();
+});
+document.addEventListener('keyup', e => {
+  if (e.target === kb) return;
+  send({t:'key', k:e.key, d:false}); e.preventDefault();
+});
+
+// If the stream ever drops, reconnect instead of leaving a frozen frame.
+img.addEventListener('error', () => {
+  setTimeout(() => { img.src = '/stream?r=' + Date.now(); }, 1500);
+});
 </script></body></html>
 """
 
