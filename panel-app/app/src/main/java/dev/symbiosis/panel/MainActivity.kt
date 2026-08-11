@@ -46,7 +46,9 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var web: WebView
     private lateinit var bar: ProgressBar
-    private lateinit var error: LinearLayout
+    // Named errorView, not error: Kotlin's stdlib error() shadows a bare
+    // "error" inside a lambda, and the reference silently fails to resolve.
+    private lateinit var errorView: LinearLayout
 
     // Kept as a field so the retry button reloads the same address the app
     // started from, including an override supplied for testing.
@@ -75,11 +77,11 @@ class MainActivity : ComponentActivity() {
             setBackgroundColor(BACKGROUND)
         }
 
-        error = buildErrorView()
+        errorView = buildErrorView()
 
         root.addView(bar)
         root.addView(web)
-        root.addView(error)
+        root.addView(errorView)
         setContentView(root)
 
         configureWebView()
@@ -206,7 +208,7 @@ class MainActivity : ComponentActivity() {
         addView(android.widget.Button(context).apply {
             text = "Повторить"
             setOnClickListener {
-                error.visibility = View.GONE
+                errorView.visibility = View.GONE
                 web.visibility = View.VISIBLE
                 web.loadUrl(startUrl)
             }
@@ -215,7 +217,7 @@ class MainActivity : ComponentActivity() {
 
     private fun showError() {
         web.visibility = View.GONE
-        error.visibility = View.VISIBLE
+        errorView.visibility = View.VISIBLE
         bar.visibility = View.GONE
     }
 

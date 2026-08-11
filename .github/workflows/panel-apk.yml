@@ -64,6 +64,26 @@ jobs:
             echo "::warning::the panel URL answered $CODE - Pages may still be deploying"
           fi
 
+      - name: Type-check against the stubs first
+        # Ten seconds here against four minutes of Gradle. The first build of
+        # this app died on a name-resolution error that this catches, and the
+        # check on TextView.error keeps the harness from silently degrading
+        # into one that passes everything.
+        run: |
+          curl -sL -o /tmp/kc.zip \
+            https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -q /tmp/kc.zip -d /tmp
+          export PATH="/tmp/kotlinc/bin:$PATH"
+
+          grep -q 'var error: CharSequence?' panel-app/stubs/android_widget.kt || {
+            echo "::error::the stub lost TextView.error and can no longer catch the shadowing bug"
+            exit 1
+          }
+
+          kotlinc panel-app/stubs/*.kt \
+                  panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt \
+                  -d /tmp/stubout
+
       - name: Build
         working-directory: panel-app
         run: |
