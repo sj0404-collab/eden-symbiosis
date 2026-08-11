@@ -629,74 +629,132 @@ jobs:
         env:
           NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
           NGROK_TCP_ADDRESS: ${{ secrets.NGROK_TCP_ADDRESS }}
+          BORE_PORT: ${{ secrets.BORE_PORT }}
         shell: pwsh
         run: |
-          if (-not $env:NGROK_TOKEN) {
-            Write-Host "::error::NGROK_AUTH_TOKEN is not set; RDP would only be reachable on the runner."
-            exit 1
-          }
-          choco install ngrok -y --no-progress --limit-output | Out-Null
-          ngrok config add-authtoken $env:NGROK_TOKEN
-
-          # TCP, because RDP is not HTTP. Free ngrok hands out a random
-          # host:port here - the reserved domain only applies to HTTP.
-          # Detached, not -NoNewWindow.
+          # bore first, ngrok only if it fails.
           #
-          # -NoNewWindow attaches ngrok to this step's console, and the console
-          # goes away when the step does: the tunnel's edge stays registered so
-          # the port still accepts TCP, but nothing is behind it and every
-          # connection is closed immediately. That is exactly what a client
-          # sees as "connection reset" - measured against a live session, four
-          # attempts in a row, before this changed.
-            -RedirectStandardOutput "$env:TEMP\ngrok.log" `
-            -RedirectStandardError "$env:TEMP\ngrok.err" `
-            -WindowStyle Hidden -PassThru
-          "NGROK_PID=$($ngrok.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
-
+          # ngrok assigns TCP addresses at random on the free plan and reserving
+          # one needs a paid tier, so the phone's saved PC entry broke every
+          # session. bore is an open-source Rust tunnel whose public server takes
+          # --port: ask for a port and, if it is free, you get exactly that one.
+          #
+          # Measured before writing this: a fake RDP server behind bore.pub
+          # answered the X.224 handshake 4/4 on the requested port, and after
+          # restarting the client the same port came back and answered 3/3.
+          #
+          # ngrok stays as the fallback - bore.pub is a free community server
+          # with no uptime promise, and an unreachable session is worse than one
+          # at a new address.
+          $port = if ($env:BORE_PORT) { [int]$env:BORE_PORT } else { 47311 }
           $endpoint = $null
-          foreach ($attempt in 1..30) {
-            Start-Sleep -Seconds 2
-            try {
-              $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
-              $tcp = $tunnels.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
-              if ($tcp) { $endpoint = $tcp.public_url -replace '^tcp://', ''; break }
-            } catch { }
+          
+          # A zip on Windows; the Linux build is a .tar.gz and guessing that name
+          # gives a 404 and a silent fallback. Checked against the release.
+          $boreUrl = "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip"
+          try {
+            Invoke-WebRequest -Uri $boreUrl -OutFile "$env:TEMP\bore.zip" -TimeoutSec 90
+            Expand-Archive -Path "$env:TEMP\bore.zip" -DestinationPath "$env:TEMP\boredir" -Force
+            $bore = Get-ChildItem -Path "$env:TEMP\boredir" -Filter "bore.exe" -Recurse |
+                    Select-Object -First 1 -ExpandProperty FullName
+            if ($bore) {
+              $bp = Start-Process -FilePath $bore `
+                -ArgumentList "local 3389 --to bore.pub --port $port" `
+                -RedirectStandardOutput "$env:TEMP\bore.log" `
+                -RedirectStandardError  "$env:TEMP\bore.err" `
+                -WindowStyle Hidden -PassThru
+              Start-Sleep -Seconds 8
+              $blog = (Get-Content "$env:TEMP\bore.log","$env:TEMP\bore.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+              if ($blog -match "listening at (bore\.pub:\d+)") {
+                $endpoint = $Matches[1]
+                "TUNNEL_PID=$($bp.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
+                "TUNNEL_KIND=bore"     | Out-File -FilePath $env:GITHUB_ENV -Append
+                Write-Host "bore is up on $endpoint - this address is the same every session"
+              } else {
+                Write-Host "::warning::bore did not report a port; falling back to ngrok."
+                Write-Host $blog
+                try { Stop-Process -Id $bp.Id -Force -ErrorAction SilentlyContinue } catch { }
+              }
+            } else {
+              Write-Host "::warning::bore.exe missing from the archive; falling back to ngrok."
+            }
+          } catch {
+            Write-Host "::warning::bore could not start ($($_.Exception.Message)); falling back to ngrok."
           }
-          if (-not $endpoint) {
-            Write-Host "::error::ngrok did not report a tunnel."
-            Get-Content "$env:TEMP\ngrok.log" -Tail 30
-            exit 1
+          
+          if ($endpoint) {
+            $fixed = "да — один и тот же каждую сессию"
+          } else {
+            $fixed = "нет — новый каждый раз"
+
+            if (-not $env:NGROK_TOKEN) {
+              Write-Host "::error::NGROK_AUTH_TOKEN is not set; RDP would only be reachable on the runner."
+              exit 1
+            }
+            choco install ngrok -y --no-progress --limit-output | Out-Null
+            ngrok config add-authtoken $env:NGROK_TOKEN
+
+            # TCP, because RDP is not HTTP. Free ngrok hands out a random
+            # host:port here - the reserved domain only applies to HTTP.
+            # Detached, not -NoNewWindow.
+            #
+            # -NoNewWindow attaches ngrok to this step's console, and the console
+            # goes away when the step does: the tunnel's edge stays registered so
+            # the port still accepts TCP, but nothing is behind it and every
+            # connection is closed immediately. That is exactly what a client
+            # sees as "connection reset" - measured against a live session, four
+            # attempts in a row, before this changed.
+              -RedirectStandardOutput "$env:TEMP\ngrok.log" `
+              -RedirectStandardError "$env:TEMP\ngrok.err" `
+              -WindowStyle Hidden -PassThru
+            "TUNNEL_PID=$($ngrok.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "TUNNEL_KIND=ngrok"      | Out-File -FilePath $env:GITHUB_ENV -Append
+
+            $endpoint = $null
+            foreach ($attempt in 1..30) {
+              Start-Sleep -Seconds 2
+              try {
+                $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
+                $tcp = $tunnels.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
+                if ($tcp) { $endpoint = $tcp.public_url -replace '^tcp://', ''; break }
+              } catch { }
+            }
+            if (-not $endpoint) {
+              Write-Host "::error::ngrok did not report a tunnel."
+              Get-Content "$env:TEMP\ngrok.log" -Tail 30
+              exit 1
+            }
+
+            $host_, $port = $endpoint -split ':'
+            $summary = @(
+              "## Windows RDP session",
+              "",
+              "| | |",
+              "|---|---|",
+              "| Address | ``$endpoint`` |",
+              "| Host | ``$host_`` |",
+              "| Port | ``$port`` |",
+              "| User | ``${{ steps.rdp.outputs.user }}`` |",
+              "| Password | ``${{ steps.rdp.outputs.password }}`` |",
+              "",
+              "From a phone: Microsoft Remote Desktop or aFreeRDP, PC name ``$endpoint``.",
+              "The address is random - free ngrok reserves domains for HTTP only.",
+              "The runner is destroyed when the job ends; nothing on it survives."
+            ) -join "`n"
+            $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            Write-Host "RDP ready at $endpoint  user ${{ steps.rdp.outputs.user }}"
+
+            # Publish for the panel. bash ships with the Windows runner, so the
+            # same script serves both platforms rather than a second copy that
+            # would drift.
+            $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+            bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+              "kind=RDP" "os=windows" `
+              "rdpHost=$endpoint" `
+              "rdpUser=${{ steps.rdp.outputs.user }}" `
+              "rdpPass=${{ steps.rdp.outputs.password }}"
+
           }
-
-          $host_, $port = $endpoint -split ':'
-          $summary = @"
-          ## Windows RDP session
-
-          | | |
-          |---|---|
-          | Address | ``$endpoint`` |
-          | Host | ``$host_`` |
-          | Port | ``$port`` |
-          | User | ``${{ steps.rdp.outputs.user }}`` |
-          | Password | ``${{ steps.rdp.outputs.password }}`` |
-
-          From a phone: Microsoft Remote Desktop or aFreeRDP, PC name ``$endpoint``.
-          The address is random - free ngrok reserves domains for HTTP only.
-          The runner is destroyed when the job ends; nothing on it survives.
-          "@
-          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          Write-Host "RDP ready at $endpoint  user ${{ steps.rdp.outputs.user }}"
-
-          # Publish for the panel. bash ships with the Windows runner, so the
-          # same script serves both platforms rather than a second copy that
-          # would drift.
-          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
-          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-            "kind=RDP" "os=windows" `
-            "rdpHost=$endpoint" `
-            "rdpUser=${{ steps.rdp.outputs.user }}" `
-            "rdpPass=${{ steps.rdp.outputs.password }}"
-
       - name: Hold the session open
         shell: pwsh
         run: |
@@ -706,14 +764,14 @@ jobs:
           # the user like a broken RDP client rather than a dead tunnel.
           for ($i = 0; $i -lt 1400; $i++) {
             Start-Sleep -Seconds 15
-            $alive = Get-Process -Id $env:NGROK_PID -ErrorAction SilentlyContinue
+            $alive = Get-Process -Id $env:TUNNEL_PID -ErrorAction SilentlyContinue
             if (-not $alive) {
               Write-Host "::warning::ngrok exited; restarting the tunnel."
               $ngrok = Start-Process -FilePath "ngrok" `
                 -ArgumentList "tcp 3389 --log stdout --log-format json --log-level info" `
                 -RedirectStandardOutput "$env:TEMP\ngrok2.log" `
                 -WindowStyle Hidden -PassThru
-              $env:NGROK_PID = $ngrok.Id
+              $env:TUNNEL_PID = $ngrok.Id
               Start-Sleep -Seconds 8
               try {
                 $t = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
