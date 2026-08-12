@@ -1,0 +1,151 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+package org.yuzu.yuzu_emu.utils
+
+import android.app.Service
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.Message
+import android.os.Messenger
+import android.os.Process
+
+/**
+ * Loads and starts the Kenji core in a SEPARATE PROCESS.
+ *
+ * WHY A WHOLE PROCESS FOR THIS
+ *   A SIGSEGV or an abort() inside a native library kills the process it runs
+ *   in. There is no try/catch in Kotlin or C++ that changes that: by the time
+ *   the signal arrives the runtime is already unwinding, and catching it
+ *   leaves the .NET heap in a state where the next call fails differently
+ *   every time. The only containment Android actually offers is process
+ *   isolation.
+ *
+ *   So the first contact with a freshly downloaded core happens here, in
+ *   `:kenji`. If the core aborts - wrong build, corrupt download, a bug in
+ *   deviceInitialize - this process dies, [onServiceDisconnected] fires, and
+ *   the launcher reports "ядро не запустилось" while carrying on. Without
+ *   this the same abort would close the whole app with no message at all.
+ *
+ * WHAT IT DOES NOT DO
+ *   It does not run a game. It answers one question - would this core start on
+ *   this device - and reports back. Running the emulation itself in another
+ *   process needs the surface, input and audio to be handed across too, which
+ *   is a much larger change; this is the piece that makes the rest safe to
+ *   attempt.
+ */
+class KenjiProbeService : Service() {
+
+    companion object {
+        const val MSG_PROBE = 1
+        const val MSG_RESULT = 2
+        const val KEY_OK = "ok"
+        const val KEY_MESSAGE = "message"
+        const val KEY_SYMBOLS = "symbols"
+
+        /**
+         * Ask the isolated process to try the core.
+         *
+         * [onResult] is always called exactly once - on success, on failure,
+         * and on the process dying, which is the case that matters. A callback
+         * that never fires would leave a spinner on screen forever, which is
+         * how "no crashes" turns into "appears frozen".
+         */
+        fun probe(context: Context, timeoutMs: Long = 30_000, onResult: (Boolean, String) -> Unit) {
+            val app = context.applicationContext
+            var finished = false
+            val main = Handler(Looper.getMainLooper())
+
+            // Declared before the connection so both can reference each other.
+            var connection: ServiceConnection? = null
+
+            val finish = { ok: Boolean, message: String ->
+                if (!finished) {
+                    finished = true
+                    connection?.let { runCatching { app.unbindService(it) } }
+                    main.post { onResult(ok, message) }
+                }
+            }
+
+            val replyTo = Messenger(object : Handler(Looper.getMainLooper()) {
+                override fun handleMessage(msg: Message) {
+                    if (msg.what == MSG_RESULT) {
+                        val data = msg.data
+                        finish(
+                            data.getBoolean(KEY_OK),
+                            data.getString(KEY_MESSAGE) ?: "нет ответа"
+                        )
+                    }
+                }
+            })
+
+            connection = object : ServiceConnection {
+                override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                    val outgoing = Messenger(binder)
+                    val msg = Message.obtain(null, MSG_PROBE)
+                    msg.replyTo = replyTo
+                    runCatching { outgoing.send(msg) }
+                        .onFailure { finish(false, "не удалось спросить ядро: ${it.message}") }
+                }
+
+                // This is the whole point. The isolated process crashing lands
+                // here instead of taking the app with it.
+                override fun onServiceDisconnected(name: ComponentName?) {
+                    finish(false, "процесс ядра завершился аварийно — ядро не запускается на этом устройстве")
+                }
+            }
+
+            val intent = Intent(app, KenjiProbeService::class.java)
+            val bound = runCatching {
+                app.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            }.getOrDefault(false)
+
+            if (!bound) {
+                finish(false, "не удалось запустить процесс проверки ядра")
+                return
+            }
+
+            // A core that hangs instead of crashing would otherwise leave the
+            // caller waiting forever.
+            main.postDelayed({
+                finish(false, "ядро не ответило за ${timeoutMs / 1000} с")
+            }, timeoutMs)
+        }
+    }
+
+    private val messenger = Messenger(object : Handler(Looper.getMainLooper()) {
+        override fun handleMessage(msg: Message) {
+            if (msg.what != MSG_PROBE) return
+            val reply = msg.replyTo ?: return
+
+            // Everything below runs in :kenji. If it dies, it dies alone.
+            val status = runCatching { KenjiBridge.start(this@KenjiProbeService) }
+                .getOrElse { KenjiBridge.Status(false, "исключение: ${it.message ?: it.javaClass.simpleName}") }
+
+            val out = Message.obtain(null, MSG_RESULT)
+            out.data.putBoolean(KEY_OK, status.ok)
+            out.data.putString(KEY_MESSAGE, status.message)
+            out.data.putInt(KEY_SYMBOLS, status.symbols)
+            runCatching { reply.send(out) }
+
+            // Unload before the process is reused: leaving a core mapped means
+            // a second probe would report the stale result of the first.
+            KenjiBridge.unload()
+        }
+    })
+
+    override fun onBind(intent: Intent?): IBinder = messenger.binder
+
+    override fun onDestroy() {
+        KenjiBridge.unload()
+        super.onDestroy()
+        // The process exists only to hold the core. Letting it linger keeps
+        // 55 MB mapped for nothing.
+        Process.killProcess(Process.myPid())
+    }
+}

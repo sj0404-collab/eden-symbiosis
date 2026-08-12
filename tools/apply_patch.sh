@@ -88,6 +88,69 @@ cp "$P"/shaders/present_retro.frag "$E/src/video_core/host_shaders/"
 # JNI bridge
 cp "$P"/native_symbiosis.cpp "$A/jni/"
 
+# The Kenji bridge is a SEPARATE library, appended to the jni CMakeLists rather
+# than patched in by line number - upstream's file is 35 lines long and any
+# hunk anchored past that simply fails to apply, silently taking the bridge out
+# of the build. Appending is immune to the file changing length.
+#
+# Two names on purpose. Kotlin loads symbiosis_kenji; the core resolves
+# DllImport("libkenjinxjni") at runtime and calls debug_break from inside
+# deviceInitialize, so a missing libkenjinxjni.so aborts the process on the
+# first device call. Same source, built twice, a few kilobytes each.
+cp "$P"/symbiosis/kenji_bridge.cpp "$A/jni/symbiosis_kenji_bridge.cpp"
+CM="$A/jni/CMakeLists.txt"
+if ! grep -q "symbiosis_kenji" "$CM"; then
+  cat >> "$CM" <<'CMAKE'
+
+# ── Kenji-NX bridge ────────────────────────────────────────────────
+add_library(symbiosis_kenji SHARED symbiosis_kenji_bridge.cpp)
+target_link_libraries(symbiosis_kenji PRIVATE log dl)
+
+# The name the core itself looks for.
+add_library(kenjinxjni SHARED symbiosis_kenji_bridge.cpp)
+target_link_libraries(kenjinxjni PRIVATE log dl)
+CMAKE
+  echo "  added the Kenji bridge to jni/CMakeLists.txt"
+fi
+
+# The probe service, and the reason it exists: a native abort kills its own
+# process and nothing else. Declaring android:process=":kenji" means the first
+# contact with a freshly downloaded core happens somewhere expendable - if it
+# aborts, the launcher hears onServiceDisconnected and says so, instead of
+# vanishing.
+#
+# Inserted with python rather than sed: the manifest is XML, and a regex that
+# happens to match twice would produce a file that no longer parses.
+MANIFEST="$A/AndroidManifest.xml"
+python3 - "$MANIFEST" <<'PYEOF'
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+
+if 'KenjiProbeService' in text:
+    print('  manifest already declares the Kenji probe service')
+    sys.exit(0)
+
+service = """
+        <!-- Loads the downloaded Kenji core in its own process, so a crash
+             inside it cannot take the app down. -->
+        <service
+            android:name="org.yuzu.yuzu_emu.utils.KenjiProbeService"
+            android:process=":kenji"
+            android:exported="false" />
+"""
+
+marker = '</application>'
+if marker not in text:
+    print('  ::warning:: no </application> in the manifest; service not added')
+    sys.exit(0)
+
+text = text.replace(marker, service + '    ' + marker, 1)
+open(path, 'w', encoding='utf-8').write(text)
+print('  declared KenjiProbeService in :kenji')
+PYEOF
+
 # Kotlin
 J="$A/java/org/yuzu/yuzu_emu"
 cp "$P"/android/fragments/*.kt "$J/fragments/"

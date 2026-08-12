@@ -162,6 +162,13 @@ class EnginesFragment : Fragment() {
             }
         }
 
+        // Only offered once the core is present, and it is the honest test:
+        // everything before this point proves the FILE is right, not that the
+        // core will run on this device.
+        if (state is EngineLoader.State.Ready) {
+            buttons.addView(button("Проверить") { probe(engine) })
+        }
+
         if (state is EngineLoader.State.Ready) {
             buttons.addView(button("Удалить") {
                 if (selected) EnginePreference.select(ctx, EngineLoader.Engine.EDEN)
@@ -211,6 +218,26 @@ class EnginesFragment : Fragment() {
                 }
                 render()
             }
+        }
+    }
+
+    /**
+     * Start the core in the isolated :kenji process and report back.
+     *
+     * The only test that means anything: a core can download intact, verify
+     * against its hash and still abort on this particular device. Because it
+     * runs in another process, an abort is reported here as a sentence instead
+     * of closing the app.
+     */
+    private fun probe(engine: EngineLoader.Engine) {
+        if (busy) return
+        busy = true
+        val status = note("Проверяю ядро в отдельном процессе…")
+        root.addView(status)
+
+        KenjiProbeService.probe(requireContext()) { ok, message ->
+            busy = false
+            status.text = if (ok) "Ядро запускается: $message" else "Не запустилось: $message"
         }
     }
 

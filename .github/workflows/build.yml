@@ -102,6 +102,15 @@ jobs:
         # A duplicate that upstream already defines is the usual cause.
         run: python3 fork/tools/check_resources.py eden/src/android/app/src/main/res
 
+      - name: Check JNI names match on both sides
+        run: |
+          # JNI binds by name at runtime: a mismatch compiles, links, ships and
+          # then throws UnsatisfiedLinkError the first time the feature is
+          # used. The mangling trap is that an underscore already in a name
+          # becomes _1, so yuzu_emu must be written yuzu_1emu - the easiest
+          # possible typo, and invisible until it crashes.
+          python3 fork/tools/check_jni_names.py --patch fork/patch
+
       - name: Check string references resolve
         # aapt2 reports a missing @string only at resource-link time, roughly
         # twenty minutes into the build. This is the same check in a second.
