@@ -93,6 +93,44 @@ jobs:
           key: gradle2-${{ runner.os }}-${{ hashFiles('eden/src/android/**/*.gradle*') }}
           restore-keys: gradle2-${{ runner.os }}-
 
+      # ── Why the build took twenty-five minutes ──────────────────────
+      #
+      # Measured from a real run's timestamps:
+      #     12:49:41  Kotlin compiled
+      #     12:51:38  ninja started
+      #     13:11:56  APK ready          <- twenty minutes of C++
+      #
+      # 1353 C++ objects were rebuilt from scratch. patch2 contains nine .kt
+      # files and three .xml files and NOT ONE .cpp - so every second of that
+      # was spent recompiling code nobody touched.
+      #
+      # ccache fixes exactly this: identical source plus identical flags means
+      # the object file is copied out of the cache instead of compiled. The
+      # first run after this fills the cache and is no faster; every run after
+      # that skips the part that dominates the clock.
+      - name: Cache the C++ objects
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          # Keyed on the upstream tag, not on our patch: our patch never
+          # changes a .cpp, so a new key would throw away a cache that is
+          # still perfectly valid.
+          key: ccache-eden-v0.2.1-${{ inputs.build_type || 'debug' }}-${{ github.run_number }}
+          restore-keys: |
+            ccache-eden-v0.2.1-${{ inputs.build_type || 'debug' }}-
+            ccache-eden-v0.2.1-
+
+      - name: Set up ccache
+        run: |
+          sudo apt-get install -y -qq ccache > /dev/null
+          # 3 GB: the full object set for one build type is well under that,
+          # and the runner cache limit is 10 GB per repository.
+          ccache --max-size=3G
+          ccache --zero-stats
+          echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+          ccache --show-config | grep -E "max_size|cache_dir" || true
+
       - name: Apply patch2
         run: bash fork/tools/apply_patch2.sh --patch fork/patch2 --eden "$GITHUB_WORKSPACE/eden"
 
@@ -115,11 +153,33 @@ jobs:
           cd eden/src/android
           TYPE="${{ inputs.build_type }}"
           TYPE="${TYPE:-debug}"
+
+          # Upstream already reads a property for extra CMake flags:
+          #
+          #   val extraCMakeArgs =
+          #     (project.findProperty("YUZU_ANDROID_ARGS") as String?)?.split(...)
+          #
+          # so ccache goes in through the front door, with no edit to Eden's
+          # build files. Environment variables alone would NOT work - AGP
+          # invokes CMake itself and does not forward them into the configure
+          # step, which is the trap that makes people think ccache "did
+          # nothing".
+          CCACHE_FLAGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
           if [ "$TYPE" = "release" ]; then
-            ./gradlew assembleLegacyRelease --parallel --build-cache --max-workers="$(nproc)"
+            ./gradlew assembleLegacyRelease -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
+              --parallel --build-cache --max-workers="$(nproc)"
           else
-            ./gradlew assembleLegacyDebug --parallel --build-cache --max-workers="$(nproc)"
+            ./gradlew assembleLegacyDebug -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
+              --parallel --build-cache --max-workers="$(nproc)"
           fi
+
+      - name: How much the cache saved
+        if: always()
+        run: |
+          # Printed every run so the effect is visible, not assumed. A first
+          # run shows 0% and fills the cache; the next should show most of the
+          # 1353 objects coming back as hits.
+          ccache --show-stats | head -20
 
       - name: Verify the changes shipped
         run: |
