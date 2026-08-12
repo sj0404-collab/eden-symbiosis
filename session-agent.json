@@ -1,12 +1,6 @@
 {
-  "kind": "CLI-агент",
-  "os": "linux",
-  "url": "https://involved-marco-drives-preferred.trycloudflare.com",
-  "agentUrl": "https://involved-marco-drives-preferred.trycloudflare.com/hub?token=zen-4c2ff64901bc3e493acf7410",
-  "agentToken": "zen-4c2ff64901bc3e493acf7410",
-  "branch": "agent-work",
-  "startedAt": "2026-08-12T14:17:21Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-12T15:35:48Z",
   "runId": "31605917564",
   "runNumber": "21",
   "repo": "sj0404-collab/eden-symbiosis"
