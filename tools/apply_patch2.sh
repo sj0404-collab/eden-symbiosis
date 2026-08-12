@@ -51,6 +51,16 @@ copy_one "$PATCH_DIR/android/model/Game.kt"            "$J/model/Game.kt"
 copy_one "$PATCH_DIR/android/utils/GameHelper.kt"      "$J/utils/GameHelper.kt"
 copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"      "$J/ui/GamesFragment.kt"
 copy_one "$PATCH_DIR/android/fragments/EmulationFragment.kt" "$J/fragments/EmulationFragment.kt"
+copy_one "$PATCH_DIR/android/fragments/GameFoldersFragment.kt" "$J/fragments/GameFoldersFragment.kt"
+
+# Layout and strings. The shared-folder button lives beside "add game folder",
+# and its labels have to exist in both languages or the build fails on a
+# missing resource - which is how R.string.select was caught before it cost a
+# twenty-minute compile.
+RES="$(cd "$J/../../../../res" && pwd)"
+copy_one "$PATCH_DIR/android/layout/fragment_folders.xml" "$RES/layout/fragment_folders.xml"
+copy_one "$PATCH_DIR/android/values/values__strings.xml"    "$RES/values/strings.xml"
+copy_one "$PATCH_DIR/android/values/values-ru__strings.xml" "$RES/values-ru/strings.xml"
 
 # The floating button is a new file with no upstream counterpart.
 if [ -f "$PATCH_DIR/android/views/FloatingGameButton.kt" ]; then
@@ -88,6 +98,10 @@ check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the
 check "$J/utils/GameHelper.kt" "deepScan) 24"        "scan depth raised to 24"
 check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
 check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
+check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
+check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
+check "$RES/values/strings.xml" "shared_folder_choose" "English labels"
+check "$RES/values-ru/strings.xml" "shared_folder_choose" "Russian labels"
 check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
 
 # The button must never pause the game. Anything matching here is a real call,
