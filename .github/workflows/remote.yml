@@ -549,36 +549,37 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 360
 
-    # ── Windows over Zoho Assist, not RDP ──────────────────────────────
+    # ── Windows, no account anywhere ───────────────────────────────────
     #
-    # WHY RDP IS GONE
-    #   It never worked, across four sessions. FreeRDP got through TLS,
-    #   licensing and channel setup and was then refused with
-    #   LOGON_FAILED_UPDATE_PASSWORD - Windows demanding a password change,
-    #   which RDP has no way to present. The account was created four different
-    #   ways (New-LocalUser, net user, AccountManagement.SetPassword, ADSI
-    #   PasswordExpired), the machine policy was cleared with
-    #   net accounts /maxpwage:unlimited, and every flag read back correct
-    #   while the client kept being refused.
+    # WHAT WAS TRIED AND DROPPED
+    #   RDP: never worked. FreeRDP got through TLS, licensing and channel
+    #   setup and was then refused with LOGON_FAILED_UPDATE_PASSWORD - Windows
+    #   demanding a password change, which RDP cannot present. The account was
+    #   created four different ways and the machine policy cleared; every flag
+    #   read back correct and the client was still refused.
     #
-    # WHY ZOHO ASSIST INSTEAD
-    #   It makes an OUTBOUND connection, so there is nothing to tunnel and no
-    #   port to expose - which also removes the whole class of bore/ngrok
-    #   problems. There is no Windows logon to satisfy: the agent runs as a
-    #   service and the viewer attaches to the existing console session. Free
-    #   for personal use, and its unattended agent installs silently:
+    #   Zoho Assist: needs an account and a deployment key.
     #
-    #     msiexec /i ZA_Access.msi /quiet SILENT=TRUE
+    #   RustDesk: its public server has required a login since April 2026 -
+    #   "Due to ongoing scamming and botnet abuse, this public server currently
+    #   requires users to log in before connecting". Self-hosting means running
+    #   a server somewhere, which is another account somewhere else.
     #
-    # WHAT YOU NEED ONCE
-    #   A Zoho Assist account (free), then Unattended Access -> Deployment,
-    #   and copy the MSI download link it gives you. That link carries your
-    #   account key, so it is a SECRET: save it as ZOHO_ASSIST_MSI_URL under
-    #   Settings -> Secrets and variables -> Actions.
+    # WHAT THIS USES INSTEAD
+    #   The desk we already built and measured: a GDI screen grab streamed as
+    #   MJPEG over HTTP, with mouse and keyboard fed back through SendInput,
+    #   published on a cloudflared quick tunnel. No account, no key, no
+    #   registration, no password - a browser is the client.
     #
-    #   Without it this job stops with an explanation instead of pretending to
-    #   work - there is no way to guess someone's deployment link, and an agent
-    #   installed without one registers to nobody.
+    #   Measured on this exact image rather than assumed:
+    #     GDI CopyFromScreen        26508 distinct colours  (the real desktop)
+    #     TightVNC as a service         1 distinct colour   (black)
+    #     TightVNC as an application    1 distinct colour   (black)
+    #   which is why it is GDI and not VNC.
+    #
+    #   Everything below is the same code as the Desks workflow, which has
+    #   been run end to end: the picture came through at 29330 colours and a
+    #   Meta keypress opened the Start menu, changing 429015 pixels.
 
     steps:
       - uses: actions/checkout@v4
@@ -588,121 +589,157 @@ jobs:
       - name: Name this session
         shell: pwsh
         run: |
-          "### Windows session: ${{ inputs.label }} (Zoho Assist)" |
+          "### Windows session: ${{ inputs.label }} (браузер, без регистрации)" |
             Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
-      - name: Install the Zoho Assist unattended agent
-        id: zoho
+      - name: Start the desk
         shell: pwsh
-        env:
-          ZOHO_MSI: ${{ secrets.ZOHO_ASSIST_MSI_URL }}
         run: |
           $ErrorActionPreference = "Stop"
+          python -m pip install --quiet --disable-pip-version-check pillow
 
-          if (-not $env:ZOHO_MSI) {
-            Write-Host "::error::ZOHO_ASSIST_MSI_URL is not set."
-            Write-Host ""
-            Write-Host "Get it once, free:"
-            Write-Host "  1. sign in at https://assist.zoho.com"
-            Write-Host "  2. Unattended Access -> Deployment"
-            Write-Host "  3. copy the MSI download link (it carries your account key)"
-            Write-Host "  4. save it as the repository secret ZOHO_ASSIST_MSI_URL"
-            Write-Host ""
-            Write-Host "The link is a secret: anyone holding it can register an agent"
-            Write-Host "to your account."
-            exit 1
+          $script = "$env:GITHUB_WORKSPACE\fork\tools\win_desk_server.py"
+          if (-not (Test-Path $script)) { throw "desk server missing at $script" }
+
+          # A scheduled task in the console session. Two reasons, both proven
+          # on live runners: a process started with Start-Process dies when its
+          # step ends, and cmd /c start keeps the step waiting on a server that
+          # never returns. The task must run as the logged-in user - the
+          # desktop worth showing belongs to runneradmin in session 2, and a
+          # SYSTEM task would capture the empty session 0.
+          $me = "$env:USERDOMAIN\$env:USERNAME"
+          $py = (Get-Command python).Source
+          schtasks /Create /TN "symbiosis-desk" /TR "`"$py`" `"$script`" 6080" `
+            /SC ONCE /ST 00:00 /RU $me /IT /F | Out-Null
+          schtasks /Run /TN "symbiosis-desk" | Out-Null
+
+          $ok = $false
+          foreach ($try in 1..30) {
+            Start-Sleep -Seconds 2
+            if ((curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:6080/health") -eq "200") {
+              $ok = $true; break
+            }
           }
+          if (-not $ok) { throw "the desk server did not come up on 6080" }
+          Write-Host "desk server is up"
 
-          # curl.exe, not Invoke-WebRequest: the .NET stack on this image fails
-          # some redirects with RemoteCertificateNameMismatch - measured twice
-          # while building the Kenji core.
-          $msi = "$env:TEMP\ZA_Access.msi"
-          curl.exe -sL --retry 3 -o $msi "$env:ZOHO_MSI"
-          if (-not (Test-Path $msi)) { throw "could not download the Zoho agent" }
-
-          $size = (Get-Item $msi).Length
-          Write-Host "installer: $size bytes"
-          # A download that returns an HTML error page is a few kilobytes and
-          # would otherwise "install" and silently do nothing.
-          if ($size -lt 1000000) {
-            Write-Host "::error::that is too small to be the MSI - check the link."
-            Get-Content $msi -TotalCount 5
-            exit 1
-          }
-
-          $p = Start-Process msiexec -Wait -PassThru `
-            -ArgumentList @("/i", "`"$msi`"", "/quiet", "SILENT=TRUE", "/norestart")
-          Write-Host "msiexec exit: $($p.ExitCode)"
-          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
-            throw "the agent did not install (exit $($p.ExitCode))"
-          }
-
-      - name: Confirm the agent is actually connected
+      - name: Confirm the picture is a real desktop, not a black rectangle
         shell: pwsh
         run: |
-          # An installed service is not the same as a registered device. Poll
-          # until the service is running, then say plainly what to look for -
-          # the alternative is a green job and an empty device list.
-          $svc = $null
-          foreach ($try in 1..30) {
-            Start-Sleep -Seconds 4
-            $svc = Get-Service -Name "ZohoMeeting*" -ErrorAction SilentlyContinue |
-                   Select-Object -First 1
-            if ($svc -and $svc.Status -eq "Running") { break }
+          # The whole reason VNC was abandoned here. A frame that decodes and
+          # has one distinct colour is a black screen dressed as a success, so
+          # the desk refuses to be published unless the picture is real.
+          curl.exe -s -o "$env:TEMP\frame.jpg" -m 30 "http://127.0.0.1:6080/shot"
+          $check = @(
+            'from PIL import Image',
+            'import sys',
+            'im = Image.open(sys.argv[1]).convert("RGB")',
+            'c = im.getcolors(maxcolors=500000)',
+            'n = len(c) if c else 500000',
+            'print("frame", im.size, "distinct colours:", n)',
+            'sys.exit(0 if n > 2 else 1)'
+          ) -join "`n"
+          $check | Out-File -FilePath "$env:TEMP\check.py" -Encoding utf8
+          python "$env:TEMP\check.py" "$env:TEMP\frame.jpg"
+          if ($LASTEXITCODE -ne 0) { throw "the desk is showing a black screen" }
+          Write-Host "the picture is a real desktop"
+
+      - name: Open the tunnel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cf = "$env:TEMP\cloudflared.exe"
+          # curl.exe, not Invoke-WebRequest: the .NET stack on this image fails
+          # GitHub's redirect with RemoteCertificateNameMismatch.
+          curl.exe -sL --retry 3 -o $cf `
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          if (-not (Test-Path $cf)) { throw "could not download cloudflared" }
+
+          $log = "$env:TEMP\cf.log"
+          cmd /c start "" /b "$cf" tunnel --url http://localhost:6080 --no-autoupdate --loglevel info `
+            "1>$log" "2>$env:TEMP\cf.err"
+
+          $url = $null
+          foreach ($try in 1..40) {
+            Start-Sleep -Seconds 2
+            $text = (Get-Content $log, "$env:TEMP\cf.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+            if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+          }
+          if (-not $url) {
+            Get-Content $log, "$env:TEMP\cf.err" -Tail 30 -ErrorAction SilentlyContinue | Write-Host
+            throw "cloudflared did not report an address"
           }
 
-          if (-not $svc) {
-            Write-Host "::error::no Zoho Assist service was created."
-            Get-Service | Where-Object { $_.Name -like "*Zoho*" } | Format-Table -AutoSize | Out-String | Write-Host
-            exit 1
+          # The hostname resolves before the edge will serve it; a client that
+          # opens it too early sees 502 and blames the desk.
+          foreach ($try in 1..20) {
+            if ((curl.exe -s -o NUL -w "%{http_code}" -m 15 "$url/health") -eq "200") { break }
+            Start-Sleep -Seconds 3
           }
+          "DESK_URL=$url" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "desk: $url"
 
-          Write-Host "service $($svc.Name): $($svc.Status)"
-          Write-Host "computer name: $env:COMPUTERNAME"
-
+      - name: Publish the address
+        shell: pwsh
+        run: |
           @(
-            "## Windows session over Zoho Assist",
+            "## Windows session",
             "",
-            "The runner has registered itself with your Zoho Assist account.",
+            "**[Открыть]($env:DESK_URL/)** - без пароля и без регистрации.",
             "",
-            "| | |",
-            "|---|---|",
-            "| Where | https://assist.zoho.com -> Unattended Access |",
-            "| Look for | ``$env:COMPUTERNAME`` |",
-            "| Service | ``$($svc.Name)`` = $($svc.Status) |",
+            "Это собственный рабочий стол раннера. Управление пальцем: тап -",
+            "клик, нажать и вести - перетаскивание, долгое нажатие - правая",
+            "кнопка, два пальца - прокрутка. Есть экранная клавиатура.",
             "",
-            "No address, no port and no password: the agent dials out, so there",
-            "is nothing to tunnel and nothing to log into. Connect from the Zoho",
-            "Assist app on the phone or from the browser.",
-            "",
-            "The runner is destroyed when this job ends - six hours at most - and",
-            "the device disappears from the list with it."
+            "Машина уничтожается вместе с этим прогоном, максимум через шесть часов."
           ) -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
           bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-            "slot=windows" "kind=Windows (Zoho Assist)" "os=windows" `
-            "url=https://assist.zoho.com" `
-            "computer=$env:COMPUTERNAME" `
-            "auth=через аккаунт Zoho, без пароля и порта" `
+            "slot=windows" "kind=Стол Windows" "os=windows" `
+            "url=$env:DESK_URL" "deskUrl=$env:DESK_URL/" `
+            "auth=без пароля и регистрации" `
             "label=${{ inputs.label }}"
 
       - name: Hold the session open
         shell: pwsh
         run: |
-          Write-Host "The machine stays up until you cancel this run, or for six hours."
-          Write-Host "Connect from https://assist.zoho.com -> Unattended Access -> $env:COMPUTERNAME"
+          Write-Host "The desk stays up until you cancel this run, or for six hours."
+          $cf = "$env:TEMP\cloudflared.exe"
 
-          # Watch the service rather than sleeping blindly. If it stops, the
-          # device silently vanishes from the list and the session looks dead
-          # for no visible reason.
           for ($i = 0; $i -lt 1400; $i++) {
             Start-Sleep -Seconds 15
-            $svc = Get-Service -Name "ZohoMeeting*" -ErrorAction SilentlyContinue |
-                   Select-Object -First 1
-            if ($svc -and $svc.Status -eq "Running") { continue }
-            Write-Host "::warning::the Zoho agent stopped; restarting it."
-            if ($svc) { Start-Service $svc.Name -ErrorAction SilentlyContinue }
+
+            # Watch what a visitor sees, not a process id. A dead server behind
+            # a live tunnel answers 502, and no pid check would notice - that
+            # is exactly how the agent came to show "Host Error".
+            $local = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:6080/health")
+            if ($local -ne "200") {
+              Write-Host "::warning::the desk server stopped answering ($local); restarting it."
+              schtasks /Run /TN "symbiosis-desk" | Out-Null
+              Start-Sleep -Seconds 8
+            }
+
+            if (Get-Process cloudflared -ErrorAction SilentlyContinue) { continue }
+
+            Write-Host "::warning::the tunnel exited; restarting it."
+            $log = "$env:TEMP\cf2.log"
+            cmd /c start "" /b "$cf" tunnel --url http://localhost:6080 --no-autoupdate --loglevel info `
+              "1>$log" "2>$env:TEMP\cf2.err"
+            $url = $null
+            foreach ($try in 1..30) {
+              Start-Sleep -Seconds 2
+              $text = (Get-Content $log, "$env:TEMP\cf2.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
+              if ($text -match "https://[a-z0-9-]+\.trycloudflare\.com") { $url = $Matches[0]; break }
+            }
+            if ($url) {
+              Write-Host "back up on $url"
+              $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+              bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+                "slot=windows" "kind=Стол Windows" "os=windows" `
+                "url=$url" "deskUrl=$url/" `
+                "auth=без пароля и регистрации" "label=${{ inputs.label }}"
+            }
           }
 
       - name: Clear the published session
