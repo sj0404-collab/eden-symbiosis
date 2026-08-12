@@ -360,9 +360,23 @@ jobs:
           $env:SESSION_LIMIT_MS  = "21600000"
           $env:GITHUB_TOKEN      = $env:GH_TOKEN
 
-          Start-Process node -ArgumentList "agent/zen-agent.js" -NoNewWindow `
-            -RedirectStandardOutput "$env:TEMP\agent.log" `
-            -RedirectStandardError  "$env:TEMP\agent.err"
+          # cmd /c start, NOT Start-Process -NoNewWindow.
+          #
+          # This is why the agent showed "Host Error": the tunnel stayed up and
+          # the thing behind it was already dead. A process started with
+          # Start-Process is killed when its step ends, so node died the moment
+          # "Start the agent and open the tunnel" finished, while cloudflared -
+          # already fixed the same way - kept serving 502 from an empty port.
+          #
+          # Measured on a live runner earlier in this project: three servers
+          # launched in one step, Start-Process on 6080, cmd /c start on 6081,
+          # a scheduled task on 6082. In the next step 6080 was gone and the
+          # other two were still answering.
+          #
+          # The redirects are not optional either: without them pwsh waits for
+          # the child's stdout to close and the step hangs forever.
+          cmd /c start "" /b node agent/zen-agent.js `
+            "1>$env:TEMP\agent.log" "2>$env:TEMP\agent.err"
 
           $up = $false
           foreach ($i in 1..30) {
@@ -451,6 +465,21 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Running until cancelled, or for six hours."
+
+          # Watch what a visitor sees, not a process id. A dead agent behind a
+          # live tunnel answers 502 - which is exactly what happened - and no
+          # pid check would ever notice, because cloudflared was perfectly
+          # healthy the whole time.
+          for ($i = 0; $i -lt 1400; $i++) {
+            Start-Sleep -Seconds 15
+            $code = (curl.exe -s -o NUL -w "%{http_code}" -m 10 "http://127.0.0.1:8765/mcp/status")
+            if ($code -eq "200") { continue }
+
+            Write-Host "::warning::the agent stopped answering ($code); restarting it."
+            cmd /c start "" /b node agent/zen-agent.js `
+              "1>$env:TEMP\agent2.log" "2>$env:TEMP\agent2.err"
+            Start-Sleep -Seconds 10
+          }
           Start-Sleep -Seconds 21000
 
       - name: Clear the published session
