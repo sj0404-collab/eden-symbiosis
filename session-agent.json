@@ -1,7 +1,13 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-12T13:10:53Z",
-  "runId": "31599227025",
-  "runNumber": "18",
+  "kind": "CLI-агент",
+  "os": "linux",
+  "url": "https://luke-cruise-tuner-folks.trycloudflare.com",
+  "agentUrl": "https://luke-cruise-tuner-folks.trycloudflare.com/hub?token=zen-6c1b5450322337a0e1d80de6",
+  "agentToken": "zen-6c1b5450322337a0e1d80de6",
+  "branch": "agent-work",
+  "startedAt": "2026-08-12T13:11:41Z",
+  "state": "live",
+  "runId": "31600119713",
+  "runNumber": "19",
   "repo": "sj0404-collab/eden-symbiosis"
 }
