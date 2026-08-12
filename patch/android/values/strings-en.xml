@@ -2112,4 +2112,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="status_storage_manual">Open Settings, Apps, Special app access, All files access</string>
     <string name="folder_launch_failed">Could not open the game file</string>
     <string name="folder_launch_unreadable">The file cannot be read - check keys and firmware</string>
+    <string name="engine_choice">Emulation engine</string>
+    <string name="engine_choice_description">Eden or Kenji-NX. A game that stalls on one sometimes runs on the other.</string>
 </resources>

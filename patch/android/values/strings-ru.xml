@@ -1445,4 +1445,6 @@
     <string name="status_storage_manual">Откройте: Настройки → Приложения → Специальный доступ → Доступ ко всем файлам</string>
     <string name="folder_launch_failed">Не удалось открыть файл игры</string>
     <string name="folder_launch_unreadable">Файл не читается — проверь ключи и прошивку</string>
+    <string name="engine_choice">Движок эмуляции</string>
+    <string name="engine_choice_description">Eden или Kenji-NX. Игра, которая не идёт на одном, иногда идёт на другом.</string>
 </resources>

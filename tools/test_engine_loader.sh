@@ -29,7 +29,8 @@ mkdir -p "$WORK/src"
 
 cp "$ROOT/patch/android/utils/EngineLoader.kt" "$WORK/src/"
 cp "$ROOT/patch/android/utils/EngineDownloader.kt" "$WORK/src/"
-cp "$ROOT/tools/engine-test/"*.kt "$WORK/src/"
+cp "$ROOT/patch/android/utils/EnginePreference.kt" "$WORK/src/"
+cp "$ROOT/tools/engine-test/stubs.kt" "$ROOT/tools/engine-test/stubs2.kt" "$WORK/src/"
 
 # The real core, if one was handed over: without it the happy path is never
 # exercised and only the failure cases are.
@@ -42,6 +43,19 @@ else
 fi
 
 rm -rf /tmp/engines
-"$KOTLINC" "$WORK/src"/*.kt -include-runtime -d "$WORK/run.jar" 2>&1 |
-  grep -vE "^warning: (classpath|language version)" || true
-java -Dfile.encoding=UTF-8 -jar "$WORK/run.jar"
+# Each test file has its own main(), so they are built and run separately
+# rather than linked into one jar.
+fail=0
+for test in EngineLoaderTest EnginePreferenceTest; do
+  echo "── $test ──"
+  rm -rf /tmp/engines
+  BUILD="$WORK/$test"
+  mkdir -p "$BUILD"
+  cp "$WORK/src/EngineLoader.kt" "$WORK/src/EngineDownloader.kt" \
+     "$WORK/src/stubs.kt" "$WORK/src/stubs2.kt" "$WORK/src/EnginePreference.kt" "$BUILD/"
+  cp "$ROOT/tools/engine-test/$test.kt" "$BUILD/"
+  "$KOTLINC" "$BUILD"/*.kt -include-runtime -d "$BUILD/run.jar" 2>&1 |
+    grep -vE "^warning: (classpath|language version)" || true
+  java -Dfile.encoding=UTF-8 -jar "$BUILD/run.jar" || fail=1
+done
+exit $fail

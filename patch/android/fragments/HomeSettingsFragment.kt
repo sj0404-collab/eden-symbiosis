@@ -170,6 +170,20 @@ class HomeSettingsFragment : Fragment() {
                     )
                 )
             }
+            // Placed above Tools deliberately: which engine runs a game is a
+            // bigger decision than any single tuning knob, and burying it
+            // would leave people wondering why the fork exists.
+            add(
+                HomeSetting(
+                    R.string.engine_choice,
+                    R.string.engine_choice_description,
+                    R.drawable.ic_tune,
+                    {
+                        binding.root.findNavController()
+                            .navigate(R.id.action_global_enginesFragment)
+                    }
+                )
+            )
             add(
                 HomeSetting(
                     R.string.tools,
