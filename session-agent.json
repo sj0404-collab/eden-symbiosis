@@ -1,12 +1,6 @@
 {
-  "kind": "CLI-агент",
-  "os": "linux",
-  "url": "https://sisters-returned-bingo-few.trycloudflare.com",
-  "agentUrl": "https://sisters-returned-bingo-few.trycloudflare.com/hub?token=zen-d17673e9578cf88ee9e32ca0",
-  "agentToken": "zen-d17673e9578cf88ee9e32ca0",
-  "branch": "agent-work",
-  "startedAt": "2026-08-12T13:01:33Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-12T13:10:53Z",
   "runId": "31599227025",
   "runNumber": "18",
   "repo": "sj0404-collab/eden-symbiosis"
