@@ -1,0 +1,148 @@
+name: Kenji probe
+
+# Measure, do not estimate.
+#
+# The plan is one APK with both engines and a 25 MB ceiling. Two numbers decide
+# whether that is possible at all, and only one of them is known:
+#
+#   Eden today (measured, build #29, debug):
+#     APK                     41 MB
+#     libyuzu-android.so      36 MB raw -> 12.9 MB compressed in the APK
+#     classes.dex + 15        22 MB, STORED UNCOMPRESSED
+#     all dex if compressed    9.2 MB
+#
+#   Kenji: unknown. libkenjinx.so is a NativeAOT build of a 3924-file C#
+#   codebase. Guesses in the 25-40 MB range are worthless when the whole
+#   question is whether two engines fit under a hard limit.
+#
+# So this job builds libkenjinx.so for linux-bionic-arm64 and prints its size,
+# raw and compressed. It does NOT build an APK - that needs the Android SDK and
+# a working Gradle setup, and is pointless if the library alone blows the
+# budget.
+#
+# Everything runs against a fresh clone of git.ryujinx.app, because the GitHub
+# mirrors are gone: Kenji-NX/Android-Releases answers HTTP 451 (DMCA) and
+# Kenji-NX/Ryujinx is 404.
+
+on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: "Build configuration"
+        type: choice
+        options: [release, debug]
+        default: release
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Clone the Android branch
+        run: |
+          # libryujinx_bionic, not master: master has no Android code at all -
+          # checked, zero .kt and zero gradle files. The Android port lives
+          # only on this branch and trails master by about two months.
+          git clone --depth 1 --branch libryujinx_bionic \
+            https://git.ryujinx.app/projects/Kenji-NX.git kenji
+          cd kenji
+          echo "commit: $(git log -1 --format='%h %ad %s' --date=short)"
+          echo "kotlin files: $(find . -name '*.kt' | wc -l)"
+          echo "c# files: $(find . -name '*.cs' | wc -l)"
+          cat global.json
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: What the build actually needs
+        run: |
+          dotnet --info | head -20
+          cd kenji
+          echo "=== the publish command Gradle would run ==="
+          grep -n "linux-bionic-arm64\|PublishAotUsingRuntimePack\|DefineConstants" \
+            src/KenjinxAndroid/libkenjinx/build.gradle || true
+          echo "=== LibKenjinx project ==="
+          cat src/LibKenjinx/LibKenjinx.csproj
+
+      - name: Install the NDK, which NativeAOT needs for bionic
+        run: |
+          # linux-bionic-arm64 is Android's libc. The .NET runtime pack links
+          # against it with the NDK's clang, so without the NDK the publish
+          # fails at the link step - after twenty minutes of compiling.
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
+          ls "$ANDROID_NDK_ROOT" 2>/dev/null | head -5 || echo "no NDK on the image"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld zlib1g-dev >/dev/null 2>&1 || true
+          clang --version | head -2
+
+      - name: Build libkenjinx.so
+        id: build
+        continue-on-error: true
+        run: |
+          cd kenji
+          set -o pipefail
+          # The exact arguments Gradle uses, minus the artifacts path so the
+          # output lands somewhere predictable.
+          dotnet publish src/LibKenjinx/LibKenjinx.csproj \
+            -r linux-bionic-arm64 \
+            -c ${{ inputs.configuration }} \
+            -p:DisableUnsupportedError=true \
+            -p:PublishAotUsingRuntimePack=true \
+            -p:DefineConstants=ANDROID \
+            -o /tmp/kenjiout 2>&1 | tail -60
+
+      - name: Measure whatever came out
+        if: always()
+        run: |
+          echo "=== /tmp/kenjiout ==="
+          ls -la /tmp/kenjiout 2>/dev/null || echo "(nothing was produced)"
+
+          SO=$(find /tmp/kenjiout -name "*.so" 2>/dev/null | head -1)
+          if [ -z "$SO" ]; then
+            echo "::warning::no .so was produced - the numbers below are the only honest answer: unknown."
+            echo "## Kenji probe: the library did not build" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "See the build step for why. Nothing to measure." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          RAW=$(stat -c%s "$SO")
+          gzip -9 -c "$SO" > /tmp/so.gz
+          GZ=$(stat -c%s /tmp/so.gz)
+
+          python3 - "$RAW" "$GZ" <<'PY' | tee /tmp/verdict.md
+          import sys
+          raw, gz = int(sys.argv[1]), int(sys.argv[2])
+          mb = lambda b: b / 1048576
+          # Eden's numbers, measured from build #29 rather than assumed.
+          eden_so_gz = 12_949_221
+          eden_dex_gz = 9.2 * 1048576
+          eden_rest = 3 * 1048576
+          print("## Kenji probe")
+          print()
+          print("| | raw | in an APK (deflate) |")
+          print("|---|---|---|")
+          print(f"| libkenjinx.so | {mb(raw):.1f} MB | {mb(gz):.1f} MB |")
+          print(f"| Eden libyuzu-android.so | 34.4 MB | {mb(eden_so_gz):.1f} MB |")
+          print()
+          both = gz + eden_so_gz + eden_dex_gz + eden_rest
+          print(f"Two engines, compressed, plus Eden's dex and resources: "
+                f"**about {mb(both):.0f} MB**")
+          print()
+          print("Target was 25 MB.", "FITS." if mb(both) <= 25 else
+                f"Does NOT fit - over by about {mb(both) - 25:.0f} MB.")
+          PY
+
+          cat /tmp/verdict.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kenji-library
+          path: /tmp/kenjiout
+          if-no-files-found: warn
