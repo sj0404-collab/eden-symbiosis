@@ -1,0 +1,165 @@
+name: Kenji engine
+
+# Builds the Kenji-NX core and publishes it as a release asset, which is what
+# the APK downloads on demand.
+#
+# WHY THE CORE IS NOT IN THE APK
+#   Measured here, not estimated:
+#     LibKenjinx.so       54.7 MB raw -> 19.6 MB compressed inside an APK
+#     libyuzu-android.so  34.4 MB raw -> 12.3 MB
+#   Both engines in one APK is about 47 MB against a 25 MB budget. Eden ships
+#   inside the APK; Kenji is fetched once into the app's data directory.
+#
+# WHAT THE FIRST TWO ATTEMPTS TAUGHT
+#   1. The whole C# codebase compiles fine, then the LINK fails:
+#        ld.lld: cannot open crtbegin_so.o
+#        ld.lld: unable to find library -llog / -ldl / -lz / -lc
+#      Those are Android's libc and startup objects. The system clang cannot
+#      find them; the NDK's clang ships the sysroot and can. Putting the NDK
+#      toolchain on PATH is the entire fix.
+#   2. Kenji's Android code lives ONLY on the libryujinx_bionic branch. master
+#      has zero .kt and zero gradle files - checked, not assumed.
+#
+# The published asset's SHA-256 is pinned in EngineLoader.kt. If this workflow
+# rebuilds the core, that constant must be updated or the app will refuse the
+# download - deliberately, because an unverified core is worse than none.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Upload to the engine-kenji release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Clone Kenji-NX
+        run: |
+          # git.ryujinx.app, not GitHub: Kenji-NX/Android-Releases answers
+          # HTTP 451 (DMCA) and Kenji-NX/Ryujinx is 404 - the author deleted it
+          # pre-emptively. This is the only live source.
+          git clone --depth 1 --branch libryujinx_bionic \
+            https://git.ryujinx.app/projects/Kenji-NX.git kenji
+          cd kenji
+          echo "commit: $(git log -1 --format='%h %ad %s' --date=short)"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Put the NDK's clang on PATH
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}"
+          TOOL="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          [ -x "$TOOL/clang" ] || { echo "::error::no NDK clang at $TOOL"; exit 1; }
+          echo "$TOOL" >> "$GITHUB_PATH"
+          "$TOOL/clang" --version | head -1
+
+      - name: Build the core
+        run: |
+          cd kenji
+          which clang
+          dotnet publish src/LibKenjinx/LibKenjinx.csproj \
+            -r linux-bionic-arm64 \
+            -c release \
+            -p:DisableUnsupportedError=true \
+            -p:PublishAotUsingRuntimePack=true \
+            -p:DefineConstants=ANDROID \
+            -o /tmp/kenjiout 2>&1 | tail -25
+
+          SO=$(find /tmp/kenjiout -name "LibKenjinx.so" | head -1)
+          [ -n "$SO" ] || { echo "::error::no library was produced"; exit 1; }
+          cp "$SO" /tmp/libkenji.so
+          echo "size: $(stat -c%s /tmp/libkenji.so) bytes"
+          echo "SHA=$(sha256sum /tmp/libkenji.so | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "BYTES=$(stat -c%s /tmp/libkenji.so)" >> "$GITHUB_ENV"
+
+      - name: Check it against what the app expects
+        run: |
+          # The app refuses any core whose hash does not match the pinned
+          # constant. Saying so here, loudly, beats a download that silently
+          # fails on every phone.
+          PINNED=$(grep -o '[0-9a-f]\{64\}' fork/patch/android/utils/EngineLoader.kt | head -1)
+          echo "built:  $SHA"
+          echo "pinned: $PINNED"
+          if [ "$SHA" != "$PINNED" ]; then
+            {
+              echo "## The core changed"
+              echo ""
+              echo "| | |"
+              echo "|---|---|"
+              echo "| built | \`$SHA\` |"
+              echo "| pinned in EngineLoader.kt | \`$PINNED\` |"
+              echo "| size | $BYTES bytes |"
+              echo ""
+              echo "Update \`EXPECTED_SHA\` in \`patch/android/utils/EngineLoader.kt\`"
+              echo "to the built value, or the app will reject this download."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::the built core does not match the hash pinned in the app"
+          else
+            echo "matches the pinned hash" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish it
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${GITHUB_REPOSITORY}"
+          API="https://api.github.com/repos/$REPO"
+
+          ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
+            "$API/releases/tags/engine-kenji" | python3 -c \
+            "import sys,json;print(json.load(sys.stdin).get('id',''))")
+
+          if [ -z "$ID" ]; then
+            ID=$(curl -s -X POST -H "Authorization: token $GH_TOKEN" \
+              "$API/releases" \
+              -d '{"tag_name":"engine-kenji","name":"Kenji-NX core"}' |
+              python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+          fi
+          [ -n "$ID" ] || { echo "::error::no release to upload to"; exit 1; }
+
+          # Replace the old asset: two assets with the same name cannot coexist,
+          # and the app fetches by name.
+          OLD=$(curl -s -H "Authorization: token $GH_TOKEN" "$API/releases/$ID/assets" |
+            python3 -c "import sys,json;print(next((str(a['id']) for a in json.load(sys.stdin) if a['name']=='libkenji.so'), ''))")
+          [ -n "$OLD" ] && curl -s -X DELETE -H "Authorization: token $GH_TOKEN" \
+            "$API/releases/assets/$OLD" -o /dev/null
+
+          curl -s -X POST -H "Authorization: token $GH_TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @/tmp/libkenji.so \
+            "https://uploads.github.com/repos/$REPO/releases/$ID/assets?name=libkenji.so" \
+            -o /tmp/asset.json
+
+          cat > /tmp/summary.py <<'PYEOF'
+          import json, os
+          d = json.load(open('/tmp/asset.json'))
+          print('## Kenji core published')
+          print()
+          print('- **URL:** ' + str(d.get('browser_download_url')))
+          print('- **Size:** ' + str(round(d.get('size', 0) / 1048576, 1)) + ' MB')
+          print('- **SHA-256:** `' + os.environ['SHA'] + '`')
+          PYEOF
+          sed -i 's/^          //' /tmp/summary.py
+          python3 /tmp/summary.py >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kenji-core
+          path: /tmp/libkenji.so
+          if-no-files-found: warn

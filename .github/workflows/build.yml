@@ -43,7 +43,28 @@ jobs:
         run: |
           # depth 50 rather than 1: git apply --3way needs history to resolve
           # a context mismatch instead of failing outright.
-          git clone --branch v0.2.1 https://git.eden-emu.dev/eden-emu/eden.git eden
+          #
+          # Retried, and with a mirror behind it. git.eden-emu.dev answered 502
+          # mid-build once and took the whole run down with it - every later
+          # step skipped, thirty minutes lost, and nothing wrong with the code.
+          # sj0404-collab/eden-upstream-reference is our own untouched copy of
+          # the same v0.2.1 tree, kept for exactly this.
+          ok=0
+          for attempt in 1 2 3; do
+            if git clone --branch v0.2.1 \
+                 https://git.eden-emu.dev/eden-emu/eden.git eden 2>/tmp/clone.log; then
+              ok=1; break
+            fi
+            echo "attempt $attempt failed:"; tail -3 /tmp/clone.log
+            rm -rf eden
+            sleep $((attempt * 10))
+          done
+
+          if [ "$ok" != 1 ]; then
+            echo "::warning::upstream is unreachable; falling back to our mirror"
+            git clone https://github.com/sj0404-collab/eden-upstream-reference.git eden \
+              || { echo "::error::neither upstream nor the mirror could be cloned"; exit 1; }
+          fi
           cd eden && echo "upstream: $(git rev-parse --short HEAD)"
 
       - name: Set up JDK 17
