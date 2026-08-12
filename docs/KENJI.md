@@ -243,6 +243,34 @@ void setCurrentTransform(long native_window, int transform);
 Проверено, что тест ловит: подменил один символ на `yuzu_emu` — тест нашёл.
 Встроен в `build.yml`, 60 объявлений, 0 расхождений.
 
+### Сборка с мостом
+
+APK #33: https://gofile.io/d/uWx7Es · MD5 `599fb507ca5612ab019ed45de6fefa22`
+
+Проверено распаковкой готового APK, а не зелёной галочкой:
+
+```
+lib/arm64-v8a/libkenjinxjni.so      374760 B  -> debug_break,
+                                                 setRenderingThread,
+                                                 setCurrentTransform (FUNC GLOBAL)
+lib/arm64-v8a/libsymbiosis_kenji.so 374760 B  -> 6 точек Java_org_yuzu_yuzu_1emu_...
+AndroidManifest.xml                           -> KenjiProbeService, process=":kenji"
+```
+
+То есть обе библиотеки собрались под arm64, имена совпадают с тем, что ядро
+ищет через `dlopen`, и сервис действительно объявлен в отдельном процессе.
+
+### Две проверки, добавленные после того, как обожглись
+
+| проверка | что ловит | цена ошибки без неё |
+|---|---|---|
+| `tools/check_jni_names.py` | расхождение имён Kotlin ↔ C++ (`yuzu_emu` вместо `yuzu_1emu`) | `UnsatisfiedLinkError` на телефоне |
+| `tools/check_kotlin_refs.py` | забытый импорт между своими файлами | 23 минуты сборки до `compileLegacyDebugKotlin` |
+
+Вторая появилась ровно потому, что забытый `import KenjiProbeService` уронил
+сборку на 23-й минуте — после того, как весь нативный код уже скомпилировался.
+Обе встроены в `build.yml` и выполняются за секунду.
+
 **Что НЕ проверено, честно**
 
 Ядро ни разу не запускалось на Android. Собрано, скачано, загрузчик написан —
