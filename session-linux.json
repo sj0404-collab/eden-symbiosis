@@ -1,7 +1,14 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-12T02:27:17Z",
-  "runId": "31533497336",
-  "runNumber": "16",
+  "kind": "Стол Linux",
+  "os": "linux",
+  "url": "https://raid-helping-relatives-surrounded.trycloudflare.com",
+  "deskUrl": "https://raid-helping-relatives-surrounded.trycloudflare.com/vnc.html?autoconnect=1&resize=scale&quality=6&compression=6&show_dot=true",
+  "terminal": "https://raid-helping-relatives-surrounded.trycloudflare.com/term/",
+  "auth": "без пароля",
+  "label": "sj0404-collab",
+  "startedAt": "2026-08-12T12:21:07Z",
+  "state": "live",
+  "runId": "31595641900",
+  "runNumber": "17",
   "repo": "sj0404-collab/eden-symbiosis"
 }
