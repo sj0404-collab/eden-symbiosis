@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.utils.EngineDownloader
 import org.yuzu.yuzu_emu.utils.EngineLoader
+import org.yuzu.yuzu_emu.utils.KenjiProbeService
 import org.yuzu.yuzu_emu.utils.EnginePreference
 
 /**

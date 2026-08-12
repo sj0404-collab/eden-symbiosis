@@ -111,6 +111,13 @@ jobs:
           # possible typo, and invisible until it crashes.
           python3 fork/tools/check_jni_names.py --patch fork/patch
 
+      - name: Check Kotlin references resolve
+        run: |
+          # A missing import only surfaces at compileLegacyDebugKotlin, which
+          # is twenty-three minutes into the build - after the entire native
+          # tree has compiled. That cost one full run for KenjiProbeService.
+          python3 fork/tools/check_kotlin_refs.py --patch fork/patch
+
       - name: Check string references resolve
         # aapt2 reports a missing @string only at resource-link time, roughly
         # twenty minutes into the build. This is the same check in a second.
