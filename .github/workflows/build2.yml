@@ -1,0 +1,183 @@
+name: Build clean
+
+# Builds official Eden with patch2 on top - four modified files, nothing else.
+#
+# WHY A SECOND WORKFLOW
+#   build.yml applies the old Symbiosis tree: 13 extra screens, 376 KB of C++,
+#   and the retro launcher whose early return in SetWindowAdaptPass() caused
+#   the settings crash. This one starts from clean upstream and adds only what
+#   was actually asked for, so anything that breaks here is mine and recent.
+#
+# WHAT PATCH2 CHANGES
+#   Game.kt          a game records the folder it was found in
+#   GameHelper.kt    that folder is carried down the scan; depth 3 -> 24
+#   GamesFragment.kt the list is ordered by folder, then by title
+#   SharedDataDirectory.kt   the shared-folder utility, unchanged
+#
+#   Nothing is created, moved or written. Folder permissions stay read-only and
+#   config.ini is untouched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "debug keeps symbols; release runs R8"
+        type: choice
+        options: [debug, release]
+        default: debug
+      upload_to_gofile:
+        description: "Also upload the APK to gofile.io"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - 'patch2/**'
+      - 'tools/apply_patch2.sh'
+      - '.github/workflows/build2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out this fork
+        uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Check out upstream Eden
+        run: |
+          # Retried, with our mirror behind it: git.eden-emu.dev answered 502
+          # mid-build once and took the whole run down with it.
+          ok=0
+          for attempt in 1 2 3; do
+            if git clone --branch v0.2.1 \
+                 https://git.eden-emu.dev/eden-emu/eden.git eden 2>/tmp/clone.log; then
+              ok=1; break
+            fi
+            echo "attempt $attempt failed:"; tail -3 /tmp/clone.log
+            rm -rf eden
+            sleep $((attempt * 10))
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::warning::upstream unreachable; using our mirror"
+            git clone https://github.com/sj0404-collab/eden-upstream-reference.git eden \
+              || { echo "::error::neither upstream nor the mirror could be cloned"; exit 1; }
+          fi
+          cd eden && echo "upstream: $(git rev-parse --short HEAD)"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install NDK, CMake and glslang
+        run: |
+          sdkmanager --install "ndk;28.2.13676358" "cmake;3.31.6" \
+            "build-tools;35.0.0" "platforms;android-36" > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq glslang-tools > /dev/null
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle2-${{ runner.os }}-${{ hashFiles('eden/src/android/**/*.gradle*') }}
+          restore-keys: gradle2-${{ runner.os }}-
+
+      - name: Apply patch2
+        run: bash fork/tools/apply_patch2.sh --patch fork/patch2 --eden "$GITHUB_WORKSPACE/eden"
+
+      - name: Check the folder logic before building
+        run: |
+          # Twenty seconds here against twenty-five minutes of compiling. Both
+          # tests run against plain Kotlin - no Android, no device.
+          curl -sL -o /tmp/kc.zip \
+            https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
+          unzip -qo /tmp/kc.zip -d /tmp
+          for t in FolderScanTest GroupByFolderTest; do
+            echo "── $t ──"
+            /tmp/kotlinc/bin/kotlinc "fork/patch2/tests/$t.kt" -include-runtime -d "/tmp/$t.jar" 2>&1 |
+              grep -vE "^warning: (classpath|language version)" || true
+            java -Dfile.encoding=UTF-8 -jar "/tmp/$t.jar"
+          done
+
+      - name: Build
+        run: |
+          cd eden/src/android
+          TYPE="${{ inputs.build_type }}"
+          TYPE="${TYPE:-debug}"
+          if [ "$TYPE" = "release" ]; then
+            ./gradlew assembleLegacyRelease --parallel --build-cache --max-workers="$(nproc)"
+          else
+            ./gradlew assembleLegacyDebug --parallel --build-cache --max-workers="$(nproc)"
+          fi
+
+      - name: Verify the changes shipped
+        run: |
+          APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
+          echo "APK: $APK ($(du -h "$APK" | cut -f1))"
+          echo "MD5: $(md5sum "$APK" | cut -d' ' -f1)"
+
+          mkdir -p /tmp/x && cd /tmp/x
+          unzip -qo "$GITHUB_WORKSPACE/$APK" 'classes*.dex'
+
+          fail=0
+          case "$APK" in
+            *release*) echo "  (release: Kotlin names are minified, skipping the name check)" ;;
+            *)
+              # groupByFolder is ours and cannot come from anywhere else.
+              for sym in groupByFolder folderName; do
+                if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
+                else echo "  MISSING $sym"; fail=1; fi
+              done ;;
+          esac
+
+          python3 - "$GITHUB_WORKSPACE/$APK" <<'SIZEPY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import sys, zipfile, os
+          apk = sys.argv[1]
+          z = zipfile.ZipFile(apk)
+          mb = lambda b: b / 1048576
+          total = os.path.getsize(apk)
+          dex = sum(i.compress_size for i in z.infolist() if i.filename.endswith('.dex'))
+          so = sum(i.compress_size for i in z.infolist() if i.filename.endswith('.so'))
+          print("## APK")
+          print()
+          print("| | |")
+          print("|---|---|")
+          print(f"| size | **{mb(total):.1f} MB** |")
+          print(f"| dex | {mb(dex):.1f} MB packed |")
+          print(f"| native | {mb(so):.1f} MB packed |")
+          SIZEPY
+
+          exit $fail
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eden-clean-patch2
+          path: eden/src/android/app/build/outputs/apk/**/*.apk
+          retention-days: 30
+
+      - name: Upload to gofile.io
+        if: github.event_name != 'workflow_dispatch' || inputs.upload_to_gofile
+        run: |
+          APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
+          SRV=$(curl -s https://api.gofile.io/servers |
+            python3 -c "import sys,json;print(json.load(sys.stdin)['data']['servers'][0]['name'])")
+          curl -s -F "file=@$APK" "https://$SRV.gofile.io/contents/uploadfile" -o /tmp/up.json
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open('/tmp/up.json'))['data']
+          print(f"\n- **Download:** {d['downloadPage']}")
+          print(f"- **MD5:** `{d['md5']}`")
+          print(f"- **Size:** {round(d['size']/1048576,1)} MB")
+          PY
+          cat "$GITHUB_STEP_SUMMARY"
