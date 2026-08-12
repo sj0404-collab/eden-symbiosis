@@ -1,13 +1,6 @@
 {
-  "kind": "Стол Linux",
-  "os": "linux",
-  "url": "https://downloads-holes-second-lifestyle.trycloudflare.com",
-  "deskUrl": "https://downloads-holes-second-lifestyle.trycloudflare.com/vnc.html?autoconnect=1&resize=scale&quality=6&compression=6&show_dot=true",
-  "terminal": "https://downloads-holes-second-lifestyle.trycloudflare.com/term/",
-  "auth": "без пароля",
-  "label": "desks",
-  "startedAt": "2026-08-11T20:36:54Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-12T02:27:17Z",
   "runId": "31533497336",
   "runNumber": "16",
   "repo": "sj0404-collab/eden-symbiosis"
