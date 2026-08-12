@@ -1,13 +1,7 @@
 {
-  "kind": "CLI-агент",
-  "os": "linux",
-  "url": "https://say-joining-forums-distant.trycloudflare.com",
-  "agentUrl": "https://say-joining-forums-distant.trycloudflare.com/hub?token=zen-7dc53579e64ba7b182d7d026",
-  "agentToken": "zen-7dc53579e64ba7b182d7d026",
-  "branch": "agent-work",
-  "startedAt": "2026-08-12T14:16:32Z",
-  "state": "live",
-  "runId": "31605852781",
-  "runNumber": "20",
+  "state": "ended",
+  "startedAt": "2026-08-12T14:16:33Z",
+  "runId": "31600119713",
+  "runNumber": "19",
   "repo": "sj0404-collab/eden-symbiosis"
 }
