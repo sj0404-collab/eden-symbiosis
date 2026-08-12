@@ -1,13 +1,7 @@
 {
-  "kind": "Стол Windows",
-  "os": "windows",
-  "url": "https://contractor-programmes-congress-continuous.trycloudflare.com",
-  "deskUrl": "https://contractor-programmes-congress-continuous.trycloudflare.com/",
-  "auth": "без пароля",
-  "label": "desks",
-  "startedAt": "2026-08-11T20:33:39Z",
-  "state": "live",
-  "runId": "31533497336",
-  "runNumber": "16",
+  "state": "ended",
+  "startedAt": "2026-08-12T01:28:51Z",
+  "runId": "31528781749",
+  "runNumber": "10",
   "repo": "sj0404-collab/eden-symbiosis"
 }
