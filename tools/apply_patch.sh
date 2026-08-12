@@ -151,6 +151,39 @@ open(path, 'w', encoding='utf-8').write(text)
 print('  declared KenjiProbeService in :kenji')
 PYEOF
 
+# R8 rules for our own classes.
+#
+# A release build renames and deletes whatever R8 cannot see being used, and
+# three things here are reached by NAME only: the probe service (a string in
+# the manifest), EnginesFragment (created by the navigation graph) and the JNI
+# surfaces. Without these rules the release APK builds cleanly and then dies
+# with ClassNotFoundException - in the one build type a person actually gets.
+APP_DIR="$(cd "$A/../.." && pwd)"
+cp "$P"/android/proguard-symbiosis.pro "$APP_DIR/proguard-symbiosis.pro"
+GRADLE="$APP_DIR/build.gradle.kts"
+if grep -q "proguard-symbiosis.pro" "$GRADLE"; then
+  echo "  R8 rules already wired in"
+else
+  python3 - "$GRADLE" <<'PGEOF'
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+
+# Appended to every proguardFiles(...) that already lists the project rules.
+# Anchoring on that string rather than on a build type keeps this working if
+# upstream adds or renames a variant.
+needle = '"proguard-rules.pro"'
+if needle not in text:
+    print("  ::warning:: no proguardFiles entry found; R8 rules not wired in")
+else:
+    text = text.replace(needle, needle + ',\n                "proguard-symbiosis.pro"')
+    open(path, 'w', encoding='utf-8').write(text)
+    print("  wired proguard-symbiosis.pro into the R8 rules")
+PGEOF
+fi
+
+
 # Kotlin
 J="$A/java/org/yuzu/yuzu_emu"
 cp "$P"/android/fragments/*.kt "$J/fragments/"
