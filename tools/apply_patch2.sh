@@ -52,6 +52,7 @@ copy_one "$PATCH_DIR/android/utils/GameHelper.kt"      "$J/utils/GameHelper.kt"
 copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"      "$J/ui/GamesFragment.kt"
 copy_one "$PATCH_DIR/android/fragments/EmulationFragment.kt" "$J/fragments/EmulationFragment.kt"
 copy_one "$PATCH_DIR/android/fragments/GameFoldersFragment.kt" "$J/fragments/GameFoldersFragment.kt"
+copy_one "$PATCH_DIR/android/root/NativeLibrary.kt" "$J/NativeLibrary.kt"
 
 # Layout and strings. The shared-folder button lives beside "add game folder",
 # and its labels have to exist in both languages or the build fails on a
@@ -72,6 +73,12 @@ fi
 
 # SharedDataDirectory is a new file, not a modified one, so it has no upstream
 # counterpart to check against.
+if [ -f "$PATCH_DIR/android/utils/CoreFromFolder.kt" ]; then
+  cp "$PATCH_DIR/android/utils/CoreFromFolder.kt" "$J/utils/CoreFromFolder.kt"
+  copied=$((copied + 1))
+  echo "  copied CoreFromFolder.kt (new file)"
+fi
+
 if [ -f "$PATCH_DIR/android/utils/SharedDataDirectory.kt" ]; then
   cp "$PATCH_DIR/android/utils/SharedDataDirectory.kt" "$J/utils/SharedDataDirectory.kt"
   copied=$((copied + 1))
@@ -102,6 +109,8 @@ check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder b
 check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
 check "$RES/values/strings.xml" "shared_folder_choose" "English labels"
 check "$RES/values-ru/strings.xml" "shared_folder_choose" "Russian labels"
+check "$J/utils/CoreFromFolder.kt" "object CoreFromFolder" "core-from-folder loader"
+check "$J/NativeLibrary.kt" "CoreFromFolder.load" "core loader wired into startup"
 check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
 
 # The button must never pause the game. Anything matching here is a real call,
