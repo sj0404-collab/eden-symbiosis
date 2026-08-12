@@ -549,6 +549,37 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 360
 
+    # ── Windows over Zoho Assist, not RDP ──────────────────────────────
+    #
+    # WHY RDP IS GONE
+    #   It never worked, across four sessions. FreeRDP got through TLS,
+    #   licensing and channel setup and was then refused with
+    #   LOGON_FAILED_UPDATE_PASSWORD - Windows demanding a password change,
+    #   which RDP has no way to present. The account was created four different
+    #   ways (New-LocalUser, net user, AccountManagement.SetPassword, ADSI
+    #   PasswordExpired), the machine policy was cleared with
+    #   net accounts /maxpwage:unlimited, and every flag read back correct
+    #   while the client kept being refused.
+    #
+    # WHY ZOHO ASSIST INSTEAD
+    #   It makes an OUTBOUND connection, so there is nothing to tunnel and no
+    #   port to expose - which also removes the whole class of bore/ngrok
+    #   problems. There is no Windows logon to satisfy: the agent runs as a
+    #   service and the viewer attaches to the existing console session. Free
+    #   for personal use, and its unattended agent installs silently:
+    #
+    #     msiexec /i ZA_Access.msi /quiet SILENT=TRUE
+    #
+    # WHAT YOU NEED ONCE
+    #   A Zoho Assist account (free), then Unattended Access -> Deployment,
+    #   and copy the MSI download link it gives you. That link carries your
+    #   account key, so it is a SECRET: save it as ZOHO_ASSIST_MSI_URL under
+    #   Settings -> Secrets and variables -> Actions.
+    #
+    #   Without it this job stops with an explanation instead of pretending to
+    #   work - there is no way to guess someone's deployment link, and an agent
+    #   installed without one registers to nobody.
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -557,395 +588,121 @@ jobs:
       - name: Name this session
         shell: pwsh
         run: |
-          "### Windows session: ${{ inputs.label }} (RDP)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "### Windows session: ${{ inputs.label }} (Zoho Assist)" |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
-      - name: Enable RDP and create the session user
-        id: rdp
+      - name: Install the Zoho Assist unattended agent
+        id: zoho
         shell: pwsh
         env:
-          RDP_USER: ${{ secrets.RDP_USER }}
-          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+          ZOHO_MSI: ${{ secrets.ZOHO_ASSIST_MSI_URL }}
         run: |
           $ErrorActionPreference = "Stop"
-          $user = if ($env:RDP_USER) { $env:RDP_USER } else { "zenrdp" }
 
-          # A stable password, so the saved connection on the phone keeps
-          # working instead of needing the password retyped every session.
-          #
-          # Set RDP_PASSWORD as a repository secret and it is used as-is.
-          # Without it, one is generated - and generated carefully, because
-          # Windows enforces complexity (three of upper, lower, digit, symbol)
-          # and a plain 16-character draw from one pool fails that about 4
-          # percent of the time, which surfaces as InvalidPasswordException and
-          # kills the session. Measured, not assumed.
-          if ($env:RDP_PASSWORD) {
-            $password = $env:RDP_PASSWORD
-            Write-Host "using the RDP_PASSWORD secret"
-          } else {
-            $upper  = 65..90  | Get-Random -Count 4 | ForEach-Object { [char]$_ }
-            $lower  = 97..122 | Get-Random -Count 4 | ForEach-Object { [char]$_ }
-            $digits = 48..57  | Get-Random -Count 4 | ForEach-Object { [char]$_ }
-            # Symbols kept to ones no shell, URL or RDP client will mangle.
-            $symbols = '!@#$%^*-_=+'.ToCharArray() | Get-Random -Count 2
-            $password = -join (($upper + $lower + $digits + $symbols) | Get-Random -Count 14)
-            Write-Host "generated a password; set the RDP_PASSWORD secret to keep it fixed"
+          if (-not $env:ZOHO_MSI) {
+            Write-Host "::error::ZOHO_ASSIST_MSI_URL is not set."
+            Write-Host ""
+            Write-Host "Get it once, free:"
+            Write-Host "  1. sign in at https://assist.zoho.com"
+            Write-Host "  2. Unattended Access -> Deployment"
+            Write-Host "  3. copy the MSI download link (it carries your account key)"
+            Write-Host "  4. save it as the repository secret ZOHO_ASSIST_MSI_URL"
+            Write-Host ""
+            Write-Host "The link is a secret: anyone holding it can register an agent"
+            Write-Host "to your account."
+            exit 1
           }
 
-          # Remote Desktop is present on the image but switched off.
-          #
-          # Three settings, not one. Turning the service on is obvious; the
-          # other two are why a phone client could complete the TLS handshake
-          # and still be refused:
-          #
-          #   UserAuthentication=0  drops the NLA requirement. A fresh local
-          #     account plus CredSSP is what most Android clients fail on.
-          #   SecurityLayer=1       negotiate rather than force. Left at the
-          #     default the server demanded SSL and answered a plain request
-          #     with SSL_REQUIRED_BY_SERVER - measured against the live
-          #     session, not guessed.
-          #   MinEncryptionLevel=2  "client compatible" instead of FIPS/high,
-          #     which some older clients cannot satisfy.
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-            -Name 'fDenyTSConnections' -Value 0
-          $rdpTcp = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
-          Set-ItemProperty -Path $rdpTcp -Name 'UserAuthentication'  -Value 0
-          Set-ItemProperty -Path $rdpTcp -Name 'SecurityLayer'       -Value 1
-          Set-ItemProperty -Path $rdpTcp -Name 'MinEncryptionLevel'  -Value 2
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+          # curl.exe, not Invoke-WebRequest: the .NET stack on this image fails
+          # some redirects with RemoteCertificateNameMismatch - measured twice
+          # while building the Kenji core.
+          $msi = "$env:TEMP\ZA_Access.msi"
+          curl.exe -sL --retry 3 -o $msi "$env:ZOHO_MSI"
+          if (-not (Test-Path $msi)) { throw "could not download the Zoho agent" }
 
-          $secure = ConvertTo-SecureString $password -AsPlainText -Force
-
-          # Create or update - and then clear "must change password at next
-          # logon".
-          #
-          # This is what actually blocked the client. The protocol was fine all
-          # along: FreeRDP got through TLS, licensing and channel setup and
-          # then received LOGON_FAILED_UPDATE_PASSWORD, which Android clients
-          # report as the generic "could not connect". Windows sets that flag
-          # on a fresh local account, and RDP has no way to present a
-          # change-password dialog, so the logon is refused every time.
-          #
-          # New-LocalUser also fails outright if the account already exists,
-          # which it does on a re-run, leaving the whole step half-applied.
-          # net user, not New-LocalUser.
-          #
-          # New-LocalUser marks the account as needing a password change at
-          # first logon, and clearing that afterwards has not stuck across
-          # three sessions - the client kept receiving
-          # LOGON_FAILED_UPDATE_PASSWORD. Deleting and recreating with net
-          # user, which never sets the flag, avoids the problem instead of
-          # fighting it.
-          if (Get-LocalUser -Name $user -ErrorAction SilentlyContinue) {
-            net user $user /delete | Out-Null
-            Write-Host "removed the previous $user account"
-          }
-          net user $user "$password" /add /active:yes /expires:never /passwordchg:no | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::warning::net user /add returned $LASTEXITCODE; falling back to New-LocalUser"
-            New-LocalUser -Name $user -Password $secure -AccountNeverExpires -PasswordNeverExpires | Out-Null
-          } else {
-            Write-Host "created $user with net user"
+          $size = (Get-Item $msi).Length
+          Write-Host "installer: $size bytes"
+          # A download that returns an HTML error page is a few kilobytes and
+          # would otherwise "install" and silently do nothing.
+          if ($size -lt 1000000) {
+            Write-Host "::error::that is too small to be the MSI - check the link."
+            Get-Content $msi -TotalCount 5
+            exit 1
           }
 
-          # Clear "must change password at next logon".
-          #
-          # PasswordNeverExpires is a different flag - it governs ageing, not
-          # the change-on-next-logon demand - so setting it alone left the
-          # account still demanding a change, and the client still saw
-          # LOGON_FAILED_UPDATE_PASSWORD. The property that matters is
-          # PasswordExpired, and Set-LocalUser only exposes it via
-          # -PasswordNeverExpires on some builds, so set it directly through
-          # the .NET account object and confirm with net user.
-          Set-LocalUser -Name $user -PasswordNeverExpires $true
-          try {
-            Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-            $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext `
-              ([System.DirectoryServices.AccountManagement.ContextType]::Machine)
-            $up = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($ctx, $user)
-            if ($up) {
-              $up.PasswordNeverExpires = $true
-              $up.Save()
-              # Refresh the password without the change-at-logon side effect.
-              $up.SetPassword($password)
-              $up.Save()
-              Write-Host "password reset through AccountManagement"
-            }
-          } catch { Write-Host "AccountManagement path failed: $($_.Exception.Message)" }
+          $p = Start-Process msiexec -Wait -PassThru `
+            -ArgumentList @("/i", "`"$msi`"", "/quiet", "SILENT=TRUE", "/norestart")
+          Write-Host "msiexec exit: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
+            throw "the agent did not install (exit $($p.ExitCode))"
+          }
 
-          # The ADSI flag is the one Windows actually consults for the prompt:
-          # pwdLastSet = -1 means "the password was just set, do not ask".
-          try {
-            $adsi = [ADSI]"WinNT://./$user,user"
-            $adsi.Put("PasswordExpired", 0)
-            $adsi.SetInfo()
-            Write-Host "PasswordExpired cleared via ADSI"
-          } catch { Write-Host "ADSI path failed: $($_.Exception.Message)" }
-
-          net user $user /logonpasswordchg:no | Out-Null
-          net user $user /expires:never | Out-Null
-
-          Add-LocalGroupMember -Group "Administrators" -Member $user -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $user -ErrorAction SilentlyContinue
-
-          # Machine password policy, not just the account.
-          #
-          # Every per-account flag was cleared and the client still received
-          # LOGON_FAILED_UPDATE_PASSWORD, so the demand is coming from the
-          # local security policy rather than the user object: a maximum
-          # password age of 42 days is the Windows default, and an account
-          # whose password predates it is told to change at logon regardless
-          # of its own settings. net accounts removes the age entirely.
-          net accounts /maxpwage:unlimited | Out-Null
-          net accounts /minpwlen:0 | Out-Null
-          Write-Host "machine password policy: $(net accounts | Select-String 'password age' -Raw)"
-
-          # Re-apply after the policy change, because setting maxpwage does not
-          # retroactively clear a flag already raised on the account.
-          try {
-            $adsi = [ADSI]"WinNT://./$user,user"
-            $adsi.Put("PasswordExpired", 0)
-            $adsi.SetInfo()
-            Write-Host "PasswordExpired re-cleared after the policy change"
-          } catch { Write-Host "second ADSI pass failed: $($_.Exception.Message)" }
-
-          Restart-Service -Name TermService -Force
-          Start-Sleep -Seconds 5
-
-          $listening = @(Get-NetTCPConnection -State Listen -LocalPort 3389 -ErrorAction SilentlyContinue).Count
-          if ($listening -eq 0) { throw "RDP is not listening on 3389." }
-
-          # What the service ended up with, read back after the restart. The
-          # registry is written before TermService restarts and some of these
-          # are only read at start, so printing the values afterwards is the
-          # only honest confirmation they took effect.
-          $eff = Get-ItemProperty -Path $rdpTcp |
-                 Select-Object UserAuthentication, SecurityLayer, MinEncryptionLevel
-          Write-Host ("effective: NLA={0} SecurityLayer={1} MinEncryption={2}" -f `
-            $eff.UserAuthentication, $eff.SecurityLayer, $eff.MinEncryptionLevel)
-          $acct = Get-LocalUser -Name $user
-          $adsiFlag = try {
-            ([ADSI]"WinNT://./$user,user").Get("PasswordExpired")
-          } catch { "unreadable" }
-          Write-Host "ADSI PasswordExpired = $adsiFlag (0 means no change demanded)"
-          # Carried to session.json so it is visible without the job log,
-          # which GitHub refuses to serve while the job is running - the
-          # reason this took three sessions to pin down.
-          "RDP_ACCOUNT_STATE=expired=$($acct.PasswordExpired) neverExpires=$($acct.PasswordNeverExpires) enabled=$($acct.Enabled)" |
-            Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host ("password expired flag: {0} (must be False, or logon is refused)" -f `
-            $acct.PasswordExpired)
-          Write-Host ("account: {0}, member of Remote Desktop Users: {1}" -f $user, `
-            [bool](Get-LocalGroupMember -Group "Remote Desktop Users" -ErrorAction SilentlyContinue |
-                   Where-Object { $_.Name -like "*$user" }))
-
-          "user=$user"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "password=$password" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "::add-mask::$password"
-
-      - name: Prepare the workspace and the agent
+      - name: Confirm the agent is actually connected
         shell: pwsh
         run: |
-          # Node is already on the image. The agent runs the same file as on
-          # Linux; capabilities pick the PowerShell runtime automatically.
-          node --version
-          pwsh --version
-          Write-Host "capability templates available on this machine:"
-          Set-Location "$env:GITHUB_WORKSPACE\fork"
-          node -e "const m=require('./agent/capabilities.js');const c=m.createCapabilities({workspaceRoot:()=>process.cwd(),commandEnvironment:()=>process.env,resolvePath:p=>({path:p}),auditEvent:()=>{}});c.handle('capability_templates').then?0:0;const r=c.handle('capability_templates');console.log(r.templates.map(t=>t.id+' ('+t.runtime+')').join('\n'))"
-
-      - name: Open the tunnel
-        env:
-          NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-          NGROK_TCP_ADDRESS: ${{ secrets.NGROK_TCP_ADDRESS }}
-          BORE_PORT: ${{ secrets.BORE_PORT }}
-        shell: pwsh
-        run: |
-          # bore first, ngrok only if it fails.
-          #
-          # ngrok assigns TCP addresses at random on the free plan and reserving
-          # one needs a paid tier, so the phone's saved PC entry broke every
-          # session. bore is an open-source Rust tunnel whose public server takes
-          # --port: ask for a port and, if it is free, you get exactly that one.
-          #
-          # Measured before writing this: a fake RDP server behind bore.pub
-          # answered the X.224 handshake 4/4 on the requested port, and after
-          # restarting the client the same port came back and answered 3/3.
-          #
-          # ngrok stays as the fallback - bore.pub is a free community server
-          # with no uptime promise, and an unreachable session is worse than one
-          # at a new address.
-          $port = if ($env:BORE_PORT) { [int]$env:BORE_PORT } else { 47311 }
-          $endpoint = $null
-          
-          # A zip on Windows; the Linux build is a .tar.gz and guessing that name
-          # gives a 404 and a silent fallback. Checked against the release.
-          $boreUrl = "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip"
-          try {
-            Invoke-WebRequest -Uri $boreUrl -OutFile "$env:TEMP\bore.zip" -TimeoutSec 90
-            Expand-Archive -Path "$env:TEMP\bore.zip" -DestinationPath "$env:TEMP\boredir" -Force
-            $bore = Get-ChildItem -Path "$env:TEMP\boredir" -Filter "bore.exe" -Recurse |
-                    Select-Object -First 1 -ExpandProperty FullName
-            if ($bore) {
-              $bp = Start-Process -FilePath $bore `
-                -ArgumentList "local 3389 --to bore.pub --port $port" `
-                -RedirectStandardOutput "$env:TEMP\bore.log" `
-                -RedirectStandardError  "$env:TEMP\bore.err" `
-                -WindowStyle Hidden -PassThru
-              Start-Sleep -Seconds 8
-              $blog = (Get-Content "$env:TEMP\bore.log","$env:TEMP\bore.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
-              if ($blog -match "listening at (bore\.pub:\d+)") {
-                $endpoint = $Matches[1]
-                "TUNNEL_PID=$($bp.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
-                "TUNNEL_KIND=bore"     | Out-File -FilePath $env:GITHUB_ENV -Append
-                Write-Host "bore is up on $endpoint - this address is the same every session"
-              } else {
-                Write-Host "::warning::bore did not report a port; falling back to ngrok."
-                Write-Host $blog
-                try { Stop-Process -Id $bp.Id -Force -ErrorAction SilentlyContinue } catch { }
-              }
-            } else {
-              Write-Host "::warning::bore.exe missing from the archive; falling back to ngrok."
-            }
-          } catch {
-            Write-Host "::warning::bore could not start ($($_.Exception.Message)); falling back to ngrok."
+          # An installed service is not the same as a registered device. Poll
+          # until the service is running, then say plainly what to look for -
+          # the alternative is a green job and an empty device list.
+          $svc = $null
+          foreach ($try in 1..30) {
+            Start-Sleep -Seconds 4
+            $svc = Get-Service -Name "ZohoMeeting*" -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+            if ($svc -and $svc.Status -eq "Running") { break }
           }
-          
-          if ($endpoint) {
-            $fixed = "да — один и тот же каждую сессию"
-          } else {
-            $fixed = "нет — новый каждый раз"
 
-            if (-not $env:NGROK_TOKEN) {
-              Write-Host "::error::NGROK_AUTH_TOKEN is not set; RDP would only be reachable on the runner."
-              exit 1
-            }
-            choco install ngrok -y --no-progress --limit-output | Out-Null
-            ngrok config add-authtoken $env:NGROK_TOKEN
-
-            # TCP, because RDP is not HTTP. Free ngrok hands out a random
-            # host:port here - the reserved domain only applies to HTTP.
-            # Detached, not -NoNewWindow.
-            #
-            # -NoNewWindow attaches ngrok to this step's console, and the console
-            # goes away when the step does: the tunnel's edge stays registered so
-            # the port still accepts TCP, but nothing is behind it and every
-            # connection is closed immediately. That is exactly what a client
-            # sees as "connection reset" - measured against a live session, four
-            # attempts in a row, before this changed.
-              -RedirectStandardOutput "$env:TEMP\ngrok.log" `
-              -RedirectStandardError "$env:TEMP\ngrok.err" `
-              -WindowStyle Hidden -PassThru
-            "TUNNEL_PID=$($ngrok.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
-            "TUNNEL_KIND=ngrok"      | Out-File -FilePath $env:GITHUB_ENV -Append
-
-            $endpoint = $null
-            foreach ($attempt in 1..30) {
-              Start-Sleep -Seconds 2
-              try {
-                $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
-                $tcp = $tunnels.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
-                if ($tcp) { $endpoint = $tcp.public_url -replace '^tcp://', ''; break }
-              } catch { }
-            }
-            if (-not $endpoint) {
-              Write-Host "::error::ngrok did not report a tunnel."
-              Get-Content "$env:TEMP\ngrok.log" -Tail 30
-              exit 1
-            }
-
-            $host_, $port = $endpoint -split ':'
-            $summary = @(
-              "## Windows RDP session",
-              "",
-              "| | |",
-              "|---|---|",
-              "| Address | ``$endpoint`` |",
-              "| Host | ``$host_`` |",
-              "| Port | ``$port`` |",
-              "| User | ``${{ steps.rdp.outputs.user }}`` |",
-              "| Password | ``${{ steps.rdp.outputs.password }}`` |",
-              "",
-              "From a phone: Microsoft Remote Desktop or aFreeRDP, PC name ``$endpoint``.",
-              "The address is random - free ngrok reserves domains for HTTP only.",
-              "The runner is destroyed when the job ends; nothing on it survives."
-            ) -join "`n"
-            $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-            Write-Host "RDP ready at $endpoint  user ${{ steps.rdp.outputs.user }}"
-
-            # Publish for the panel. bash ships with the Windows runner, so the
-            # same script serves both platforms rather than a second copy that
-            # would drift.
-            $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
-            bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-              "kind=RDP" "os=windows" `
-              "rdpHost=$endpoint" `
-              "rdpUser=${{ steps.rdp.outputs.user }}" `
-              "rdpPass=${{ steps.rdp.outputs.password }}" `
-              "accountState=$env:RDP_ACCOUNT_STATE"
-
+          if (-not $svc) {
+            Write-Host "::error::no Zoho Assist service was created."
+            Get-Service | Where-Object { $_.Name -like "*Zoho*" } | Format-Table -AutoSize | Out-String | Write-Host
+            exit 1
           }
+
+          Write-Host "service $($svc.Name): $($svc.Status)"
+          Write-Host "computer name: $env:COMPUTERNAME"
+
+          @(
+            "## Windows session over Zoho Assist",
+            "",
+            "The runner has registered itself with your Zoho Assist account.",
+            "",
+            "| | |",
+            "|---|---|",
+            "| Where | https://assist.zoho.com -> Unattended Access |",
+            "| Look for | ``$env:COMPUTERNAME`` |",
+            "| Service | ``$($svc.Name)`` = $($svc.Status) |",
+            "",
+            "No address, no port and no password: the agent dials out, so there",
+            "is nothing to tunnel and nothing to log into. Connect from the Zoho",
+            "Assist app on the phone or from the browser.",
+            "",
+            "The runner is destroyed when this job ends - six hours at most - and",
+            "the device disappears from the list with it."
+          ) -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+          $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "slot=windows" "kind=Windows (Zoho Assist)" "os=windows" `
+            "url=https://assist.zoho.com" `
+            "computer=$env:COMPUTERNAME" `
+            "auth=через аккаунт Zoho, без пароля и порта" `
+            "label=${{ inputs.label }}"
+
       - name: Hold the session open
         shell: pwsh
         run: |
-          Write-Host "The desktop stays up until you cancel this run, or for six hours."
-          Write-Host "tunnel: $env:TUNNEL_KIND on pid $env:TUNNEL_PID"
-          
-          # Watch the tunnel rather than sleeping blindly: when it dies the port
-          # keeps accepting connections and dropping them, which looks like a
-          # broken RDP client rather than a dead tunnel.
-          #
-          # Restart whichever tunnel this session actually used. The previous
-          # version always relaunched ngrok, so a bore session whose watchdog
-          # fired tried to run a binary that had never been installed and killed
-          # the whole job - which is exactly what happened on the first run.
-          $borePath = Get-ChildItem -Path "$env:TEMP\boredir" -Filter "bore.exe" -Recurse -ErrorAction SilentlyContinue |
-                      Select-Object -First 1 -ExpandProperty FullName
-          $pid_ = $env:TUNNEL_PID
-          
+          Write-Host "The machine stays up until you cancel this run, or for six hours."
+          Write-Host "Connect from https://assist.zoho.com -> Unattended Access -> $env:COMPUTERNAME"
+
+          # Watch the service rather than sleeping blindly. If it stops, the
+          # device silently vanishes from the list and the session looks dead
+          # for no visible reason.
           for ($i = 0; $i -lt 1400; $i++) {
             Start-Sleep -Seconds 15
-            if (-not $pid_) { continue }
-            $alive = Get-Process -Id $pid_ -ErrorAction SilentlyContinue
-            if ($alive) { continue }
-          
-            Write-Host "::warning::the tunnel exited; restarting it."
-            $addr = $null
-            if ($env:TUNNEL_KIND -eq "bore" -and $borePath) {
-              $port = if ($env:BORE_PORT) { [int]$env:BORE_PORT } else { 47311 }
-              $bp = Start-Process -FilePath $borePath `
-                -ArgumentList "local 3389 --to bore.pub --port $port" `
-                -RedirectStandardOutput "$env:TEMP\bore2.log" `
-                -RedirectStandardError  "$env:TEMP\bore2.err" `
-                -WindowStyle Hidden -PassThru
-              $pid_ = $bp.Id
-              Start-Sleep -Seconds 8
-              $blog = (Get-Content "$env:TEMP\bore2.log","$env:TEMP\bore2.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
-              if ($blog -match "listening at (bore\.pub:\d+)") { $addr = $Matches[1] }
-            } elseif (Get-Command ngrok -ErrorAction SilentlyContinue) {
-              $ngrok = Start-Process -FilePath "ngrok" `
-                -ArgumentList "tcp 3389 --log stdout --log-format json --log-level info" `
-                -RedirectStandardOutput "$env:TEMP\ngrok2.log" `
-                -WindowStyle Hidden -PassThru
-              $pid_ = $ngrok.Id
-              Start-Sleep -Seconds 8
-              try {
-                $t = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
-                $tcp = $t.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
-                if ($tcp) { $addr = $tcp.public_url -replace '^tcp://', '' }
-              } catch { }
-            } else {
-              Write-Host "::warning::no tunnel binary available to restart; the session stays local."
-              continue
-            }
-          
-            if ($addr) {
-              Write-Host "tunnel back up on $addr"
-              $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
-              bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
-                "kind=RDP" "os=windows" "rdpHost=$addr" `
-                "rdpUser=${{ steps.rdp.outputs.user }}" `
-                "rdpPass=${{ steps.rdp.outputs.password }}"
-            }
+            $svc = Get-Service -Name "ZohoMeeting*" -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+            if ($svc -and $svc.Status -eq "Running") { continue }
+            Write-Host "::warning::the Zoho agent stopped; restarting it."
+            if ($svc) { Start-Service $svc.Name -ErrorAction SilentlyContinue }
           }
 
       - name: Clear the published session
@@ -953,20 +710,5 @@ jobs:
         shell: pwsh
         run: |
           $env:GH_TOKEN = "${{ secrets.GITHUB_TOKEN }}"
-          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" "state=ended"
-
-      - name: Save work before the runner is destroyed
-        if: always()
-        shell: pwsh
-        run: |
-          Set-Location "$env:GITHUB_WORKSPACE\fork"
-          if (git status --porcelain) {
-            git config user.name "Symbiosis Session"
-            git config user.email "agent@users.noreply.github.com"
-            git add -A
-            git commit -q -m "final autosave $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
-            git push -q origin HEAD
-            Write-Host "Pushed the last changes."
-          } else {
-            Write-Host "Nothing left to save."
-          }
+          bash "$env:GITHUB_WORKSPACE/fork/tools/publish_session.sh" `
+            "slot=windows" "state=ended"
