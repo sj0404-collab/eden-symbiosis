@@ -4701,6 +4701,32 @@ function parseJsonToolCall(text) {
     const trimmed = String(text || '').trim();
     if (trimmed.startsWith('{') && trimmed.endsWith('}')) candidate = extractBalancedJsonObject(trimmed, 0);
   }
+
+  // <tool_call> ... </tool_call>, which is what Qwen-family models emit.
+  //
+  // Not a hypothetical: the hub answered "Задача завершена" to every message,
+  // including a bare "Ну". The run record showed why - the model had replied
+  //     <tool_call>workspace_info</tool_call>
+  // and nothing here recognised it, so the tag was handed back as the final
+  // answer. The loop ended after one round having done nothing, and the empty
+  // reply fell through to the "task complete" placeholder.
+  //
+  // Two shapes appear in the wild: a bare tool name, and a JSON object. Both
+  // are accepted; anything else falls through and is treated as prose, so a
+  // model merely talking about a tool still cannot trigger one.
+  if (!candidate) {
+    const tagged = String(text || '').match(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/i);
+    if (tagged) {
+      const body = tagged[1].trim();
+      if (body.startsWith('{')) {
+        candidate = extractBalancedJsonObject(body, 0);
+      } else if (/^[a-z0-9_]{2,64}$/i.test(body)) {
+        // A bare name means "call this with no arguments".
+        return { tool: body.toLowerCase(), args: {} };
+      }
+    }
+  }
+
   if (!candidate) return null;
   try {
     const parsed = JSON.parse(candidate);
@@ -4856,6 +4882,7 @@ function printPublicAssistantNote(text) {
   // Убираем машинные части вызова, оставляя только публичный план/наблюдение.
   note = note
     .replace(/TOOL_JSON\s*:\s*\{[\s\S]*$/i, '')
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
     .replace(/```(?:json)?\s*\{\s*"tool"[\s\S]*?\}\s*```/i, '')
     .replace(/^\s*TOOL:\s*[a-z_]+[\s\S]*$/im, '')
     .trim();
