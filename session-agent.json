@@ -1,12 +1,6 @@
 {
-  "kind": "CLI-агент",
-  "os": "windows",
-  "url": "https://losing-lucia-voluntary-swaziland.trycloudflare.com",
-  "agentUrl": "https://losing-lucia-voluntary-swaziland.trycloudflare.com/hub?token=zen-9904c8709147478c8a4a0c80",
-  "agentToken": "zen-9904c8709147478c8a4a0c80",
-  "branch": "agent-work-windows",
-  "startedAt": "2026-08-12T12:01:56Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-12T13:00:08Z",
   "runId": "31594486926",
   "runNumber": "17",
   "repo": "sj0404-collab/eden-symbiosis"
