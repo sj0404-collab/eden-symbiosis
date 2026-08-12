@@ -50,6 +50,15 @@ copy_one() {
 copy_one "$PATCH_DIR/android/model/Game.kt"            "$J/model/Game.kt"
 copy_one "$PATCH_DIR/android/utils/GameHelper.kt"      "$J/utils/GameHelper.kt"
 copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"      "$J/ui/GamesFragment.kt"
+copy_one "$PATCH_DIR/android/fragments/EmulationFragment.kt" "$J/fragments/EmulationFragment.kt"
+
+# The floating button is a new file with no upstream counterpart.
+if [ -f "$PATCH_DIR/android/views/FloatingGameButton.kt" ]; then
+  mkdir -p "$J/views"
+  cp "$PATCH_DIR/android/views/FloatingGameButton.kt" "$J/views/FloatingGameButton.kt"
+  copied=$((copied + 1))
+  echo "  copied FloatingGameButton.kt (new file)"
+fi
 
 # SharedDataDirectory is a new file, not a modified one, so it has no upstream
 # counterpart to check against.
@@ -78,6 +87,26 @@ check "$J/model/Game.kt"       "folderName"          "Game.folderName"
 check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the scan"
 check "$J/utils/GameHelper.kt" "deepScan) 24"        "scan depth raised to 24"
 check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
+check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
+check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
+
+# The button must never pause the game. Anything matching here is a real call,
+# not a comment - the comments are stripped first.
+# Strip BOTH comment styles before looking. Stripping only // left the KDoc
+# block at the top of the file - which explains, in prose, that nothing here
+# pauses - and the check failed on its own documentation.
+if python3 -c "
+import re, sys
+src = open(sys.argv[1], encoding='utf-8').read()
+src = re.sub(r'/\*.*?\*/', '', src, flags=re.S)
+src = re.sub(r'//[^\n]*', '', src)
+sys.exit(0 if re.search(r'pauseEmulation|emulationState\.pause', src) else 1)
+" "$J/views/FloatingGameButton.kt"; then
+  echo "  FAIL the floating button calls pause"
+  fail=1
+else
+  echo "  ok   the floating button never pauses"
+fi
 
 echo "PATCH2_APPLIED files=$copied"
 exit $fail
