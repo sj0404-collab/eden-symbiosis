@@ -3039,7 +3039,12 @@ function startEmbeddedServer() {
         CONFIG.streamMode = false;
         WEB_AGENT_RUN_CONTEXT = run;
         const answer = await agentLoop(input);
-        run.answer = String(answer || 'Задача завершена. Подробности сохранены в сессии.');
+        // A blank reply used to become "Задача завершена", which reads as
+        // "I did the work" when in fact nothing happened at all - the hub
+        // answered that to every message, including a bare "Ну". Say what is
+        // actually true instead.
+        run.answer = String(answer || '').trim() ||
+          'Модель вернула пустой ответ — задача не выполнена. Переформулируйте запрос или смените модель в настройках.';
         addWebLog(sessionName, 'assistant', run.answer); saveSessionStore();
         run.status = 'completed';
         run.events.push({ id: 'evt_done', type: 'report', at: new Date().toISOString(), text: redactSecrets(run.answer).slice(0, 4000) });
@@ -3557,6 +3562,14 @@ TOOL_JSON:{"tool":"workspace_info","args":{}}
 
 ПРИМЕР ПЕРЕД РАБОТОЙ:
 TOOL_JSON:{"tool":"workspace_info","args":{}}
+
+КОГДА ИНСТРУМЕНТЫ НЕ НУЖНЫ:
+Если сообщение — приветствие, короткая реплика ("Ну", "Привет", "как дела"),
+вопрос о твоих возможностях или что угодно, на что можно ответить словами —
+просто ответь текстом. Не вызывай инструмент ради самого вызова и никогда не
+отвечай пустотой: пустой ответ превращается в бессмысленное "Задача
+завершена", и человек видит, будто ты его проигнорировал. Одна короткая
+фраза лучше молчания.
 
 ПРИМЕР СМЕНЫ ПРОЕКТА:
 TOOL_JSON:{"tool":"set_workspace","args":{"path":"/storage/emulated/0/Alarms/месенджер"}}
