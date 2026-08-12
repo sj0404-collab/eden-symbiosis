@@ -69,16 +69,30 @@ jobs:
           echo "=== LibKenjinx project ==="
           cat src/LibKenjinx/LibKenjinx.csproj
 
-      - name: Install the NDK, which NativeAOT needs for bionic
+      - name: Point the linker at the NDK
         run: |
-          # linux-bionic-arm64 is Android's libc. The .NET runtime pack links
-          # against it with the NDK's clang, so without the NDK the publish
-          # fails at the link step - after twenty minutes of compiling.
-          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
-          ls "$ANDROID_NDK_ROOT" 2>/dev/null | head -5 || echo "no NDK on the image"
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq clang lld zlib1g-dev >/dev/null 2>&1 || true
-          clang --version | head -2
+          # The first attempt got all the way through ILC - the entire C#
+          # codebase compiled - and then died at the link step:
+          #
+          #   ld.lld: error: cannot open crtbegin_so.o: No such file
+          #   ld.lld: error: unable to find library -llog / -ldl / -lz / -lc
+          #
+          # Those are Android's own libc and startup objects. The system clang
+          # has no idea where they are; the NDK's clang does, because it ships
+          # the sysroot and defaults to it. So the fix is simply to make the
+          # NDK's toolchain the one on PATH - which is exactly what Kenji's
+          # Gradle build does through org.kenjinx.llvm.toolchain.path.
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_ROOT}"
+          echo "NDK: $NDK"
+          TOOL="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          if [ ! -x "$TOOL/clang" ]; then
+            echo "::error::no NDK clang at $TOOL"
+            ls "$NDK/toolchains/llvm/prebuilt" 2>/dev/null || true
+            exit 1
+          fi
+          echo "$TOOL" >> "$GITHUB_PATH"
+          "$TOOL/clang" --version | head -2
+          ls "$TOOL" | grep -E "^clang$|^ld.lld$|aarch64-linux-android21-clang$" || true
 
       - name: Build libkenjinx.so
         id: build
@@ -88,6 +102,11 @@ jobs:
           set -o pipefail
           # The exact arguments Gradle uses, minus the artifacts path so the
           # output lands somewhere predictable.
+          # Confirm the NDK clang really is the one that will be used - the
+          # previous run proved that a system clang gets all the way here and
+          # then fails, wasting the whole compile.
+          which clang; clang --version | head -1
+
           dotnet publish src/LibKenjinx/LibKenjinx.csproj \
             -r linux-bionic-arm64 \
             -c ${{ inputs.configuration }} \
