@@ -1,12 +1,6 @@
 {
-  "kind": "CLI-агент",
-  "os": "linux",
-  "url": "https://yes-create-quilt-butler.trycloudflare.com",
-  "agentUrl": "https://yes-create-quilt-butler.trycloudflare.com/hub?token=zen-65820f65a4f1583738bf2672",
-  "agentToken": "zen-65820f65a4f1583738bf2672",
-  "branch": "agent-work",
-  "startedAt": "2026-08-11T20:19:33Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-12T02:09:35Z",
   "runId": "31532307191",
   "runNumber": "16",
   "repo": "sj0404-collab/eden-symbiosis"
