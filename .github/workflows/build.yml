@@ -15,6 +15,11 @@ name: Build APK
 on:
   workflow_dispatch:
     inputs:
+      build_type:
+        description: "debug keeps every symbol; release runs R8 and compresses the dex"
+        type: choice
+        options: [debug, release]
+        default: debug
       upload_to_gofile:
         description: "Also upload the APK to gofile.io"
         type: boolean
@@ -160,27 +165,93 @@ jobs:
           # compiler warm, and the runner has the memory for it. Also ask
           # CMake for every core - the native compile is the long pole and
           # was previously limited to one worker.
-          ./gradlew assembleLegacyDebug \
-            --parallel --build-cache --max-workers="$(nproc)"
+          # Release is what the 25 MB budget refers to. Measured on the debug
+          # APK: classes.dex and classes15.dex are 22 MB and are STORED
+          # UNCOMPRESSED - the same bytes deflate to 9.2 MB, and R8 removes a
+          # good deal more before that. Debug stays the default because it
+          # keeps the symbols that make a crash report readable.
+          TYPE="${{ inputs.build_type }}"
+          TYPE="${TYPE:-debug}"
+          if [ "$TYPE" = "release" ]; then
+            ./gradlew assembleLegacyRelease \
+              --parallel --build-cache --max-workers="$(nproc)"
+          else
+            ./gradlew assembleLegacyDebug \
+              --parallel --build-cache --max-workers="$(nproc)"
+          fi
 
       - name: Verify the fixes actually shipped
         # objdump and dex strings, not a green tick: a build can succeed with
         # a Kotlin file that was never copied into place.
         run: |
-          APK=$(find eden -name "*legacy-debug.apk" | head -1)
+          APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
           echo "APK: $APK ($(du -h "$APK" | cut -f1))"
           echo "MD5: $(md5sum "$APK" | cut -d' ' -f1)"
           mkdir -p /tmp/x && cd /tmp/x && unzip -qo "$GITHUB_WORKSPACE/$APK" 'classes*.dex' 'lib/*/*.so' 2>/dev/null || \
             unzip -qo "$APK" 'classes*.dex' 'lib/*/*.so'
           fail=0
-          for sym in restoreGameDirs rememberGameDirs hasActionableButton; do
-            if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
-            else echo "  MISSING $sym"; fail=1; fi
-          done
+
+          # R8 renames Kotlin methods in a release build, so looking for
+          # restoreGameDirs there proves nothing and would fail a perfectly
+          # good APK. Native symbols survive either way - they are the JNI
+          # contract and cannot be renamed - so those are checked always, and
+          # the Kotlin names only when they are meant to be present.
+          case "$APK" in
+            *release*) MINIFIED=1 ;;
+            *)         MINIFIED=0 ;;
+          esac
+
+          if [ "$MINIFIED" = 0 ]; then
+            for sym in restoreGameDirs rememberGameDirs hasActionableButton; do
+              if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
+              else echo "  MISSING $sym"; fail=1; fi
+            done
+          else
+            echo "  (release build: Kotlin names are minified, skipping that check)"
+          fi
+
           NM=$(find "$ANDROID_HOME/ndk" -name llvm-nm | head -1)
           n=$("$NM" -D lib/arm64-v8a/libyuzu-android.so | grep -c NativeSymbiosis || true)
           echo "  JNI symbols exported: $n"
           [ "$n" -ge 50 ] || { echo "  too few JNI symbols"; fail=1; }
+
+          # The Kenji bridge, in both names. The core dlopen()s libkenjinxjni
+          # and calls debug_break from inside deviceInitialize, so a missing
+          # copy is a crash on the first device call rather than a warning.
+          for lib in libsymbiosis_kenji.so libkenjinxjni.so; do
+            if [ -f "lib/arm64-v8a/$lib" ]; then echo "  ok   $lib present"
+            else echo "  MISSING $lib"; fail=1; fi
+          done
+          for sym in debug_break setRenderingThread setCurrentTransform; do
+            if "$NM" -D lib/arm64-v8a/libkenjinxjni.so | grep -q " $sym$"; then
+              echo "  ok   $sym exported for the core"
+            else echo "  MISSING $sym in libkenjinxjni.so"; fail=1; fi
+          done
+
+          # What the 25 MB budget is actually about.
+          python3 - "$GITHUB_WORKSPACE/$APK" <<'SIZEPY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import sys, zipfile, os
+          apk = sys.argv[1]
+          z = zipfile.ZipFile(apk)
+          total = os.path.getsize(apk)
+          dex = sum(i.compress_size for i in z.infolist() if i.filename.endswith('.dex'))
+          dex_raw = sum(i.file_size for i in z.infolist() if i.filename.endswith('.dex'))
+          so = sum(i.compress_size for i in z.infolist() if i.filename.endswith('.so'))
+          stored = sum(i.file_size for i in z.infolist() if i.compress_type == 0)
+          mb = lambda b: b / 1048576
+          print("## APK size")
+          print()
+          print("| | |")
+          print("|---|---|")
+          print(f"| APK | **{mb(total):.1f} MB** |")
+          print(f"| dex | {mb(dex):.1f} MB packed (from {mb(dex_raw):.1f} MB) |")
+          print(f"| native libraries | {mb(so):.1f} MB packed |")
+          print(f"| stored uncompressed | {mb(stored):.1f} MB |")
+          print()
+          print(("Under the 25 MB target." if mb(total) <= 25
+                 else f"Over the 25 MB target by {mb(total) - 25:.1f} MB."))
+          SIZEPY
+
           exit $fail
 
       - name: Upload the APK as an artefact
@@ -197,7 +268,7 @@ jobs:
         # signed-in browser and expires. Only an explicit false opts out.
         if: github.event_name != 'workflow_dispatch' || inputs.upload_to_gofile
         run: |
-          APK=$(find eden -name "*legacy-debug.apk" | head -1)
+          APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
           SRV=$(curl -s https://api.gofile.io/servers | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['servers'][0]['name'])")
           curl -s -F "file=@$APK" "https://$SRV.gofile.io/contents/uploadfile" -o /tmp/up.json
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
