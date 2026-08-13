@@ -283,15 +283,52 @@ jobs:
           unzip -qo "$GITHUB_WORKSPACE/$APK" 'classes*.dex'
 
           fail=0
-          case "$APK" in
-            *release*) echo "  (release: Kotlin names are minified, skipping the name check)" ;;
-            *)
-              # groupByFolder is ours and cannot come from anywhere else.
-              for sym in groupByFolder folderName; do
-                if strings classes*.dex | grep -q "$sym"; then echo "  ok   $sym in dex"
-                else echo "  MISSING $sym"; fail=1; fi
-              done ;;
-          esac
+
+          # ── Why this is checked with Python and not `strings` ───────
+          #
+          # `strings` does not see UTF-8 Cyrillic in this locale and once
+          # reported our Russian labels as missing from a perfectly good APK.
+          # The dex is searched byte-for-byte instead.
+          #
+          # Release and debug are checked differently on purpose. R8 renames
+          # and inlines: `folderName` is a real method in debug and is gone
+          # from release, inlined into its one caller - which looks identical
+          # to the code having been dropped. String literals survive both, so
+          # release is verified by the strings the feature cannot work
+          # without.
+          python3 - "$APK" <<'DEXPY' || fail=1
+          import sys, zipfile, io, re
+          apk = sys.argv[1]
+          z = zipfile.ZipFile(apk)
+          blob = b"".join(z.read(n) for n in z.namelist() if n.endswith(".dex"))
+          release = "release" in apk
+
+          if release:
+              # Literals, not names: R8 rewrites names but never these.
+              wanted = [
+                  ("subtitle separator", " \u00b7 ".encode()),
+                  ("core folder name", b"EdenCore"),
+                  ("core file name", b"libyuzu-android.so"),
+                  ("floating button position key", b"symbiosis_float_x"),
+              ]
+          else:
+              wanted = [
+                  ("groupByFolder", b"groupByFolder"),
+                  ("folderName", b"folderName"),
+                  ("subtitle separator", " \u00b7 ".encode()),
+                  ("CoreFromFolder", b"CoreFromFolder"),
+                  ("FloatingGameButton", b"FloatingGameButton"),
+              ]
+
+          bad = 0
+          for label, needle in wanted:
+              if needle in blob:
+                  print(f"  ok   {label}")
+              else:
+                  print(f"  MISSING {label}")
+                  bad = 1
+          sys.exit(bad)
+          DEXPY
 
           python3 - "$GITHUB_WORKSPACE/$APK" <<'SIZEPY' | tee -a "$GITHUB_STEP_SUMMARY"
           import sys, zipfile, os
