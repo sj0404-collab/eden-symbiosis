@@ -46,6 +46,11 @@ on:
         type: choice
         options: [all, folders, button, shared]
         default: all
+      flavour:
+        description: "mainline (upstream default) or legacy (what the working control was built with)"
+        type: choice
+        options: [mainline, legacy]
+        default: mainline
   push:
     branches: [main]
     paths:
@@ -309,11 +314,27 @@ jobs:
           # the result did not start.
           #
           # mainline is also what upstream marks isDefault = true.
+          # ── The flavour is a variable, because I confounded it once ──
+          #
+          # A-CONTROL (works) was built LEGACY. B-folders (crashes) was built
+          # MAINLINE, because I had switched the flavour in between. So the
+          # two differ in TWO ways, not one, and "the patch is guilty" does
+          # not follow from that comparison at all.
+          #
+          # Making it an input means the next comparison changes exactly one
+          # thing.
+          FLAV="${{ inputs.flavour || 'mainline' }}"
+          case "$FLAV" in
+            legacy) TASK_BASE="Legacy" ;;
+            *)      TASK_BASE="Mainline" ;;
+          esac
+          echo "flavour: $FLAV"
+
           if [ "$TYPE" = "release" ]; then
-            ./gradlew assembleMainlineRelease -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
+            ./gradlew "assemble${TASK_BASE}Release" -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
               --parallel --build-cache --max-workers="$(nproc)"
           else
-            ./gradlew assembleMainlineDebug -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
+            ./gradlew "assemble${TASK_BASE}Debug" -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
               --parallel --build-cache --max-workers="$(nproc)"
           fi
 
@@ -330,7 +351,7 @@ jobs:
         env:
           PATCH_SUBSET: ${{ inputs.patch_subset || 'all' }}
         run: |
-          APK=$(find eden -name "*mainline-release.apk" -o -name "*mainline-debug.apk" | head -1)
+          APK=$(find eden -name "*-release.apk" -o -name "*-debug.apk" | head -1)
           echo "APK: $APK ($(du -h "$APK" | cut -f1))"
           echo "MD5: $(md5sum "$APK" | cut -d' ' -f1)"
 
@@ -426,7 +447,7 @@ jobs:
       - name: Upload to gofile.io
         if: github.event_name != 'workflow_dispatch' || inputs.upload_to_gofile
         run: |
-          APK=$(find eden -name "*mainline-release.apk" -o -name "*mainline-debug.apk" | head -1)
+          APK=$(find eden -name "*-release.apk" -o -name "*-debug.apk" | head -1)
           SRV=$(curl -s https://api.gofile.io/servers |
             python3 -c "import sys,json;print(json.load(sys.stdin)['data']['servers'][0]['name'])")
           curl -s -F "file=@$APK" "https://$SRV.gofile.io/contents/uploadfile" -o /tmp/up.json
