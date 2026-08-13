@@ -53,6 +53,7 @@ copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"      "$J/ui/GamesFragment.kt"
 copy_one "$PATCH_DIR/android/fragments/EmulationFragment.kt" "$J/fragments/EmulationFragment.kt"
 copy_one "$PATCH_DIR/android/fragments/GameFoldersFragment.kt" "$J/fragments/GameFoldersFragment.kt"
 copy_one "$PATCH_DIR/android/adapters/GameAdapter.kt" "$J/adapters/GameAdapter.kt"
+copy_one "$PATCH_DIR/android/activities/EmulationActivity.kt" "$J/activities/EmulationActivity.kt"
 
 # Layout and strings. The shared-folder button lives beside "add game folder",
 # and its labels have to exist in both languages or the build fails on a
@@ -103,6 +104,9 @@ check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder
 check "$RES/values/strings.xml" "shared_folder_choose" "English labels"
 check "$RES/values-ru/strings.xml" "shared_folder_choose" "Russian labels"
 check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
+check "$J/activities/EmulationActivity.kt" "PREF_KEEP_IN_MEMORY" "keep-in-memory switch"
+check "$J/activities/EmulationActivity.kt" "editingOverlayOnly" "no memory hold in overlay-edit mode"
+check "$J/views/FloatingGameButton.kt" "keepInMemory" "switch reachable from the button menu"
 
 # The button must never pause the game. Anything matching here is a real call,
 # not a comment - the comments are stripped first.

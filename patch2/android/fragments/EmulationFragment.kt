@@ -68,7 +68,9 @@ import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.HomeNavigationDirections
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
+import androidx.preference.PreferenceManager
 import org.yuzu.yuzu_emu.activities.EmulationActivity
+import org.yuzu.yuzu_emu.YuzuApplication
 import org.yuzu.yuzu_emu.databinding.DialogOverlayAdjustBinding
 import org.yuzu.yuzu_emu.databinding.FragmentEmulationBinding
 import org.yuzu.yuzu_emu.dialogs.QuickSettings
@@ -634,7 +636,34 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                         toggleOverlay(!BooleanSetting.SHOW_INPUT_OVERLAY.getBoolean())
                     }
                 },
-                controlsShown = { BooleanSetting.SHOW_INPUT_OVERLAY.getBoolean() }
+                controlsShown = { BooleanSetting.SHOW_INPUT_OVERLAY.getBoolean() },
+
+                // Plain SharedPreferences, not a Setting: this is a property
+                // of the Android app, not of the emulated machine, so it has
+                // no business in config.ini. Read by EmulationActivity when a
+                // game starts, which is why the change lands next launch.
+                keepInMemory = {
+                    PreferenceManager.getDefaultSharedPreferences(YuzuApplication.appContext)
+                        .getBoolean(EmulationActivity.PREF_KEEP_IN_MEMORY, true)
+                },
+                setKeepInMemory = { keep ->
+                    PreferenceManager.getDefaultSharedPreferences(YuzuApplication.appContext)
+                        .edit()
+                        .putBoolean(EmulationActivity.PREF_KEEP_IN_MEMORY, keep)
+                        .apply()
+                    if (_binding != null) {
+                        Toast.makeText(
+                            requireContext(),
+                            if (keep) {
+                                "Эмулятор будет удерживаться в памяти"
+                            } else {
+                                "Другие приложения не будут выгружаться. " +
+                                    "Вступит в силу при следующем запуске игры"
+                            },
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
             )
         )
         floatingButton = button

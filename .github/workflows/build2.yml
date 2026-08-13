@@ -285,11 +285,27 @@ jobs:
           # step, which is the trap that makes people think ccache "did
           # nothing".
           CCACHE_FLAGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+          # ── mainline, not legacy ────────────────────────────────────
+          #
+          # Six builds crashed on the device. All six were assembleLegacy.
+          # The official "standard" APK - which is the mainline flavour -
+          # runs on the same phone, and that is what finally identified the
+          # cause: the flavour, not the patch.
+          #
+          # "legacy" is described upstream as "patches that improve
+          # compatibility with older GPUs (e.g. Snapdragon 865) at the cost
+          # of performance". It sets -DYUZU_LEGACY=ON, which defines
+          # YUZU_LEGACY - a macro that appears NOWHERE else in the source,
+          # checked across every .cpp and .h. So the flavour changed the
+          # build without any visible switch in the code, and on a Mali-G57
+          # the result did not start.
+          #
+          # mainline is also what upstream marks isDefault = true.
           if [ "$TYPE" = "release" ]; then
-            ./gradlew assembleLegacyRelease -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
+            ./gradlew assembleMainlineRelease -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
               --parallel --build-cache --max-workers="$(nproc)"
           else
-            ./gradlew assembleLegacyDebug -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
+            ./gradlew assembleMainlineDebug -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
               --parallel --build-cache --max-workers="$(nproc)"
           fi
 
@@ -304,7 +320,7 @@ jobs:
       - name: Verify the changes shipped
         if: inputs.apply_patch != false
         run: |
-          APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
+          APK=$(find eden -name "*mainline-release.apk" -o -name "*mainline-debug.apk" | head -1)
           echo "APK: $APK ($(du -h "$APK" | cut -f1))"
           echo "MD5: $(md5sum "$APK" | cut -d' ' -f1)"
 
@@ -387,7 +403,7 @@ jobs:
       - name: Upload to gofile.io
         if: github.event_name != 'workflow_dispatch' || inputs.upload_to_gofile
         run: |
-          APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
+          APK=$(find eden -name "*mainline-release.apk" -o -name "*mainline-debug.apk" | head -1)
           SRV=$(curl -s https://api.gofile.io/servers |
             python3 -c "import sys,json;print(json.load(sys.stdin)['data']['servers'][0]['name'])")
           curl -s -F "file=@$APK" "https://$SRV.gofile.io/contents/uploadfile" -o /tmp/up.json

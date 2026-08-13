@@ -47,6 +47,8 @@ class FloatingGameButton(context: Context) : FrameLayout(context) {
         val openMenu: () -> Unit,
         val toggleControls: () -> Unit,
         val controlsShown: () -> Boolean,
+        val keepInMemory: () -> Boolean,
+        val setKeepInMemory: (Boolean) -> Unit,
     )
 
     private var actions: Actions? = null
@@ -161,6 +163,17 @@ class FloatingGameButton(context: Context) : FrameLayout(context) {
 
         row(if (a.controlsShown()) "Скрыть кнопки" else "Показать кнопки") { a.toggleControls() }
         row("Меню игры") { a.openMenu() }
+
+        // Whether the emulator holds itself in memory. On, Android evicts
+        // other apps to make room and the browser reloads afterwards; off,
+        // they survive, but a long spell in the background can cost the
+        // session. Shown here because it is a decision about the phone, not
+        // about the emulated machine, and it takes effect next launch.
+        val keeping = a.keepInMemory()
+        row(if (keeping) "Не держать в памяти" else "Держать в памяти") {
+            a.setKeepInMemory(!keeping)
+        }
+
         row("Убрать эту кнопку") { detach() }
 
         host.addView(list)
