@@ -108,10 +108,30 @@ jobs:
       # the object file is copied out of the cache instead of compiled. The
       # first run after this fills the cache and is no faster; every run after
       # that skips the part that dominates the clock.
+      # ── Two bugs in the first attempt at this, both proved by run #9 ──
+      #
+      # BUG 1: THE CACHE WAS SAVED SOMEWHERE ELSE THAN IT WAS READ
+      #   The path here said ~/.ccache. ccache itself reported
+      #       (default) cache_dir = /home/runner/.cache/ccache
+      #   so 1678 freshly compiled objects were written to a directory the
+      #   cache action never packed. Nothing was wrong with ccache and nothing
+      #   was wrong with the key - the two halves simply pointed at different
+      #   folders. CCACHE_DIR is now set explicitly and the path below is the
+      #   same variable, so they cannot drift apart again.
+      #
+      # BUG 2: HASHED PATHS DEFEAT THE CACHE ACROSS RUNS
+      #   NDK builds bake absolute paths into the object; ccache's default
+      #   direct mode hashes the compiler binary's mtime too. On a fresh
+      #   runner that is a different value every time, which is why run #9
+      #   showed 0.89% hits even for the objects it had just built - the 15
+      #   hits it did get were all "preprocessed", never "direct".
+      #   base_dir + hash_dir=false + compiler_check=content fix exactly that.
       - name: Cache the C++ objects
         uses: actions/cache@v4
         with:
-          path: ~/.ccache
+          # Must match CCACHE_DIR below. It did not, and that alone cost the
+          # entire 20 minutes this step exists to save.
+          path: ~/.cache/ccache
           # Keyed on the upstream tag, not on our patch: our patch never
           # changes a .cpp, so a new key would throw away a cache that is
           # still perfectly valid.
@@ -123,30 +143,102 @@ jobs:
       - name: Set up ccache
         run: |
           sudo apt-get install -y -qq ccache > /dev/null
+
+          # Pinned, not defaulted - see BUG 1 above.
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+          export CCACHE_DIR="$HOME/.cache/ccache"
+          mkdir -p "$CCACHE_DIR"
+
           # 3 GB: the full object set for one build type is well under that,
           # and the runner cache limit is 10 GB per repository.
-          ccache --max-size=3G
+          ccache --set-config=max_size=3G
+          # Absolute build paths differ between runs; rewrite them relative to
+          # the workspace so the same source hashes the same way.
+          ccache --set-config=base_dir="$GITHUB_WORKSPACE"
+          ccache --set-config=hash_dir=false
+          # The NDK clang binary's mtime changes per runner image; hash what
+          # the compiler *is*, not when it was written.
+          ccache --set-config=compiler_check=content
+          # Harmless for correctness, and stops a changed -I ordering from
+          # missing on otherwise identical translation units.
+          ccache --set-config=namespace=eden-v0.2.1
           ccache --zero-stats
+
           echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
           echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
-          ccache --show-config | grep -E "max_size|cache_dir" || true
+          ccache --show-config | grep -E "max_size|cache_dir|base_dir|hash_dir|compiler_check"
 
       - name: Apply patch2
         run: bash fork/tools/apply_patch2.sh --patch fork/patch2 --eden "$GITHUB_WORKSPACE/eden"
 
+      # Cached: an 85 MB download that is identical every run, and when it
+      # half-arrived once the whole build died at unzip with "End-of-central-
+      # directory signature not found" - after the runner had already spent
+      # four minutes installing the NDK.
+      - name: Cache the Kotlin compiler
+        uses: actions/cache@v4
+        with:
+          path: /tmp/kotlinc
+          key: kotlinc-2.0.21
+
       - name: Check the folder logic before building
         run: |
-          # Twenty seconds here against twenty-five minutes of compiling. Both
-          # tests run against plain Kotlin - no Android, no device.
-          curl -sL -o /tmp/kc.zip \
-            https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip
-          unzip -qo /tmp/kc.zip -d /tmp
+          # Twenty seconds here against twenty-five minutes of compiling. All
+          # three tests run against plain Kotlin - no Android, no device.
+          set -euo pipefail
+
+          # The published checksum. A truncated download is otherwise only
+          # discovered by unzip failing, which is what happened in run #10.
+          KC_SHA=0352c0a45bd22f80f6b26e485cd04da8047baa5de54865281fb9f89a4a7bcf2a
+
+          if [ ! -x /tmp/kotlinc/bin/kotlinc ]; then
+            ok=0
+            for attempt in 1 2 3; do
+              curl -fsSL --retry 3 --retry-all-errors -o /tmp/kc.zip \
+                https://github.com/JetBrains/kotlin/releases/download/v2.0.21/kotlin-compiler-2.0.21.zip || true
+              if [ "$(sha256sum /tmp/kc.zip 2>/dev/null | cut -d' ' -f1)" = "$KC_SHA" ]; then
+                ok=1; break
+              fi
+              echo "attempt $attempt: bad or missing download, retrying"
+              rm -f /tmp/kc.zip
+            done
+            [ "$ok" = 1 ] || { echo "::error::could not download the Kotlin compiler"; exit 1; }
+            rm -rf /tmp/kotlinc
+            unzip -qo /tmp/kc.zip -d /tmp
+          else
+            echo "kotlinc restored from cache"
+          fi
+
+          fail=0
+
           for t in FolderScanTest GroupByFolderTest; do
             echo "── $t ──"
             /tmp/kotlinc/bin/kotlinc "fork/patch2/tests/$t.kt" -include-runtime -d "/tmp/$t.jar" 2>&1 |
               grep -vE "^warning: (classpath|language version)" || true
-            java -Dfile.encoding=UTF-8 -jar "/tmp/$t.jar"
+            java -Dfile.encoding=UTF-8 -jar "/tmp/$t.jar" || fail=1
           done
+
+          # ── The core loader, tested for the first time ──────────────
+          #
+          # CoreFromFolderTest existed but nothing ever ran it, so the file
+          # that decides whether the emulator has a core at all was the one
+          # piece with no check on it. Every failure it guards is silent: a
+          # truncated core that dlopen maps and then dies inside, a copy left
+          # writable that Android 14+ refuses, a stale copy never refreshed.
+          #
+          # It needs four members of the Android API, stubbed in
+          # patch2/tests/stubs_android*.kt, so the real logic runs on the JVM.
+          echo "── CoreFromFolderTest ──"
+          rm -rf /tmp/cft /tmp/cfbuild && mkdir -p /tmp/cfbuild
+          cp fork/patch2/android/utils/CoreFromFolder.kt \
+             fork/patch2/tests/CoreFromFolderTest.kt \
+             fork/patch2/tests/stubs_android.kt \
+             fork/patch2/tests/stubs_android_os.kt /tmp/cfbuild/
+          /tmp/kotlinc/bin/kotlinc /tmp/cfbuild/*.kt -include-runtime -d /tmp/cf.jar 2>&1 |
+            grep -vE "^warning: (classpath|language version)" || true
+          java -Dfile.encoding=UTF-8 -jar /tmp/cf.jar 2>/dev/null || fail=1
+
+          exit $fail
 
       - name: Build
         run: |
@@ -302,6 +394,108 @@ jobs:
         with:
           name: EdenCore-folder
           path: /tmp/EdenCore.zip
+          retention-days: 30
+
+      # ── The thin APK: the whole point of the split ──────────────────
+      #
+      # Until now nothing actually got smaller. The core folder was published,
+      # but the same 23 MB of core was still packed inside the APK, so the
+      # download was 45 MB and the folder was 20 MB more on top - strictly
+      # worse than before. Measured from the built APK:
+      #
+      #     23.01 MB  lib/arm64-v8a/libyuzu-android.so     <- the core
+      #      7.66 MB  libVkLayer_khronos_validation.so     <- debug aid
+      #      9.00 MB  classes*.dex                          (debug build)
+      #
+      # Removing those two entries is what leaves a small APK. CoreFromFolder
+      # already prefers the built-in core when there is one and falls back to
+      # the folder when there is not, so the thin APK needs no code change -
+      # it is the same build with two files removed.
+      #
+      # WHY RE-SIGN AND NOT JUST DELETE
+      #   An APK's signature covers the file list. Deleting an entry from a
+      #   signed APK leaves a package Android refuses to install with
+      #   INSTALL_PARSE_FAILED_NO_CERTIFICATES. So: unpack, drop, zipalign,
+      #   sign again with the very debug keystore upstream ships and uses for
+      #   its own default signing config.
+      - name: Build the thin APK, with the core left out
+        run: |
+          set -euo pipefail
+          APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+
+          rm -rf /tmp/thin && mkdir -p /tmp/thin/x
+          cd /tmp/thin/x
+          unzip -qo "$GITHUB_WORKSPACE/$APK"
+
+          before=$(stat -c%s "$GITHUB_WORKSPACE/$APK")
+
+          # The core: it lives in the EdenCore folder now.
+          rm -f lib/arm64-v8a/libyuzu-android.so
+          # The Vulkan validation layer: 24 MB of debugging aid that also
+          # costs frame rate. It is not in the core folder either.
+          rm -f lib/arm64-v8a/libVkLayer_*.so
+
+          # Old signature covers a file list that no longer matches.
+          rm -rf META-INF/*.SF META-INF/*.RSA META-INF/*.DSA
+
+          # Stored, not deflated, for the .so files: upstream sets
+          # jniLibs.useLegacyPackaging = true, and a compressed .so in a
+          # legacy-packaged APK is extracted at install time instead of being
+          # mapped, which is slower and doubles the space used.
+          zip -qr /tmp/thin/unsigned.apk . -x '*.so'
+          zip -qr -Z store /tmp/thin/unsigned.apk . -i '*.so'
+
+          "$BT/zipalign" -p -f 4 /tmp/thin/unsigned.apk /tmp/thin/aligned.apk
+
+          "$BT/apksigner" sign \
+            --ks eden/src/android/app/debug.keystore \
+            --ks-pass pass:android --key-pass pass:android \
+            --ks-key-alias androiddebugkey \
+            --out /tmp/thin/Eden-thin.apk /tmp/thin/aligned.apk 2>/dev/null ||
+          "$BT/apksigner" sign \
+            --ks "$GITHUB_WORKSPACE/eden/src/android/app/debug.keystore" \
+            --ks-pass pass:android --key-pass pass:android \
+            --ks-key-alias androiddebugkey \
+            --out /tmp/thin/Eden-thin.apk /tmp/thin/aligned.apk
+
+          # A signature that does not verify is an APK that will not install,
+          # and that is only discovered on the device otherwise.
+          "$BT/apksigner" verify --verbose /tmp/thin/Eden-thin.apk | head -5
+
+          after=$(stat -c%s /tmp/thin/Eden-thin.apk)
+          echo "MD5: $(md5sum /tmp/thin/Eden-thin.apk | cut -d' ' -f1)"
+
+          # The core must be gone, and the loader must still be there. Both
+          # checked, because "smaller" and "correct" are different claims.
+          if unzip -l /tmp/thin/Eden-thin.apk | grep -q libyuzu-android.so; then
+            echo "::error::the core is still inside the thin APK"; exit 1
+          fi
+          for keep in libhook_impl.so libmain_hook.so; do
+            unzip -l /tmp/thin/Eden-thin.apk | grep -q "$keep" ||
+              { echo "::error::$keep went missing"; exit 1; }
+          done
+
+          python3 - "$before" "$after" <<'THINPY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import sys
+          before, after = int(sys.argv[1]), int(sys.argv[2])
+          mb = lambda b: b / 1048576
+          print()
+          print("## Thin APK")
+          print()
+          print("| | |")
+          print("|---|---|")
+          print(f"| full APK | {mb(before):.1f} MB |")
+          print(f"| thin APK | **{mb(after):.1f} MB** |")
+          print(f"| saved | {mb(before - after):.1f} MB |")
+          print()
+          print("Needs the `EdenCore` folder on the device. The full APK does not.")
+          THINPY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eden-thin-apk
+          path: /tmp/thin/Eden-thin.apk
           retention-days: 30
 
       - name: Upload to gofile.io

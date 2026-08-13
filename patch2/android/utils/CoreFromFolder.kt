@@ -170,6 +170,11 @@ object CoreFromFolder {
             }
 
             for (name in COMPANIONS) {
+                // Already unpacked next to the app by the installer? Leave it
+                // alone. The helpers are kept inside even the thin APK because
+                // they total under 400 KB, and loading a second copy of the
+                // same SONAME from another path is a conflict with no upside.
+                if (File(context.applicationInfo.nativeLibraryDir, name).exists()) continue
                 val c = File(found.folder, name)
                 if (!c.isFile) continue
                 val ct = File(stageDir(context), name)
