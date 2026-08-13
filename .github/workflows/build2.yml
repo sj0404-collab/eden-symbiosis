@@ -371,11 +371,13 @@ jobs:
           wanted = []
           if release:
               # Literals, not names: R8 rewrites names but never these.
+              wanted.append(("crash logger", "Symbiosis crash report".encode()))
               if folders:
                   wanted.append(("subtitle separator", " \u00b7 ".encode()))
               if button:
                   wanted.append(("floating button position key", b"symbiosis_float_x"))
           else:
+              wanted.append(("crash logger", b"installCrashLogger"))
               if folders:
                   wanted += [
                       ("groupByFolder", b"groupByFolder"),

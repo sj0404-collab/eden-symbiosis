@@ -66,6 +66,12 @@ want() {
 }
 echo "subset: $SUBSET"
 
+# The crash logger goes in for EVERY subset, including none of them: it is
+# the only way the user can tell me why a build died. It writes to
+# Android/data/<pkg>/files/symbiosis-crash.txt, which needs no permission
+# and is reachable from any file manager.
+copy_one "$PATCH_DIR/android/root/YuzuApplication.kt" "$J/YuzuApplication.kt"
+
 if want folders; then
   copy_one "$PATCH_DIR/android/model/Game.kt"            "$J/model/Game.kt"
   copy_one "$PATCH_DIR/android/utils/GameHelper.kt"      "$J/utils/GameHelper.kt"
@@ -131,6 +137,7 @@ want folders && check "$J/adapters/GameAdapter.kt" "model.folderName" "folder sh
 want button && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
 want shared && check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
 want shared && check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
+check "$J/YuzuApplication.kt" "installCrashLogger" "crash logger"
 check "$RES/values/strings.xml" "shared_folder_choose" "English labels"
 check "$RES/values-ru/strings.xml" "shared_folder_choose" "Russian labels"
 want button && check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
