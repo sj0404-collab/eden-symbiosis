@@ -65,11 +65,29 @@ jobs:
             sleep $((attempt * 10))
           done
           if [ "$ok" != 1 ]; then
-            echo "::warning::upstream unreachable; using our mirror"
-            git clone https://github.com/sj0404-collab/eden-upstream-reference.git eden \
+            # The mirror, AT THE TAG. This fallback used to clone the mirror's
+            # default branch, which is a different commit entirely - so when
+            # upstream answered 502 the build silently switched to other code
+            # and died in CMake with an error that looked like ours. Twice.
+            echo "::warning::upstream unreachable; using our mirror at v0.2.1"
+            git clone --branch v0.2.1 \
+              https://github.com/sj0404-collab/eden-upstream-reference.git eden \
               || { echo "::error::neither upstream nor the mirror could be cloned"; exit 1; }
           fi
-          cd eden && echo "upstream: $(git rev-parse --short HEAD)"
+
+          cd eden
+          rev=$(git rev-parse HEAD)
+          echo "upstream: $(git rev-parse --short HEAD)"
+
+          # Whichever source answered, it must be the tag we build against.
+          # Anything else is a different emulator wearing the same directory
+          # name, and the failure surfaces 20 minutes later as a C++ error.
+          expected=58c1e20ee58efa3900ba616207d460886214480b
+          if [ "$rev" != "$expected" ]; then
+            echo "::error::wrong upstream commit: $rev (expected v0.2.1 = $expected)"
+            exit 1
+          fi
+          echo "  ok   upstream is v0.2.1"
 
       - uses: actions/setup-java@v4
         with:
