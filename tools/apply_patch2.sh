@@ -53,6 +53,7 @@ copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"      "$J/ui/GamesFragment.kt"
 copy_one "$PATCH_DIR/android/fragments/EmulationFragment.kt" "$J/fragments/EmulationFragment.kt"
 copy_one "$PATCH_DIR/android/fragments/GameFoldersFragment.kt" "$J/fragments/GameFoldersFragment.kt"
 copy_one "$PATCH_DIR/android/root/NativeLibrary.kt" "$J/NativeLibrary.kt"
+copy_one "$PATCH_DIR/android/adapters/GameAdapter.kt" "$J/adapters/GameAdapter.kt"
 
 # Layout and strings. The shared-folder button lives beside "add game folder",
 # and its labels have to exist in both languages or the build fails on a
@@ -104,6 +105,7 @@ check "$J/model/Game.kt"       "folderName"          "Game.folderName"
 check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the scan"
 check "$J/utils/GameHelper.kt" "deepScan) 24"        "scan depth raised to 24"
 check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
+check "$J/adapters/GameAdapter.kt" "model.folderName" "folder shown on the card"
 check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
 check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
 check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"

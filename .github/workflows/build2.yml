@@ -211,7 +211,7 @@ jobs:
 
           fail=0
 
-          for t in FolderScanTest GroupByFolderTest; do
+          for t in FolderScanTest GroupByFolderTest CardSubtitleTest; do
             echo "── $t ──"
             /tmp/kotlinc/bin/kotlinc "fork/patch2/tests/$t.kt" -include-runtime -d "/tmp/$t.jar" 2>&1 |
               grep -vE "^warning: (classpath|language version)" || true
