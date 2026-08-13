@@ -279,8 +279,10 @@ jobs:
           echo "APK: $APK ($(du -h "$APK" | cut -f1))"
           echo "MD5: $(md5sum "$APK" | cut -d' ' -f1)"
 
-          mkdir -p /tmp/x && cd /tmp/x
-          unzip -qo "$GITHUB_WORKSPACE/$APK" 'classes*.dex'
+          # Absolute from here on. The old code cd'd to /tmp/x and then kept
+          # using the workspace-relative $APK, which broke the moment anything
+          # else in this step wanted to open the file.
+          APK="$GITHUB_WORKSPACE/$APK"
 
           fail=0
 
@@ -330,7 +332,7 @@ jobs:
           sys.exit(bad)
           DEXPY
 
-          python3 - "$GITHUB_WORKSPACE/$APK" <<'SIZEPY' | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 - "$APK" <<'SIZEPY' | tee -a "$GITHUB_STEP_SUMMARY"
           import sys, zipfile, os
           apk = sys.argv[1]
           z = zipfile.ZipFile(apk)
