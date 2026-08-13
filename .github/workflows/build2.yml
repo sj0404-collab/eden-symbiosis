@@ -259,6 +259,20 @@ jobs:
             grep -vE "^warning: (classpath|language version)" || true
           java -Dfile.encoding=UTF-8 -jar /tmp/bc.jar 2>/dev/null || fail=1
 
+          # ── Nothing on the startup path may call into the core ──────
+          #
+          # Eden's own Log is `external fun` - it lives inside the library
+          # that has not loaded yet. I put Log.error() into the handler that
+          # reports a failed load, which would have thrown from inside the
+          # error path and hidden the real reason behind a black screen.
+          #
+          # A unit test cannot catch this: on the JVM every native function
+          # is missing anyway, so the ordering is invisible. It is a
+          # structural property, so it is checked by reading the source.
+          echo "── проверка порядка запуска ──"
+          python3 fork/tools/check_startup_safety.py \
+            fork/patch2/android/root/NativeLibrary.kt || fail=1
+
           exit $fail
 
       - name: Build

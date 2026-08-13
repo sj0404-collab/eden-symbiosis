@@ -92,12 +92,18 @@ object NativeLibrary {
             }
 
             if (fallback != null) {
-                // Say it out loud before dying. An emulator with no core can
-                // do nothing, and the previous behaviour - an exception from a
-                // static initialiser - showed the user a black screen and told
-                // them nothing at all.
-                Log.error("[NativeLibrary] ядро не загружено: $problem")
-                Log.error("[NativeLibrary] запасной путь тоже не сработал: $fallback")
+                // Say it out loud before dying, with android.util.Log and NOT
+                // with Eden's own Log object.
+                //
+                // Eden's Log.error is `external fun` - it lives in the very
+                // library that just failed to load. Calling it here would
+                // throw UnsatisfiedLinkError from inside the error path and
+                // replace the real reason with a misleading one: a black
+                // screen again, and a log entry blaming the logger.
+                //
+                // android.util.Log is pure framework code and always works.
+                android.util.Log.e("Symbiosis", "ядро не загружено: $problem")
+                android.util.Log.e("Symbiosis", "запасной путь тоже не сработал: $fallback")
                 error("[NativeLibrary] $problem / $fallback")
             }
         }
