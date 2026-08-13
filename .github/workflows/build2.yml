@@ -238,6 +238,27 @@ jobs:
             grep -vE "^warning: (classpath|language version)" || true
           java -Dfile.encoding=UTF-8 -jar /tmp/cf.jar 2>/dev/null || fail=1
 
+          # ── The configuration every user actually installs ──────────
+          #
+          # CoreFromFolderTest always ran with nativeLibraryDir pointing at a
+          # path that does not exist, so builtIn() was false every time and
+          # the "core is inside the APK" branch was never executed once. That
+          # branch returned "no problem" WITHOUT LOADING ANYTHING, the caller
+          # believed it and skipped its own loadLibrary, and the full APK died
+          # in a static initialiser before drawing a frame.
+          #
+          # Two builds shipped that way. This test enters that branch on
+          # purpose; run against the old code it fails on three assertions.
+          echo "── BuiltinCoreTest ──"
+          rm -rf /tmp/cft /tmp/bcbuild && mkdir -p /tmp/bcbuild
+          cp fork/patch2/android/utils/CoreFromFolder.kt \
+             fork/patch2/tests/BuiltinCoreTest.kt \
+             fork/patch2/tests/stubs_android.kt \
+             fork/patch2/tests/stubs_android_os.kt /tmp/bcbuild/
+          /tmp/kotlinc/bin/kotlinc /tmp/bcbuild/*.kt -include-runtime -d /tmp/bc.jar 2>&1 |
+            grep -vE "^warning: (classpath|language version)" || true
+          java -Dfile.encoding=UTF-8 -jar /tmp/bc.jar 2>/dev/null || fail=1
+
           exit $fail
 
       - name: Build

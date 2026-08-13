@@ -144,7 +144,28 @@ object CoreFromFolder {
      * this runs on the launch path, and an exception here is a blank screen.
      */
     fun load(context: Context): String? {
-        if (builtIn(context)) return null
+        // The core shipped inside the APK: let the ordinary loader have it.
+        //
+        // THE BUG THIS LINE FIXES
+        //   This used to `return null` - "no problem" - without loading
+        //   anything at all. The caller reads null as success and therefore
+        //   skips System.loadLibrary too, so NOTHING ever loaded the core:
+        //   the first external fun threw UnsatisfiedLinkError out of a static
+        //   initialiser and the process died before drawing a frame. Black
+        //   screen, gone in a second, on the full APK where the core was
+        //   present the whole time.
+        //
+        //   Returning a message instead would be wrong as well: the caller
+        //   would report a failure that did not happen. The honest thing is
+        //   to load it here and report success.
+        if (builtIn(context)) {
+            return try {
+                System.loadLibrary("yuzu-android")
+                null
+            } catch (e: UnsatisfiedLinkError) {
+                "ядро внутри приложения не загрузилось: ${e.message}"
+            }
+        }
 
         val found = when (val s = locate(context)) {
             is State.Found -> s

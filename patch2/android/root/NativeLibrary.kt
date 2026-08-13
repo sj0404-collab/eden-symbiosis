@@ -70,18 +70,35 @@ object NativeLibrary {
      */
     init {
         val context = YuzuApplication.appContext
+
+        // Try the folder first, then the copy inside the APK. Both paths end
+        // in an actual load - the earlier version could return "fine" without
+        // loading anything, and then nothing else did either.
         val problem = try {
             CoreFromFolder.load(context)
         } catch (ex: Throwable) {
             "не удалось подключить ядро: " + (ex.message ?: ex.javaClass.simpleName)
         }
+
         if (problem != null) {
-            // Fall back to the normal path so a build that does bundle the
-            // core behaves exactly as upstream does.
-            try {
+            // Last resort: the plain upstream call. It may well succeed where
+            // the folder path failed - a thin APK with no folder is the only
+            // case where it cannot.
+            val fallback = try {
                 System.loadLibrary("yuzu-android")
+                null
             } catch (ex: UnsatisfiedLinkError) {
-                error("[NativeLibrary] $problem / $ex")
+                ex.message ?: ex.javaClass.simpleName
+            }
+
+            if (fallback != null) {
+                // Say it out loud before dying. An emulator with no core can
+                // do nothing, and the previous behaviour - an exception from a
+                // static initialiser - showed the user a black screen and told
+                // them nothing at all.
+                Log.error("[NativeLibrary] ядро не загружено: $problem")
+                Log.error("[NativeLibrary] запасной путь тоже не сработал: $fallback")
+                error("[NativeLibrary] $problem / $fallback")
             }
         }
     }
