@@ -37,6 +37,10 @@ on:
         description: "Also upload the APK to gofile.io"
         type: boolean
         default: true
+      apply_patch:
+        description: "off = plain upstream Eden, no patch at all (control build)"
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -194,8 +198,25 @@ jobs:
           echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
           ccache --show-config | grep -E "max_size|cache_dir|base_dir|hash_dir|compiler_check"
 
+      # ── The control build ───────────────────────────────────────────
+      #
+      # Five installs have crashed and every fix so far has found a real bug
+      # that turned out not to be THE bug. Guessing again costs another cycle
+      # of the user's time, so this switch removes the guesswork: with
+      # apply_patch off, the workflow builds untouched upstream v0.2.1 through
+      # the exact same toolchain, keystore and packaging as the patched one.
+      #
+      #   control crashes too  -> the crash is Eden on that device, not us
+      #   control runs, ours does not -> it is in the eleven files of patch2
+      #
+      # One question, one answer, no more speculation.
       - name: Apply patch2
+        if: inputs.apply_patch != false
         run: bash fork/tools/apply_patch2.sh --patch fork/patch2 --eden "$GITHUB_WORKSPACE/eden"
+
+      - name: Skip the patch - control build of plain upstream
+        if: inputs.apply_patch == false
+        run: echo "::warning::building UNPATCHED upstream v0.2.1 as a control"
 
       # Cached: an 85 MB download that is identical every run, and when it
       # half-arrived once the whole build died at unzip with "End-of-central-
@@ -208,6 +229,7 @@ jobs:
           key: kotlinc-2.0.21
 
       - name: Check the folder logic before building
+        if: inputs.apply_patch != false
         run: |
           # Twenty seconds here against twenty-five minutes of compiling. All
           # three tests run against plain Kotlin - no Android, no device.
@@ -280,6 +302,7 @@ jobs:
           ccache --show-stats | head -20
 
       - name: Verify the changes shipped
+        if: inputs.apply_patch != false
         run: |
           APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
           echo "APK: $APK ($(du -h "$APK" | cut -f1))"
