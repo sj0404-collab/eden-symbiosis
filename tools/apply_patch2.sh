@@ -16,10 +16,20 @@ set -euo pipefail
 
 PATCH_DIR=""
 EDEN_DIR=""
+# Which half of the patch to apply. The control build proved the crash is
+# ours, so the next question is WHICH part - and bisecting by hand costs a
+# build each time. These subsets split patch2 along its natural seams:
+#
+#   folders  the game-folder work: Game, GameHelper, GamesFragment, GameAdapter
+#   button   the floating button and the keep-in-memory switch
+#   shared   the shared-folder utility and its button
+#   all      everything (default)
+SUBSET="all"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --patch) PATCH_DIR="$2"; shift 2 ;;
-    --eden)  EDEN_DIR="$2";  shift 2 ;;
+    --patch)  PATCH_DIR="$2"; shift 2 ;;
+    --eden)   EDEN_DIR="$2";  shift 2 ;;
+    --subset) SUBSET="$2";    shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -47,32 +57,51 @@ copy_one() {
   echo "  copied $(basename "$dst")"
 }
 
-copy_one "$PATCH_DIR/android/model/Game.kt"            "$J/model/Game.kt"
-copy_one "$PATCH_DIR/android/utils/GameHelper.kt"      "$J/utils/GameHelper.kt"
-copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"      "$J/ui/GamesFragment.kt"
-copy_one "$PATCH_DIR/android/fragments/EmulationFragment.kt" "$J/fragments/EmulationFragment.kt"
-copy_one "$PATCH_DIR/android/fragments/GameFoldersFragment.kt" "$J/fragments/GameFoldersFragment.kt"
-copy_one "$PATCH_DIR/android/adapters/GameAdapter.kt" "$J/adapters/GameAdapter.kt"
-copy_one "$PATCH_DIR/android/activities/EmulationActivity.kt" "$J/activities/EmulationActivity.kt"
+want() {
+  case "$SUBSET" in
+    all) return 0 ;;
+    "$1") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+echo "subset: $SUBSET"
+
+if want folders; then
+  copy_one "$PATCH_DIR/android/model/Game.kt"            "$J/model/Game.kt"
+  copy_one "$PATCH_DIR/android/utils/GameHelper.kt"      "$J/utils/GameHelper.kt"
+  copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"      "$J/ui/GamesFragment.kt"
+  copy_one "$PATCH_DIR/android/adapters/GameAdapter.kt"  "$J/adapters/GameAdapter.kt"
+fi
+
+if want button; then
+  copy_one "$PATCH_DIR/android/fragments/EmulationFragment.kt" "$J/fragments/EmulationFragment.kt"
+  copy_one "$PATCH_DIR/android/activities/EmulationActivity.kt" "$J/activities/EmulationActivity.kt"
+fi
+
+if want shared; then
+  copy_one "$PATCH_DIR/android/fragments/GameFoldersFragment.kt" "$J/fragments/GameFoldersFragment.kt"
+fi
 
 # Layout and strings. The shared-folder button lives beside "add game folder",
 # and its labels have to exist in both languages or the build fails on a
 # missing resource - which is how R.string.select was caught before it cost a
 # twenty-minute compile.
 RES="$(cd "$J/../../../../res" && pwd)"
-copy_one "$PATCH_DIR/android/layout/fragment_folders.xml" "$RES/layout/fragment_folders.xml"
+if want shared; then
+  copy_one "$PATCH_DIR/android/layout/fragment_folders.xml" "$RES/layout/fragment_folders.xml"
+fi
 copy_one "$PATCH_DIR/android/values/values__strings.xml"    "$RES/values/strings.xml"
 copy_one "$PATCH_DIR/android/values/values-ru__strings.xml" "$RES/values-ru/strings.xml"
 
 # The floating button is a new file with no upstream counterpart.
-if [ -f "$PATCH_DIR/android/views/FloatingGameButton.kt" ]; then
+if want button && [ -f "$PATCH_DIR/android/views/FloatingGameButton.kt" ]; then
   mkdir -p "$J/views"
   cp "$PATCH_DIR/android/views/FloatingGameButton.kt" "$J/views/FloatingGameButton.kt"
   copied=$((copied + 1))
   echo "  copied FloatingGameButton.kt (new file)"
 fi
 
-if [ -f "$PATCH_DIR/android/utils/SharedDataDirectory.kt" ]; then
+if want shared && [ -f "$PATCH_DIR/android/utils/SharedDataDirectory.kt" ]; then
   cp "$PATCH_DIR/android/utils/SharedDataDirectory.kt" "$J/utils/SharedDataDirectory.kt"
   copied=$((copied + 1))
   echo "  copied SharedDataDirectory.kt (new file)"
@@ -83,6 +112,7 @@ fi
 # this project more than once.
 echo "verifying:"
 fail=0
+# Only what this subset copied is asserted; the rest is upstream by design.
 check() {
   local file="$1" needle="$2" what="$3"
   if grep -q "$needle" "$file"; then
@@ -92,28 +122,28 @@ check() {
     fail=1
   fi
 }
-check "$J/model/Game.kt"       "val folder: String"  "Game.folder field"
-check "$J/model/Game.kt"       "folderName"          "Game.folderName"
-check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the scan"
-check "$J/utils/GameHelper.kt" "deepScan) 24"        "scan depth raised to 24"
-check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
-check "$J/adapters/GameAdapter.kt" "model.folderName" "folder shown on the card"
-check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
-check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
-check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
+want folders && check "$J/model/Game.kt"       "val folder: String"  "Game.folder field"
+want folders && check "$J/model/Game.kt"       "folderName"          "Game.folderName"
+want folders && check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the scan"
+want folders && check "$J/utils/GameHelper.kt" "deepScan) 24"        "scan depth raised to 24"
+want folders && check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
+want folders && check "$J/adapters/GameAdapter.kt" "model.folderName" "folder shown on the card"
+want button && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
+want shared && check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
+want shared && check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
 check "$RES/values/strings.xml" "shared_folder_choose" "English labels"
 check "$RES/values-ru/strings.xml" "shared_folder_choose" "Russian labels"
-check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
-check "$J/activities/EmulationActivity.kt" "PREF_KEEP_IN_MEMORY" "keep-in-memory switch"
-check "$J/activities/EmulationActivity.kt" "editingOverlayOnly" "no memory hold in overlay-edit mode"
-check "$J/views/FloatingGameButton.kt" "keepInMemory" "switch reachable from the button menu"
+want button && check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
+want button && check "$J/activities/EmulationActivity.kt" "PREF_KEEP_IN_MEMORY" "keep-in-memory switch"
+want button && check "$J/activities/EmulationActivity.kt" "editingOverlayOnly" "no memory hold in overlay-edit mode"
+want button && check "$J/views/FloatingGameButton.kt" "keepInMemory" "switch reachable from the button menu"
 
 # The button must never pause the game. Anything matching here is a real call,
 # not a comment - the comments are stripped first.
 # Strip BOTH comment styles before looking. Stripping only // left the KDoc
 # block at the top of the file - which explains, in prose, that nothing here
 # pauses - and the check failed on its own documentation.
-if python3 -c "
+if want button && python3 -c "
 import re, sys
 src = open(sys.argv[1], encoding='utf-8').read()
 src = re.sub(r'/\*.*?\*/', '', src, flags=re.S)

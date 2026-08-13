@@ -41,6 +41,11 @@ on:
         description: "off = plain upstream Eden, no patch at all (control build)"
         type: boolean
         default: true
+      patch_subset:
+        description: "which parts of patch2 to apply: all | folders | button | shared"
+        type: choice
+        options: [all, folders, button, shared]
+        default: all
   push:
     branches: [main]
     paths:
@@ -212,7 +217,10 @@ jobs:
       # One question, one answer, no more speculation.
       - name: Apply patch2
         if: inputs.apply_patch != false
-        run: bash fork/tools/apply_patch2.sh --patch fork/patch2 --eden "$GITHUB_WORKSPACE/eden"
+        run: |
+          bash fork/tools/apply_patch2.sh --patch fork/patch2 \
+            --eden "$GITHUB_WORKSPACE/eden" \
+            --subset "${{ inputs.patch_subset || 'all' }}"
 
       - name: Skip the patch - control build of plain upstream
         if: inputs.apply_patch == false
