@@ -44,7 +44,7 @@ on:
       patch_subset:
         description: "which parts of patch2 to apply: all | folders | button | shared"
         type: choice
-        options: [all, folders, button, shared]
+        options: [all, folders, scan, sort, button, shared]
         default: all
       flavour:
         description: "mainline (upstream default) or legacy (what the working control was built with)"
@@ -387,6 +387,8 @@ jobs:
           # happened on the first subset build.
           subset = os.environ.get("PATCH_SUBSET", "all")
           folders = subset in ("all", "folders")
+          scan = subset in ("all", "folders", "scan", "sort")
+          sort = subset in ("all", "folders", "sort")
           button = subset in ("all", "button")
 
           wanted = []
@@ -395,6 +397,8 @@ jobs:
               wanted.append(("crash logger", "Symbiosis crash report".encode()))
               if folders:
                   wanted.append(("subtitle separator", " \u00b7 ".encode()))
+              elif scan:
+                  wanted.append(("crash logger only", b"symbiosis-crash.txt"))
               if button:
                   wanted.append(("floating button position key", b"symbiosis_float_x"))
           else:
@@ -405,6 +409,10 @@ jobs:
                       ("folderName", b"folderName"),
                       ("subtitle separator", " \u00b7 ".encode()),
                   ]
+              elif sort:
+                  wanted.append(("groupByFolder", b"groupByFolder"))
+              elif scan:
+                  wanted.append(("folderName", b"folderName"))
               if button:
                   wanted.append(("FloatingGameButton", b"FloatingGameButton"))
 

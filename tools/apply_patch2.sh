@@ -72,10 +72,21 @@ echo "subset: $SUBSET"
 # and is reachable from any file manager.
 copy_one "$PATCH_DIR/android/root/YuzuApplication.kt" "$J/YuzuApplication.kt"
 
-if want folders; then
+# "folders" is four files that do four separable things, and the crash is
+# somewhere in them. These narrower subsets split it further so the next
+# build changes one thing again:
+#
+#   scan   Game.kt + GameHelper.kt   - the field, and filling it in
+#   sort   + GamesFragment.kt        - ordering the list by it
+#   folders (= all four)             - and showing it on the card
+if want folders || want scan || want sort; then
   copy_one "$PATCH_DIR/android/model/Game.kt"            "$J/model/Game.kt"
   copy_one "$PATCH_DIR/android/utils/GameHelper.kt"      "$J/utils/GameHelper.kt"
+fi
+if want folders || want sort; then
   copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"      "$J/ui/GamesFragment.kt"
+fi
+if want folders; then
   copy_one "$PATCH_DIR/android/adapters/GameAdapter.kt"  "$J/adapters/GameAdapter.kt"
 fi
 
@@ -128,11 +139,11 @@ check() {
     fail=1
   fi
 }
-want folders && check "$J/model/Game.kt"       "val folder: String"  "Game.folder field"
-want folders && check "$J/model/Game.kt"       "folderName"          "Game.folderName"
-want folders && check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the scan"
-want folders && check "$J/utils/GameHelper.kt" "deepScan) 24"        "scan depth raised to 24"
-want folders && check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
+{ want folders || want scan || want sort; } && check "$J/model/Game.kt"       "val folder: String"  "Game.folder field"
+{ want folders || want scan || want sort; } && check "$J/model/Game.kt"       "folderName"          "Game.folderName"
+{ want folders || want scan || want sort; } && check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the scan"
+{ want folders || want scan || want sort; } && check "$J/utils/GameHelper.kt" "deepScan) 24"        "scan depth raised to 24"
+{ want folders || want sort; } && check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
 want folders && check "$J/adapters/GameAdapter.kt" "model.folderName" "folder shown on the card"
 want button && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
 want shared && check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"

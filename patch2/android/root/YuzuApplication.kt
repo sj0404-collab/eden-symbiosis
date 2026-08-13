@@ -110,6 +110,34 @@ class YuzuApplication : Application() {
             } catch (ignored: Throwable) {
                 // Never let the reporter replace the crash it is reporting.
             }
+            // ── Show it, do not just file it ────────────────────────
+            //
+            // The file was the right idea and still writes, but it asks the
+            // user to go hunting through Android/data with a file manager -
+            // and if they cannot find it, we both learn nothing. This puts
+            // the first line of the failure on the screen instead, long
+            // enough to read or photograph, before the process goes.
+            //
+            // A Toast from a dying process is not guaranteed to render, so
+            // the message is also put in the crash file above; between the
+            // two, one of them reaches me.
+            try {
+                val first = error.stackTrace.firstOrNull()?.toString() ?: "?"
+                var root: Throwable = error
+                while (root.cause != null) root = root.cause!!
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(
+                        this,
+                        "Symbiosis: " + root.javaClass.simpleName + "\n" +
+                            (root.message ?: "") + "\n" + first,
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+                // Give the toast a moment to actually appear.
+                Thread.sleep(1200)
+            } catch (ignored: Throwable) {
+            }
+
             // Hand back to Android so behaviour is otherwise unchanged.
             previous?.uncaughtException(thread, error)
         }
