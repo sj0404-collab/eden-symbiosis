@@ -327,6 +327,8 @@ jobs:
 
       - name: Verify the changes shipped
         if: inputs.apply_patch != false
+        env:
+          PATCH_SUBSET: ${{ inputs.patch_subset || 'all' }}
         run: |
           APK=$(find eden -name "*mainline-release.apk" -o -name "*mainline-debug.apk" | head -1)
           echo "APK: $APK ($(du -h "$APK" | cut -f1))"
@@ -352,25 +354,36 @@ jobs:
           # release is verified by the strings the feature cannot work
           # without.
           python3 - "$APK" <<'DEXPY' || fail=1
-          import sys, zipfile, io, re
+          import sys, zipfile, io, re, os
           apk = sys.argv[1]
           z = zipfile.ZipFile(apk)
           blob = b"".join(z.read(n) for n in z.namelist() if n.endswith(".dex"))
           release = "release" in apk
 
+          # Only assert what this subset was asked to include. A "folders"
+          # build has no floating button by design, and demanding one turns a
+          # perfectly good APK into a red run - which is exactly what
+          # happened on the first subset build.
+          subset = os.environ.get("PATCH_SUBSET", "all")
+          folders = subset in ("all", "folders")
+          button = subset in ("all", "button")
+
+          wanted = []
           if release:
               # Literals, not names: R8 rewrites names but never these.
-              wanted = [
-                  ("subtitle separator", " \u00b7 ".encode()),
-                  ("floating button position key", b"symbiosis_float_x"),
-              ]
+              if folders:
+                  wanted.append(("subtitle separator", " \u00b7 ".encode()))
+              if button:
+                  wanted.append(("floating button position key", b"symbiosis_float_x"))
           else:
-              wanted = [
-                  ("groupByFolder", b"groupByFolder"),
-                  ("folderName", b"folderName"),
-                  ("subtitle separator", " \u00b7 ".encode()),
-                  ("FloatingGameButton", b"FloatingGameButton"),
-              ]
+              if folders:
+                  wanted += [
+                      ("groupByFolder", b"groupByFolder"),
+                      ("folderName", b"folderName"),
+                      ("subtitle separator", " \u00b7 ".encode()),
+                  ]
+              if button:
+                  wanted.append(("FloatingGameButton", b"FloatingGameButton"))
 
           bad = 0
           for label, needle in wanted:
