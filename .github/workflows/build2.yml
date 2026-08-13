@@ -12,7 +12,15 @@ name: Build clean
 #   Game.kt          a game records the folder it was found in
 #   GameHelper.kt    that folder is carried down the scan; depth 3 -> 24
 #   GamesFragment.kt the list is ordered by folder, then by title
+#   GameAdapter.kt   that folder is shown on the card
 #   SharedDataDirectory.kt   the shared-folder utility, unchanged
+#
+# THE CORE STAYS INSIDE THE APK
+#   Splitting it out into a folder was tried and abandoned: it cost four
+#   failed installs and never once produced a working build. The core is
+#   loaded by Eden's own untouched System.loadLibrary, exactly as upstream
+#   does it. patch2 no longer contains NativeLibrary.kt at all - there is
+#   nothing left in it to change.
 #
 #   Nothing is created, moved or written. Folder permissions stay read-only and
 #   config.ini is untouched.
@@ -236,61 +244,6 @@ jobs:
             java -Dfile.encoding=UTF-8 -jar "/tmp/$t.jar" || fail=1
           done
 
-          # ── The core loader, tested for the first time ──────────────
-          #
-          # CoreFromFolderTest existed but nothing ever ran it, so the file
-          # that decides whether the emulator has a core at all was the one
-          # piece with no check on it. Every failure it guards is silent: a
-          # truncated core that dlopen maps and then dies inside, a copy left
-          # writable that Android 14+ refuses, a stale copy never refreshed.
-          #
-          # It needs four members of the Android API, stubbed in
-          # patch2/tests/stubs_android*.kt, so the real logic runs on the JVM.
-          echo "── CoreFromFolderTest ──"
-          rm -rf /tmp/cft /tmp/cfbuild && mkdir -p /tmp/cfbuild
-          cp fork/patch2/android/utils/CoreFromFolder.kt \
-             fork/patch2/tests/CoreFromFolderTest.kt \
-             fork/patch2/tests/stubs_android.kt \
-             fork/patch2/tests/stubs_android_os.kt /tmp/cfbuild/
-          /tmp/kotlinc/bin/kotlinc /tmp/cfbuild/*.kt -include-runtime -d /tmp/cf.jar 2>&1 |
-            grep -vE "^warning: (classpath|language version)" || true
-          java -Dfile.encoding=UTF-8 -jar /tmp/cf.jar 2>/dev/null || fail=1
-
-          # ── The configuration every user actually installs ──────────
-          #
-          # CoreFromFolderTest always ran with nativeLibraryDir pointing at a
-          # path that does not exist, so builtIn() was false every time and
-          # the "core is inside the APK" branch was never executed once. That
-          # branch returned "no problem" WITHOUT LOADING ANYTHING, the caller
-          # believed it and skipped its own loadLibrary, and the full APK died
-          # in a static initialiser before drawing a frame.
-          #
-          # Two builds shipped that way. This test enters that branch on
-          # purpose; run against the old code it fails on three assertions.
-          echo "── BuiltinCoreTest ──"
-          rm -rf /tmp/cft /tmp/bcbuild && mkdir -p /tmp/bcbuild
-          cp fork/patch2/android/utils/CoreFromFolder.kt \
-             fork/patch2/tests/BuiltinCoreTest.kt \
-             fork/patch2/tests/stubs_android.kt \
-             fork/patch2/tests/stubs_android_os.kt /tmp/bcbuild/
-          /tmp/kotlinc/bin/kotlinc /tmp/bcbuild/*.kt -include-runtime -d /tmp/bc.jar 2>&1 |
-            grep -vE "^warning: (classpath|language version)" || true
-          java -Dfile.encoding=UTF-8 -jar /tmp/bc.jar 2>/dev/null || fail=1
-
-          # ── Nothing on the startup path may call into the core ──────
-          #
-          # Eden's own Log is `external fun` - it lives inside the library
-          # that has not loaded yet. I put Log.error() into the handler that
-          # reports a failed load, which would have thrown from inside the
-          # error path and hidden the real reason behind a black screen.
-          #
-          # A unit test cannot catch this: on the JVM every native function
-          # is missing anyway, so the ordering is invisible. It is a
-          # structural property, so it is checked by reading the source.
-          echo "── проверка порядка запуска ──"
-          python3 fork/tools/check_startup_safety.py \
-            fork/patch2/android/root/NativeLibrary.kt || fail=1
-
           exit $fail
 
       - name: Build
@@ -362,8 +315,6 @@ jobs:
               # Literals, not names: R8 rewrites names but never these.
               wanted = [
                   ("subtitle separator", " \u00b7 ".encode()),
-                  ("core folder name", b"EdenCore"),
-                  ("core file name", b"libyuzu-android.so"),
                   ("floating button position key", b"symbiosis_float_x"),
               ]
           else:
@@ -371,7 +322,6 @@ jobs:
                   ("groupByFolder", b"groupByFolder"),
                   ("folderName", b"folderName"),
                   ("subtitle separator", " \u00b7 ".encode()),
-                  ("CoreFromFolder", b"CoreFromFolder"),
                   ("FloatingGameButton", b"FloatingGameButton"),
               ]
 
@@ -410,215 +360,6 @@ jobs:
           path: eden/src/android/app/build/outputs/apk/**/*.apk
           retention-days: 30
 
-      # ── The core, packaged as a folder to keep on the device ────────
-      #
-      # The point of the split: the core is 83 MB of C++ that almost never
-      # changes, while a typical change here is a Kotlin file. Downloaded once
-      # and kept, it turns every later update into a small APK.
-      #
-      # Published as a zip of a folder named EdenCore, which is exactly what
-      # CoreFromFolder looks for on each storage volume. Unzip to the root of
-      # internal storage or an SD card and the app finds it.
-      - name: Package the core as a folder
-        run: |
-          APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
-          mkdir -p /tmp/pack/EdenCore
-          cd /tmp/pack
-
-          # Straight out of the APK that was just built, so the core and the
-          # client are guaranteed to be the same build. Extracting from the
-          # build tree instead would risk picking up a stale object.
-          unzip -qo "$GITHUB_WORKSPACE/$APK" 'lib/arm64-v8a/*.so' -d raw
-
-          # The validation layer is deliberately left out: 24 MB of debugging
-          # aid that also costs frame rate.
-          for f in raw/lib/arm64-v8a/*.so; do
-            case "$(basename "$f")" in
-              libVkLayer_*) continue ;;
-            esac
-            cp "$f" EdenCore/
-          done
-
-          # A README in the folder, because a bare .so tells nobody anything.
-          {
-            echo "Ядро эмулятора Eden для Symbiosis"
-            echo
-            echo "Положите папку EdenCore целиком в память устройства - в корень"
-            echo "внутренней памяти или на карту. Приложение найдёт её само при"
-            echo "запуске."
-            echo
-            echo "Проверяются имена: EdenCore, eden-core, Eden/core"
-            echo
-            echo "Файлы:"
-            for f in EdenCore/*.so; do
-              echo "  $(basename "$f")  $(du -h "$f" | cut -f1)"
-            done
-            echo
-            echo "Собрано из Eden v0.2.1, сборка #${{ github.run_number }}."
-            echo "Обновлять нужно только если менялся C++ - обычные обновления"
-            echo "приложения этот файл не трогают."
-          } > EdenCore/README.txt
-
-          # Checksums, so a half-copied file can be spotted without guessing.
-          (cd EdenCore && sha256sum *.so > SHA256SUMS.txt)
-
-          zip -qr /tmp/EdenCore.zip EdenCore
-          echo "core folder: $(du -h /tmp/EdenCore.zip | cut -f1)"
-          ls -la EdenCore/
-
-          python3 - <<'CORESIZE' | tee -a "$GITHUB_STEP_SUMMARY"
-          import os
-          total = sum(os.path.getsize(os.path.join('/tmp/pack/EdenCore', f))
-                      for f in os.listdir('/tmp/pack/EdenCore'))
-          zipped = os.path.getsize('/tmp/EdenCore.zip')
-          print()
-          print("## Core folder")
-          print()
-          print("| | |")
-          print("|---|---|")
-          print(f"| unpacked | {total / 1048576:.1f} MB |")
-          print(f"| zip | {zipped / 1048576:.1f} MB |")
-          print()
-          print("Unzip `EdenCore` to the root of internal storage or an SD card.")
-          CORESIZE
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: EdenCore-folder
-          path: /tmp/EdenCore.zip
-          retention-days: 30
-
-      # ── The thin APK: the whole point of the split ──────────────────
-      #
-      # Until now nothing actually got smaller. The core folder was published,
-      # but the same 23 MB of core was still packed inside the APK, so the
-      # download was 45 MB and the folder was 20 MB more on top - strictly
-      # worse than before. Measured from the built APK:
-      #
-      #     23.01 MB  lib/arm64-v8a/libyuzu-android.so     <- the core
-      #      7.66 MB  libVkLayer_khronos_validation.so     <- debug aid
-      #      9.00 MB  classes*.dex                          (debug build)
-      #
-      # Removing those two entries is what leaves a small APK. CoreFromFolder
-      # already prefers the built-in core when there is one and falls back to
-      # the folder when there is not, so the thin APK needs no code change -
-      # it is the same build with two files removed.
-      #
-      # WHY RE-SIGN AND NOT JUST DELETE
-      #   An APK's signature covers the file list. Deleting an entry from a
-      #   signed APK leaves a package Android refuses to install with
-      #   INSTALL_PARSE_FAILED_NO_CERTIFICATES. So: unpack, drop, zipalign,
-      #   sign again with the very debug keystore upstream ships and uses for
-      #   its own default signing config.
-      - name: Build the thin APK, with the core left out
-        run: |
-          set -euo pipefail
-          APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
-          BT="$ANDROID_HOME/build-tools/35.0.0"
-
-          rm -rf /tmp/thin && mkdir -p /tmp/thin
-
-          before=$(stat -c%s "$APK")
-
-          # ── Why a script and not unzip + zip ────────────────────────
-          #
-          # The first version rebuilt the archive with `zip`, and the result
-          # was rejected by the installer:
-          #
-          #   Failed parse during installPackageLI: Targeting R+ (version 30
-          #   and above) requires the resources.arsc of installed APKs to be
-          #   stored uncompressed and aligned on a 4-byte boundary
-          #
-          # Since Android 11 the framework maps resources.arsc directly out
-          # of the APK, so it has to be STORED. Gradle emits it that way;
-          # `zip` compressed it and quietly broke the package. apksigner and
-          # zipalign both accepted it, and it built green - the failure only
-          # appeared on the phone.
-          #
-          # thin_apk.py copies every entry across with its original
-          # compression method and drops only what is asked for, so upstream's
-          # packaging decisions survive intact.
-          python3 "$GITHUB_WORKSPACE/fork/tools/thin_apk.py" \
-            --in "$APK" \
-            --out /tmp/thin/unsigned.apk \
-            --drop 'libyuzu-android.so' \
-            --drop 'libVkLayer_*.so'
-
-          "$BT/zipalign" -p -f 4 /tmp/thin/unsigned.apk /tmp/thin/aligned.apk
-
-          "$BT/apksigner" sign \
-            --ks eden/src/android/app/debug.keystore \
-            --ks-pass pass:android --key-pass pass:android \
-            --ks-key-alias androiddebugkey \
-            --out /tmp/thin/Eden-thin.apk /tmp/thin/aligned.apk 2>/dev/null ||
-          "$BT/apksigner" sign \
-            --ks "$GITHUB_WORKSPACE/eden/src/android/app/debug.keystore" \
-            --ks-pass pass:android --key-pass pass:android \
-            --ks-key-alias androiddebugkey \
-            --out /tmp/thin/Eden-thin.apk /tmp/thin/aligned.apk
-
-          # A signature that does not verify is an APK that will not install,
-          # and that is only discovered on the device otherwise.
-          "$BT/apksigner" verify --verbose /tmp/thin/Eden-thin.apk | head -5
-
-          # ── The check that was missing ──────────────────────────────
-          #
-          # A valid signature says nothing about whether the package parses.
-          # The APK that failed on the phone with INSTALL_PARSE_FAILED passed
-          # apksigner verify cleanly. These two rules are what the installer
-          # enforces on Android 11+, so they are checked here instead.
-          python3 "$GITHUB_WORKSPACE/fork/tools/thin_apk.py" \
-            --check-only --in /tmp/thin/Eden-thin.apk
-
-          # zipalign's own verdict, on every entry rather than just this one.
-          "$BT/zipalign" -c -v 4 /tmp/thin/Eden-thin.apk | tail -2
-
-          after=$(stat -c%s /tmp/thin/Eden-thin.apk)
-          echo "MD5: $(md5sum /tmp/thin/Eden-thin.apk | cut -d' ' -f1)"
-
-          # The core must be gone, and the helpers must still be there. Both
-          # checked, because "smaller" and "correct" are different claims.
-          #
-          # The listing is taken ONCE into a variable rather than piped into
-          # grep each time. `unzip -l | grep -q` exits 141 under `set -o
-          # pipefail`: grep -q stops reading at the first match and unzip dies
-          # of SIGPIPE. That reported libhook_impl.so as missing from an APK
-          # that plainly contained it.
-          listing=$(unzip -l /tmp/thin/Eden-thin.apk)
-
-          case "$listing" in
-            *libyuzu-android.so*)
-              echo "::error::the core is still inside the thin APK"; exit 1 ;;
-          esac
-          for keep in libhook_impl.so libmain_hook.so libgsl_alloc_hook.so \
-                      libfile_redirect_hook.so libandroidx.graphics.path.so; do
-            case "$listing" in
-              *"$keep"*) echo "  ok   $keep kept" ;;
-              *) echo "::error::$keep went missing"; exit 1 ;;
-            esac
-          done
-
-          python3 - "$before" "$after" <<'THINPY' | tee -a "$GITHUB_STEP_SUMMARY"
-          import sys
-          before, after = int(sys.argv[1]), int(sys.argv[2])
-          mb = lambda b: b / 1048576
-          print()
-          print("## Thin APK")
-          print()
-          print("| | |")
-          print("|---|---|")
-          print(f"| full APK | {mb(before):.1f} MB |")
-          print(f"| thin APK | **{mb(after):.1f} MB** |")
-          print(f"| saved | {mb(before - after):.1f} MB |")
-          print()
-          print("Needs the `EdenCore` folder on the device. The full APK does not.")
-          THINPY
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Eden-thin-apk
-          path: /tmp/thin/Eden-thin.apk
-          retention-days: 30
 
       - name: Upload to gofile.io
         if: github.event_name != 'workflow_dispatch' || inputs.upload_to_gofile
