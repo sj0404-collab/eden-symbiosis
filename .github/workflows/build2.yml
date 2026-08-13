@@ -463,27 +463,33 @@ jobs:
           APK=$(find eden -name "*legacy-release.apk" -o -name "*legacy-debug.apk" | head -1)
           BT="$ANDROID_HOME/build-tools/35.0.0"
 
-          rm -rf /tmp/thin && mkdir -p /tmp/thin/x
-          cd /tmp/thin/x
-          unzip -qo "$GITHUB_WORKSPACE/$APK"
+          rm -rf /tmp/thin && mkdir -p /tmp/thin
 
-          before=$(stat -c%s "$GITHUB_WORKSPACE/$APK")
+          before=$(stat -c%s "$APK")
 
-          # The core: it lives in the EdenCore folder now.
-          rm -f lib/arm64-v8a/libyuzu-android.so
-          # The Vulkan validation layer: 24 MB of debugging aid that also
-          # costs frame rate. It is not in the core folder either.
-          rm -f lib/arm64-v8a/libVkLayer_*.so
-
-          # Old signature covers a file list that no longer matches.
-          rm -rf META-INF/*.SF META-INF/*.RSA META-INF/*.DSA
-
-          # Stored, not deflated, for the .so files: upstream sets
-          # jniLibs.useLegacyPackaging = true, and a compressed .so in a
-          # legacy-packaged APK is extracted at install time instead of being
-          # mapped, which is slower and doubles the space used.
-          zip -qr /tmp/thin/unsigned.apk . -x '*.so'
-          zip -qr -Z store /tmp/thin/unsigned.apk . -i '*.so'
+          # ── Why a script and not unzip + zip ────────────────────────
+          #
+          # The first version rebuilt the archive with `zip`, and the result
+          # was rejected by the installer:
+          #
+          #   Failed parse during installPackageLI: Targeting R+ (version 30
+          #   and above) requires the resources.arsc of installed APKs to be
+          #   stored uncompressed and aligned on a 4-byte boundary
+          #
+          # Since Android 11 the framework maps resources.arsc directly out
+          # of the APK, so it has to be STORED. Gradle emits it that way;
+          # `zip` compressed it and quietly broke the package. apksigner and
+          # zipalign both accepted it, and it built green - the failure only
+          # appeared on the phone.
+          #
+          # thin_apk.py copies every entry across with its original
+          # compression method and drops only what is asked for, so upstream's
+          # packaging decisions survive intact.
+          python3 "$GITHUB_WORKSPACE/fork/tools/thin_apk.py" \
+            --in "$APK" \
+            --out /tmp/thin/unsigned.apk \
+            --drop 'libyuzu-android.so' \
+            --drop 'libVkLayer_*.so'
 
           "$BT/zipalign" -p -f 4 /tmp/thin/unsigned.apk /tmp/thin/aligned.apk
 
@@ -502,17 +508,41 @@ jobs:
           # and that is only discovered on the device otherwise.
           "$BT/apksigner" verify --verbose /tmp/thin/Eden-thin.apk | head -5
 
+          # ── The check that was missing ──────────────────────────────
+          #
+          # A valid signature says nothing about whether the package parses.
+          # The APK that failed on the phone with INSTALL_PARSE_FAILED passed
+          # apksigner verify cleanly. These two rules are what the installer
+          # enforces on Android 11+, so they are checked here instead.
+          python3 "$GITHUB_WORKSPACE/fork/tools/thin_apk.py" \
+            --check-only --in /tmp/thin/Eden-thin.apk
+
+          # zipalign's own verdict, on every entry rather than just this one.
+          "$BT/zipalign" -c -v 4 /tmp/thin/Eden-thin.apk | tail -2
+
           after=$(stat -c%s /tmp/thin/Eden-thin.apk)
           echo "MD5: $(md5sum /tmp/thin/Eden-thin.apk | cut -d' ' -f1)"
 
-          # The core must be gone, and the loader must still be there. Both
+          # The core must be gone, and the helpers must still be there. Both
           # checked, because "smaller" and "correct" are different claims.
-          if unzip -l /tmp/thin/Eden-thin.apk | grep -q libyuzu-android.so; then
-            echo "::error::the core is still inside the thin APK"; exit 1
-          fi
-          for keep in libhook_impl.so libmain_hook.so; do
-            unzip -l /tmp/thin/Eden-thin.apk | grep -q "$keep" ||
-              { echo "::error::$keep went missing"; exit 1; }
+          #
+          # The listing is taken ONCE into a variable rather than piped into
+          # grep each time. `unzip -l | grep -q` exits 141 under `set -o
+          # pipefail`: grep -q stops reading at the first match and unzip dies
+          # of SIGPIPE. That reported libhook_impl.so as missing from an APK
+          # that plainly contained it.
+          listing=$(unzip -l /tmp/thin/Eden-thin.apk)
+
+          case "$listing" in
+            *libyuzu-android.so*)
+              echo "::error::the core is still inside the thin APK"; exit 1 ;;
+          esac
+          for keep in libhook_impl.so libmain_hook.so libgsl_alloc_hook.so \
+                      libfile_redirect_hook.so libandroidx.graphics.path.so; do
+            case "$listing" in
+              *"$keep"*) echo "  ok   $keep kept" ;;
+              *) echo "::error::$keep went missing"; exit 1 ;;
+            esac
           done
 
           python3 - "$before" "$after" <<'THINPY' | tee -a "$GITHUB_STEP_SUMMARY"
