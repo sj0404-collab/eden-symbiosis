@@ -132,34 +132,61 @@ RomMetadata CacheRomMetadata(const std::string& path) {
 
     // Разбор ROM - вне замка. Он читает и расшифровывает файл, это
     // секунды; под замком встал бы весь список игр разом.
-    loader->ReadTitle(entry.title);
-    loader->ReadProgramId(entry.programId);
-    loader->ReadIcon(entry.icon);
+    //
+    // И целиком под try.
+    //
+    // ПОЧЕМУ: ReadTitle/ReadIcon/ReadControlData идут в разбор
+    // зашифрованного контейнера. На повреждённом или обрезанном файле
+    // оттуда прилетает исключение - std::out_of_range из разбора
+    // заголовка, bad_alloc на абсурдной длине поля. Это C++-исключение,
+    // и пересечь границу JNI оно не может: рантайм Android просто
+    // убивает процесс (std::terminate). Никакой runCatching в Kotlin
+    // такое не ловит - Kotlin в этот момент ещё не выполняется.
+    //
+    // Именно это и означает "спотыкается, когда ищет обложки": падение
+    // происходит в нативном коде, а не в том, что я чинил в прошлый раз.
+    // Kotlin-часть (`!!` в GameIconFetcher) была настоящей ошибкой, но
+    // не единственной, и лечила она только половину случаев.
+    try {
+        loader->ReadTitle(entry.title);
+        loader->ReadProgramId(entry.programId);
+        loader->ReadIcon(entry.icon);
 
-    const FileSys::PatchManager pm{
-        entry.programId, EmulationSession::GetInstance().System().GetFileSystemController(),
-        EmulationSession::GetInstance().System().GetContentProvider()};
-    const auto control = pm.GetControlMetadata();
+        const FileSys::PatchManager pm{
+            entry.programId, EmulationSession::GetInstance().System().GetFileSystemController(),
+            EmulationSession::GetInstance().System().GetContentProvider()};
+        const auto control = pm.GetControlMetadata();
 
-    if (control.first != nullptr) {
-        entry.developer = control.first->GetDeveloperName();
-        entry.version = control.first->GetVersionString();
-    } else {
-        FileSys::NACP nacp;
-        if (loader->ReadControlData(nacp) == Loader::ResultStatus::Success) {
-            entry.developer = nacp.GetDeveloperName();
+        if (control.first != nullptr) {
+            entry.developer = control.first->GetDeveloperName();
+            entry.version = control.first->GetVersionString();
         } else {
-            entry.developer = "";
+            FileSys::NACP nacp;
+            if (loader->ReadControlData(nacp) == Loader::ResultStatus::Success) {
+                entry.developer = nacp.GetDeveloperName();
+            } else {
+                entry.developer = "";
+            }
+
+            entry.version = "1.0.0";
         }
 
-        entry.version = "1.0.0";
-    }
-
-    if (loader->GetFileType() == Loader::FileType::NRO) {
-        auto loader_nro = reinterpret_cast<Loader::AppLoader_NRO*>(loader.get());
-        entry.isHomebrew = loader_nro->IsHomebrew();
-    } else {
-        entry.isHomebrew = false;
+        if (loader->GetFileType() == Loader::FileType::NRO) {
+            auto loader_nro = reinterpret_cast<Loader::AppLoader_NRO*>(loader.get());
+            entry.isHomebrew = loader_nro->IsHomebrew();
+        } else {
+            entry.isHomebrew = false;
+        }
+    } catch (const std::exception& e) {
+        // Запись всё равно кладётся в кэш - уже с тем, что успело
+        // прочитаться. Пустая обложка означает заглушку в списке, а не
+        // повторную попытку разбора того же битого файла на каждой
+        // перерисовке.
+        LOG_ERROR(Frontend, "[Symbiosis] сбой разбора {}: {}", path, e.what());
+        entry.icon.clear();
+    } catch (...) {
+        LOG_ERROR(Frontend, "[Symbiosis] неизвестный сбой разбора {}", path);
+        entry.icon.clear();
     }
 
     {
@@ -211,33 +238,44 @@ extern "C" {
 
 jboolean Java_org_yuzu_yuzu_1emu_utils_GameMetadata_getIsValid(JNIEnv* env, jobject obj,
                                                                jstring jpath) {
-    const auto file = EmulationSession::GetInstance().System().GetFilesystem()->OpenFile(
-        Common::Android::GetJString(env, jpath), FileSys::OpenMode::Read);
-    if (!file) {
-        return false;
-    }
+    // Тоже целиком под try: эту функцию сканирование зовёт на КАЖДЫЙ
+    // файл в папке, и IsBootableGameContainer с ReadProgramId разбирают
+    // контейнер ровно так же, как чтение обложки. Один битый файл -
+    // std::terminate посреди обхода папки.
+    try {
+        const auto file = EmulationSession::GetInstance().System().GetFilesystem()->OpenFile(
+            Common::Android::GetJString(env, jpath), FileSys::OpenMode::Read);
+        if (!file) {
+            return false;
+        }
 
-    auto loader = Loader::GetLoader(EmulationSession::GetInstance().System(), file);
-    if (!loader) {
-        return false;
-    }
+        auto loader = Loader::GetLoader(EmulationSession::GetInstance().System(), file);
+        if (!loader) {
+            return false;
+        }
 
-    const auto file_type = loader->GetFileType();
-    if (file_type == Loader::FileType::Unknown || file_type == Loader::FileType::Error) {
-        return false;
-    }
+        const auto file_type = loader->GetFileType();
+        if (file_type == Loader::FileType::Unknown || file_type == Loader::FileType::Error) {
+            return false;
+        }
 
-    if ((file_type == Loader::FileType::NSP || file_type == Loader::FileType::XCI) &&
-        !Loader::IsBootableGameContainer(file, file_type)) {
-        return false;
-    }
+        if ((file_type == Loader::FileType::NSP || file_type == Loader::FileType::XCI) &&
+            !Loader::IsBootableGameContainer(file, file_type)) {
+            return false;
+        }
 
-    u64 program_id = 0;
-    Loader::ResultStatus res = loader->ReadProgramId(program_id);
-    if (res != Loader::ResultStatus::Success) {
+        u64 program_id = 0;
+        Loader::ResultStatus res = loader->ReadProgramId(program_id);
+        if (res != Loader::ResultStatus::Success) {
+            return false;
+        }
+        return true;
+    } catch (const std::exception& e) {
+        LOG_ERROR(Frontend, "[Symbiosis] сбой проверки файла: {}", e.what());
+        return false;
+    } catch (...) {
         return false;
     }
-    return true;
 }
 
 jstring Java_org_yuzu_yuzu_1emu_utils_GameMetadata_getTitle(JNIEnv* env, jobject obj,

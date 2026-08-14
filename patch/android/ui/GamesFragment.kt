@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.fragments.MessageDialogFragment
 import org.yuzu.yuzu_emu.utils.GameFolderScanner
+import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.SetupStatus
 import org.yuzu.yuzu_emu.utils.SharedDataDirectory
 import androidx.core.view.WindowInsetsCompat
@@ -390,6 +391,26 @@ class GamesFragment : Fragment() {
             gamesViewModel.reloadGames(true)
         }
         hadStorageLastResume = hasStorageNow
+
+        // Список папок изменился, пока экрана не было видно.
+        //
+        // Последний рубеж, и намеренно тупой: сравнить число настроенных
+        // папок с тем, что было при прошлом показе экрана. Прошлая правка
+        // чинила ОДИН путь добавления папки (addFolder -> reloadGames), но
+        // путей несколько: диалог добавления, экран папок, кнопка «+»,
+        // импорт из Инструментов, - и каждый может обновление не дозваться.
+        // Проверка здесь ловит их все разом, потому что вернуться на этот
+        // экран человек обязан в любом случае.
+        //
+        // Стоит она один вызов getGameDirs() (чтение уже разобранного
+        // конфига в памяти), обход папок при этом не запускается.
+        val folderCount = runCatching { NativeConfig.getGameDirs().size }.getOrDefault(-1)
+        if (folderCount >= 0 && folderCount != lastFolderCount) {
+            if (lastFolderCount >= 0) {
+                gamesViewModel.reloadGames(true)
+            }
+            lastFolderCount = folderCount
+        }
         if (getCurrentViewType() == GameAdapter.VIEW_TYPE_CAROUSEL) {
             (binding.gridGames as? CarouselRecyclerView)?.setupCarousel(true)
             (binding.gridGames as? CarouselRecyclerView)?.restoreScrollState(gamesViewModel.lastScrollPosition)
@@ -675,6 +696,9 @@ class GamesFragment : Fragment() {
     /** Идущие обходы папок, чтобы не запускать второй поверх первого. */
     private var folderScanJob: kotlinx.coroutines.Job? = null
     private var statusJob: kotlinx.coroutines.Job? = null
+
+    /** Сколько папок было настроено при прошлом показе экрана. -1 = ещё не знаем. */
+    private var lastFolderCount: Int = -1
 
     /** Storage access as it stood at the previous onResume. */
     private var hadStorageLastResume =

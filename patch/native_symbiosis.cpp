@@ -257,6 +257,14 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
     const std::string path = Common::Android::GetJString(env, j_path);
     auto& system = EmulationSession::GetInstance().System();
 
+    // Всё тело под try.
+    //
+    // Эта функция намеренно проходит путь загрузки игры, чтобы назвать
+    // точную причину отказа - а значит наследует и способ упасть: на
+    // повреждённом контейнере разбор бросает C++-исключение, которое
+    // через JNI не проходит и убивает процесс. Зовут её из строки
+    // состояния на главном экране, то есть при обычном просмотре списка.
+    try {
     // Base keys first: without them nothing NCA-backed parses, and every later
     // message would be a red herring.
     if (Core::Crypto::KeyManager::Instance().BaseDeriveNecessary()) {
@@ -334,6 +342,12 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_diagnoseRom(JNIEnv* env, jobject,
         break;
     }
     return Common::Android::ToJString(env, message);
+    } catch (const std::exception& e) {
+        return Common::Android::ToJString(
+            env, std::string{"corrupt|файл не читается: "} + e.what());
+    } catch (...) {
+        return Common::Android::ToJString(env, "corrupt|файл не читается");
+    }
 }
 
 /// Live thermal state as "state|tempC|gpuClockPercent|summary|advice".

@@ -516,16 +516,30 @@ index 120bafdd14..421ce05164 100644
                  pauseEmulationAndCaptureFrame()
              } else {
                  updatePausedFrameVisibility()
-@@ -1591,6 +1716,23 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
+@@ -1591,6 +1716,37 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                          binding.showStatsOverlayText.setBackgroundResource(0)
                      }
  
 +                    // Show which mode and launcher are active. Without this
 +                    // there is no way to tell from inside a game whether a
 +                    // setting actually took effect.
-+                    if (BooleanSetting.SYMBIOSIS_SHOW_MODE_OVERLAY.getBoolean(needsGlobal)) {
++                    // context, НЕ requireContext().
++                    //
++                    // Этот блок крутится по таймеру каждые 800 мс и
++                    // переживает сам фрагмент: при выходе из игры
++                    // отложенное срабатывание уже стоит в очереди, а
++                    // фрагмент к моменту его выполнения отсоединён.
++                    // requireContext() в этот момент кидает
++                    // IllegalStateException - "not attached to a context"
++                    // - в главном потоке, а это немедленный краш. Именно
++                    // поэтому падало при закрытии игры или выходе из неё.
++                    // Апстрим в этом же цикле всюду пишет context?.let,
++                    // и не случайно.
++                    val ctx = context
++                    if (ctx != null &&
++                        BooleanSetting.SYMBIOSIS_SHOW_MODE_OVERLAY.getBoolean(needsGlobal)) {
 +                        val modeName = SymbiosisStrings.modeName(
-+                            requireContext(),
++                            ctx,
 +                            IntSetting.SYMBIOSIS_AUTO_MODE.getInt(needsGlobal),
 +                            ""
 +                        )
