@@ -107,22 +107,26 @@ object SetupStatus {
         // cache, which is what made a deleted game keep appearing. One scan
         // yields both the count and the bytes, so the strip and the folder
         // screen cannot report different numbers.
+        // Один обход на папку, не два.
+        //
+        // Раньше здесь звались и listGames, и scanOneFolder - два полных
+        // обхода одного дерева ради чисел, которые первый же обход и
+        // считает. На папке с играми это удвоенное время и удвоенное
+        // число курсоров, а строка состояния обновляется на каждом
+        // onResume. scanOneFolder возвращает и количество, и байты, и
+        // число пропущенных файлов сразу.
         var games = 0
         var bytes = 0L
         var skipped = 0
         for (dir in dirs) {
-            val entries = runCatching {
+            val folder = runCatching {
                 // Same depth the library importer uses for this folder, so the
                 // strip cannot claim a game the game list will not show.
-                GameFolderScanner.listGames(
-                    context, dir.uriString, GameFolderScanner.depthFor(dir.deepScan)
-                )
-            }.getOrDefault(emptyList())
-            games += entries.size
-            bytes += entries.sumOf { it.bytes }
-            skipped += runCatching {
-                GameFolderScanner.scanOneFolder(context, dir.uriString, dir.deepScan).skipped
-            }.getOrDefault(0)
+                GameFolderScanner.scanOneFolder(context, dir.uriString, dir.deepScan)
+            }.getOrNull() ?: continue
+            games += folder.gameCount
+            bytes += folder.totalBytes
+            skipped += folder.skipped
         }
         val name = GameFolderScanner.displayNameOf(dirs.first().uriString)
 
@@ -179,32 +183,50 @@ object SetupStatus {
     private fun whyNotGames(context: Context): String {
         val dirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return ""
         val out = mutableListOf<String>()
+        var rest = 0
 
         for (dir in dirs) {
-            runCatching { GameFolderScanner.listFilesFlat(context, dir.uriString) }
+            val files = runCatching { GameFolderScanner.listFilesFlat(context, dir.uriString) }
                 .getOrDefault(emptyList())
-                .forEach { e ->
-                    // Спросить у самого эмулятора, а не гадать.
-                    //
-                    // diagnoseRom() проходит ровно тот же путь, что и запуск
-                    // игры, и возвращает НАСТОЯЩУЮ причину отказа: нет
-                    // title key, повреждён файл, внутри только обновление,
-                    // не тот prod.keys. Догадки по размеру уже привели к
-                    // ошибке - 283 МБ настоящей игры были объявлены "мало
-                    // для игры, похоже на DLC".
-                    val uri = GameFolderScanner.childUri(dir.uriString, e)
-                    val fromCore = uri?.let {
-                        runCatching { NativeSymbiosis.romProblem(it.toString()) }.getOrNull()
-                    }
-                    if (fromCore != null) {
-                        out.add("«${e.name}» — $fromCore")
-                    }
+
+            // Не больше нескольких файлов за раз.
+            //
+            // diagnoseRom() открывает файл, расшифровывает заголовок и
+            // строит загрузчик - это полноценная попытка загрузки, от
+            // десятков миллисекунд до секунды на файл, и каждая держит свой
+            // кусок памяти. На папке с сотней образов строка состояния
+            // уходила в это на минуты, а зовут её из onResume. Восьми имён
+            // хватает, чтобы понять картину; остальные считаются скопом.
+            if (files.size > MAX_DIAGNOSED) {
+                rest += files.size - MAX_DIAGNOSED
+            }
+
+            for (e in files.take(MAX_DIAGNOSED)) {
+                // Спросить у самого эмулятора, а не гадать.
+                //
+                // diagnoseRom() проходит ровно тот же путь, что и запуск
+                // игры, и возвращает НАСТОЯЩУЮ причину отказа: нет title
+                // key, повреждён файл, внутри только обновление, не тот
+                // prod.keys. Догадки по размеру уже привели к ошибке -
+                // 283 МБ настоящей игры были объявлены "мало для игры,
+                // похоже на DLC".
+                val uri = GameFolderScanner.childUri(dir.uriString, e)
+                val fromCore = uri?.let {
+                    runCatching { NativeSymbiosis.romProblem(it.toString()) }.getOrNull()
                 }
+                if (fromCore != null) {
+                    out.add("«${e.name}» — $fromCore")
+                }
+            }
         }
 
         if (out.isEmpty()) return "все файлы читаются — открой список игр"
-        return out.joinToString("; ")
+        val tail = if (rest > 0) " (и ещё $rest файлов)" else ""
+        return out.joinToString("; ") + tail
     }
+
+    /** Сколько файлов разбирать поимённо, прежде чем считать остальные скопом. */
+    private const val MAX_DIAGNOSED = 8
 
     fun saves(): Item {
         val dir = savesPath().takeIf { it != "—" }

@@ -21,6 +21,7 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.fragments.MessageDialogFragment
@@ -590,8 +591,11 @@ class GamesFragment : Fragment() {
      */
     private fun refreshStatusStrip() {
         val line = binding.statusLine ?: return
-        viewLifecycleOwner.lifecycleScope.launch {
-            val ctx = requireContext()
+        // То же самое, что и с карточками папок: строка состояния тоже
+        // обходит все папки, и наложение двух обходов удваивает работу.
+        statusJob?.cancel()
+        statusJob = viewLifecycleOwner.lifecycleScope.launch {
+            val ctx = requireContext().applicationContext
             val items = withContext(Dispatchers.IO) {
                 runCatching { SetupStatus.all(ctx) }.getOrNull()
             } ?: return@launch
@@ -668,6 +672,10 @@ class GamesFragment : Fragment() {
     /** True once the prompt has been shown in this run of the app. */
     private var askedForStorageThisSession = false
 
+    /** Идущие обходы папок, чтобы не запускать второй поверх первого. */
+    private var folderScanJob: kotlinx.coroutines.Job? = null
+    private var statusJob: kotlinx.coroutines.Job? = null
+
     /** Storage access as it stood at the previous onResume. */
     private var hadStorageLastResume =
         !SharedDataDirectory.needsAllFilesAccess() || SharedDataDirectory.hasAllFilesAccess()
@@ -713,10 +721,24 @@ class GamesFragment : Fragment() {
      */
     private fun refreshFolderCards() {
         val list = binding.folderCards ?: return
-        viewLifecycleOwner.lifecycleScope.launch {
-            val ctx = requireContext()
+        // Один обход за раз.
+        //
+        // Обход запускается из onViewCreated, из onResume и по нажатию на
+        // строку состояния. Возврат из системных настроек даёт onResume
+        // сразу после onViewCreated - два полных обхода дерева навстречу
+        // друг другу, каждый со своим набором курсоров. Отменить прежний
+        // дешевле, чем ждать оба: свежий ответ всё равно перезапишет
+        // старый.
+        folderScanJob?.cancel()
+        folderScanJob = viewLifecycleOwner.lifecycleScope.launch {
+            // Контекст приложения: обход переживает фрагмент, а ссылка на
+            // фрагментный контекст удержала бы всю активность в памяти.
+            val ctx = requireContext().applicationContext
             val folders = withContext(Dispatchers.IO) {
-                runCatching { GameFolderScanner.scan(ctx) }.getOrDefault(emptyList())
+                // isActive читается изнутри обхода: отменённая корутина
+                // сама цикл не остановит, ей нужно об этом сказать.
+                runCatching { GameFolderScanner.scan(ctx) { isActive } }
+                    .getOrDefault(emptyList())
             }
             if (_binding == null) return@launch
 
@@ -739,6 +761,12 @@ class GamesFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        // Область корутин фрагмента отменяется сама, но адаптер держит
+        // ссылку на активность через AppCompatActivity в конструкторе -
+        // а RecyclerView переживает onDestroyView в кэше фрагмента.
+        folderScanJob = null
+        statusJob = null
+        binding.folderCards?.adapter = null
         _binding = null
     }
 

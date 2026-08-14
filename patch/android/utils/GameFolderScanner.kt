@@ -56,11 +56,12 @@ object GameFolderScanner {
      * ограничения по количеству.
      */
     fun listFilesFlat(context: Context, uriString: String): List<Entry> {
+        val resolver = context.applicationContext.contentResolver
         val tree = runCatching { Uri.parse(uriString) }.getOrNull() ?: return emptyList()
         val children = childrenUriFor(tree) ?: return emptyList()
         val out = mutableListOf<Entry>()
         val cursor = runCatching {
-            context.contentResolver.query(
+            resolver.query(
                 children,
                 arrayOf(
                     DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -71,15 +72,18 @@ object GameFolderScanner {
             )
         }.getOrNull() ?: return emptyList()
 
-        cursor.use {
-            while (it.moveToNext()) {
-                val name = it.getString(0) ?: continue
-                val mime = it.getString(1) ?: ""
-                val size = if (it.isNull(2)) 0L else it.getLong(2)
-                if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
-                val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                if (ext in SHOWABLE_EXTENSIONS || name.lowercase(Locale.ROOT) in ROM_FILENAMES) {
-                    out.add(Entry(name, size))
+        runCatching {
+            cursor.use {
+                while (it.moveToNext()) {
+                    if (out.size >= MAX_ENTRIES) break
+                    val name = it.getString(0) ?: continue
+                    val mime = it.getString(1) ?: ""
+                    val size = if (it.isNull(2)) 0L else it.getLong(2)
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
+                    val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                    if (ext in SHOWABLE_EXTENSIONS || name.lowercase(Locale.ROOT) in ROM_FILENAMES) {
+                        out.add(Entry(name, size))
+                    }
                 }
             }
         }
@@ -138,10 +142,10 @@ object GameFolderScanner {
      * fourteen files the list can show. [MAX_DIRECTORIES] keeps a pathological
      * tree from turning that into a hang.
      */
-    fun scan(context: Context): List<Folder> {
+    fun scan(context: Context, stillWanted: () -> Boolean = { true }): List<Folder> {
         val dirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return emptyList()
         return dirs.map { dir ->
-            scanOne(context, dir.uriString, depthFor(dir.deepScan))
+            scanOne(context, dir.uriString, depthFor(dir.deepScan), stillWanted)
         }
     }
 
@@ -156,10 +160,35 @@ object GameFolderScanner {
     fun depthFor(deepScan: Boolean): Int = if (deepScan) 3 else 1
 
     /** Scan one folder, for callers that have a uri rather than the config. */
-    fun scanOneFolder(context: Context, uriString: String, deepScan: Boolean): Folder =
-        scanOne(context, uriString, depthFor(deepScan))
+    fun scanOneFolder(
+        context: Context,
+        uriString: String,
+        deepScan: Boolean,
+        stillWanted: () -> Boolean = { true }
+    ): Folder = scanOne(context, uriString, depthFor(deepScan), stillWanted)
 
-    private fun scanOne(context: Context, uriString: String, maxDepth: Int): Folder {
+    /**
+     * @param stillWanted спрашивается перед каждым каталогом. Отмена
+     *   корутины НЕ прерывает обычный цикл и не выставляет флаг
+     *   прерывания потока - Dispatchers.IO просто отпускает результат, а
+     *   код продолжает читать диск. Поэтому признак передаётся явно.
+     */
+    private fun scanOne(
+        context: Context,
+        uriString: String,
+        maxDepth: Int,
+        stillWanted: () -> Boolean = { true }
+    ): Folder {
+        // Контекст приложения, а не тот, что передали.
+        //
+        // Обход папки живёт секунды, а вызывают его из фрагмента, который
+        // за это время может закрыться - поворот экрана, уход в
+        // «Настройки» за разрешением. Курсор ContentResolver держит
+        // ссылку на контекст: если это контекст фрагмента, вся активность
+        // вместе с макетами остаётся в памяти до конца обхода. У этого
+        // экрана обход запускается при каждом onResume, и каждый поворот
+        // добавлял ещё одну утёкшую активность.
+        val resolver = context.applicationContext.contentResolver
         val name = displayNameOf(uriString)
         val tree = runCatching { Uri.parse(uriString) }.getOrNull()
             ?: return Folder(uriString, name, 0, 0, depth = maxDepth, unreadable = true)
@@ -176,11 +205,19 @@ object GameFolderScanner {
             ?: return Folder(uriString, name, 0, 0, depth = maxDepth, unreadable = true)) to maxDepth)
 
         var guard = 0
+        val seen = HashSet<String>()
         while (queue.isNotEmpty() && guard < MAX_DIRECTORIES) {
             guard++
+            // Прервать обход, когда результат уже никому не нужен.
+            //
+            // Экран закрыли или запросили новый обход: до 400 запросов к
+            // хранилищу, каждый со своим курсором, продолжались бы
+            // впустую. Пользователь ушёл, а телефон ещё несколько секунд
+            // читает диск.
+            if (!stillWanted()) break
             val (children, depth) = queue.removeFirst()
             val cursor = runCatching {
-                context.contentResolver.query(
+                resolver.query(
                     children,
                     arrayOf(
                         DocumentsContract.Document.COLUMN_DOCUMENT_ID,
@@ -193,6 +230,11 @@ object GameFolderScanner {
             }.getOrNull() ?: continue
 
             readable = true
+            // cursor.use закрывает курсор при выходе, НО не при исключении
+            // внутри самого перебора: getString на битой строке кидает, и
+            // раньше это исключение уходило наверх, обрывая весь обход.
+            // Одна нечитаемая запись делала папку целиком "пустой".
+            runCatching {
             cursor.use {
                 while (it.moveToNext()) {
                     val documentId = it.getString(0)
@@ -201,7 +243,15 @@ object GameFolderScanner {
                     val size = if (it.isNull(3)) 0L else it.getLong(3)
 
                     if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        if (depth > 1) {
+                        // Пускать в очередь только новые каталоги.
+                        //
+                        // Провайдер вполне может вернуть один и тот же
+                        // documentId дважды: сетевые и облачные хранилища
+                        // делают это на папках, доступных по нескольким
+                        // путям. Раньше такая пара каталогов гоняла обход
+                        // по кругу, пока не упрётся в лимит 400 - и
+                        // считала одни и те же файлы много раз.
+                        if (depth > 1 && documentId != null && seen.add(documentId)) {
                             runCatching {
                                 queue.add(
                                     DocumentsContract.buildChildDocumentsUriUsingTree(
@@ -221,6 +271,7 @@ object GameFolderScanner {
                         skipped++
                     }
                 }
+            }
             }
         }
 
@@ -248,7 +299,13 @@ object GameFolderScanner {
      * so a file copied over USB a second ago is listed and one deleted a second
      * ago is not.
      */
-    fun listGames(context: Context, uriString: String, maxDepth: Int = 1): List<Entry> {
+    fun listGames(
+        context: Context,
+        uriString: String,
+        maxDepth: Int = 1,
+        stillWanted: () -> Boolean = { true }
+    ): List<Entry> {
+        val resolver = context.applicationContext.contentResolver
         val tree = runCatching { Uri.parse(uriString) }.getOrNull() ?: return emptyList()
         val root = childrenUriFor(tree) ?: return emptyList()
         val out = mutableListOf<Entry>()
@@ -258,12 +315,22 @@ object GameFolderScanner {
         val queue = ArrayDeque<Triple<Uri, String, Int>>()
         queue.add(Triple(root, "", maxDepth))
         var guard = 0
+        val seen = HashSet<String>()
 
         while (queue.isNotEmpty() && guard < MAX_DIRECTORIES) {
             guard++
+            if (!stillWanted()) break
+            // Верхняя граница на размер ответа.
+            //
+            // Список строился без ограничений, а каждая запись - это
+            // три строки. На папке с несколькими тысячами файлов (обычное
+            // дело для дампа) он занимал десятки мегабайт, и всё это
+            // передавалось в адаптер разом. На 3 ГБ памяти это тот самый
+            // вылет по нехватке памяти при открытии папки.
+            if (out.size >= MAX_ENTRIES) break
             val (children, prefix, depth) = queue.removeFirst()
             val cursor = runCatching {
-                context.contentResolver.query(
+                resolver.query(
                     children,
                     arrayOf(
                         DocumentsContract.Document.COLUMN_DOCUMENT_ID,
@@ -275,15 +342,17 @@ object GameFolderScanner {
                 )
             }.getOrNull() ?: continue
 
+            runCatching {
             cursor.use {
                 while (it.moveToNext()) {
+                    if (out.size >= MAX_ENTRIES) break
                     val documentId = it.getString(0)
                     val name = it.getString(1) ?: continue
                     val mime = it.getString(2) ?: ""
                     val size = if (it.isNull(3)) 0L else it.getLong(3)
 
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        if (depth > 1) {
+                        if (depth > 1 && documentId != null && seen.add(documentId)) {
                             runCatching {
                                 queue.add(
                                     Triple(
@@ -301,6 +370,7 @@ object GameFolderScanner {
                         out.add(Entry(name, size, prefix))
                     }
                 }
+            }
             }
         }
         return out.sortedByDescending { it.bytes }
@@ -381,4 +451,13 @@ object GameFolderScanner {
 
     /** Stops a symlink loop or an absurd tree from hanging the scan. */
     private const val MAX_DIRECTORIES = 400
+
+    /**
+     * Потолок на длину списка файлов.
+     *
+     * Не про «столько игр не бывает», а про память: список целиком лежит
+     * в куче и целиком уходит в адаптер. Три тысячи строк экран всё равно
+     * не покажет осмысленно, а вылет по нехватке памяти покажет.
+     */
+    private const val MAX_ENTRIES = 3000
 }

@@ -88,6 +88,21 @@ cp "$P"/shaders/present_retro.frag "$E/src/video_core/host_shaders/"
 # JNI bridge
 cp "$P"/native_symbiosis.cpp "$A/jni/"
 
+# Upstream JNI sources this fork replaces wholesale.
+#
+# game_metadata.cpp is here rather than in the diff because the changes are
+# spread across every function in the file - a null check, a mutex, and the
+# removal of a by-value return that copied a half-megabyte icon per call.
+# Expressed as a diff that is one hunk per function, and each one shifts the
+# line numbers of the next; the file is 160 lines, so shipping it whole is
+# both smaller and immune to the hunk-offset arithmetic that has broken this
+# patch twice already. It is already listed in jni/CMakeLists.txt upstream,
+# so no build wiring changes.
+if [ -d "$P/jni" ]; then
+  cp "$P"/jni/*.cpp "$A/jni/"
+  echo "  replaced JNI sources: $(ls "$P/jni" | tr '\n' ' ')"
+fi
+
 # The Kenji bridge is a SEPARATE library, appended to the jni CMakeLists rather
 # than patched in by line number - upstream's file is 35 lines long and any
 # hunk anchored past that simply fails to apply, silently taking the bridge out

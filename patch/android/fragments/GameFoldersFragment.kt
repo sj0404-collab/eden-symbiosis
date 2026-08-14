@@ -14,6 +14,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.findNavController
 import androidx.recyclerview.widget.LinearLayoutManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.R
@@ -45,6 +46,9 @@ class GameFoldersFragment : Fragment() {
 
     /** Folder currently opened, or null while the folder list is showing. */
     private var openFolder: GameFolderScanner.Folder? = null
+
+    /** Идущий обход. Отменяется перед новым, чтобы они не накладывались. */
+    private var scanJob: kotlinx.coroutines.Job? = null
     private val binding get() = _binding!!
 
     override fun onCreateView(
@@ -77,9 +81,18 @@ class GameFoldersFragment : Fragment() {
     private fun rescan() {
         openFolder = null
         binding.swipeFolders.isRefreshing = true
-        viewLifecycleOwner.lifecycleScope.launch {
+        // Один обход за раз. Экран перечитывает папки в onViewCreated, в
+        // onResume и по жесту «потянуть вниз»; потянуть дважды подряд
+        // означало два обхода одного дерева одновременно, и оба писали в
+        // один и тот же адаптер.
+        scanJob?.cancel()
+        // Контекст приложения, а не фрагмента: обход длится секунды и
+        // переживает поворот экрана, удерживая активность.
+        val ctx = requireContext().applicationContext
+        scanJob = viewLifecycleOwner.lifecycleScope.launch {
             val folders = withContext(Dispatchers.IO) {
-                GameFolderScanner.scan(requireContext())
+                runCatching { GameFolderScanner.scan(ctx) { isActive } }
+                    .getOrDefault(emptyList())
             }
 
             if (_binding == null) return@launch
@@ -121,11 +134,13 @@ class GameFoldersFragment : Fragment() {
      * through the same navigation the main library uses.
      */
     private fun showFolderContents(folder: GameFolderScanner.Folder) {
-        viewLifecycleOwner.lifecycleScope.launch {
+        scanJob?.cancel()
+        val ctx = requireContext().applicationContext
+        scanJob = viewLifecycleOwner.lifecycleScope.launch {
             val entries = withContext(Dispatchers.IO) {
-                GameFolderScanner.listGames(
-                    requireContext(), folder.uriString, folder.depth
-                )
+                runCatching {
+                    GameFolderScanner.listGames(ctx, folder.uriString, folder.depth) { isActive }
+                }.getOrDefault(emptyList())
             }
             if (_binding == null) return@launch
 
@@ -217,6 +232,9 @@ class GameFoldersFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        scanJob = null
+        // Адаптер держит активность; RecyclerView живёт дольше вида.
+        binding.listFolders.adapter = null
         _binding = null
     }
 }
