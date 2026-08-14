@@ -40,6 +40,7 @@ import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.model.GamesViewModel
 import org.yuzu.yuzu_emu.model.HomeViewModel
 import org.yuzu.yuzu_emu.ui.main.MainActivity
+import org.yuzu.yuzu_emu.utils.GameFolders
 import org.yuzu.yuzu_emu.utils.ViewUtils.setVisible
 import org.yuzu.yuzu_emu.utils.collect
 import info.debatty.java.stringsimilarity.Jaccard
@@ -394,39 +395,6 @@ class GamesFragment : Fragment() {
     // Track current filter
     private var currentFilter = View.NO_ID
 
-    /**
-     * Order the list so a folder on disk stays a group in the list.
-     *
-     * Upstream hands the adapter whatever order the scan produced, which after
-     * a recursive walk is arbitrary: two games from the same folder can end up
-     * at opposite ends of the grid. Sorting by folder first, then by title,
-     * keeps a library that is organised on disk organised on screen - without
-     * touching the adapter, the layout or anything the emulator writes.
-     *
-     * Games at the top level sort first, and their folder is "", so they are
-     * not scattered among the grouped ones.
-     */
-    private fun groupByFolder(list: List<Game>): List<Game> =
-        // Falls back to the list exactly as upstream would leave it.
-        //
-        // WHY EVERY ADDITION HERE IS WRAPPED
-        //   Eight installs have crashed and I could not find the cause by
-        //   reading, so the code stops being allowed to crash. A failure in
-        //   my own sorting must cost the grouping, not the app: upstream
-        //   returned baseList untouched here, and that is exactly what is
-        //   returned if anything at all goes wrong.
-        runCatching {
-            list.sortedWith(
-                compareBy(
-                    { it.folder.lowercase(Locale.getDefault()) },
-                    { it.title.lowercase(Locale.getDefault()) }
-                )
-            )
-        }.getOrElse {
-            android.util.Log.e("Symbiosis", "groupByFolder failed", it)
-            list
-        }
-
     private fun filterAndSearch(baseList: List<Game> = gamesViewModel.games.value) {
         val filteredList: List<Game> = when (currentFilter) {
             R.id.alphabetical -> baseList.sortedBy { it.title }
@@ -442,10 +410,19 @@ class GamesFragment : Fragment() {
                     addedTime > (System.currentTimeMillis() - 24 * 60 * 60 * 1000)
                 }.sortedByDescending { preferences.getLong(it.keyAddedToLibraryTime, 0L) }
             }
-            // Default: grouped by the folder each game lives in. The explicit
-            // filters above are left alone - asking for "alphabetical" and
-            // getting "alphabetical inside each folder" would be a surprise.
-            else -> groupByFolder(baseList)
+            // Grouped by the folder each game lives in. The folder is read
+            // from GameFolders; the Game objects themselves are upstream's.
+            else -> runCatching {
+                baseList.sortedWith(
+                    compareBy(
+                        { GameFolders.folderOf(it.path).lowercase(Locale.getDefault()) },
+                        { it.title.lowercase(Locale.getDefault()) }
+                    )
+                )
+            }.getOrElse {
+                android.util.Log.e("Symbiosis", "groupByFolder failed", it)
+                baseList
+            }
         }
 
         val searchTerm = binding.searchText.text.toString().lowercase(Locale.getDefault())

@@ -272,6 +272,14 @@ jobs:
 
           fail=0
 
+          # GameFolders is the side table that replaced the field on Game.
+          echo "── GameFoldersTest ──"
+          rm -rf /tmp/gfb && mkdir -p /tmp/gfb
+          cp fork/patch2/android/utils/GameFolders.kt fork/patch2/tests/GameFoldersTest.kt /tmp/gfb/
+          /tmp/kotlinc/bin/kotlinc /tmp/gfb/*.kt -include-runtime -d /tmp/gf.jar 2>&1 |
+            grep -vE "^warning: (classpath|language version)" || true
+          java -Dfile.encoding=UTF-8 -jar /tmp/gf.jar || fail=1
+
           for t in FolderScanTest GroupByFolderTest CardSubtitleTest; do
             echo "── $t ──"
             /tmp/kotlinc/bin/kotlinc "fork/patch2/tests/$t.kt" -include-runtime -d "/tmp/$t.jar" 2>&1 |

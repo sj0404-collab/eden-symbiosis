@@ -30,29 +30,8 @@ class Game(
     val programId: String = "",
     val developer: String = "",
     var version: String = "",
-    val isHomebrew: Boolean = false,
-    /**
-     * The folder this game was found in, relative to the folder that was
-     * chosen - "RPG/Zelda", or "" for a game sitting at the top level.
-     *
-     * Upstream throws this away: addGamesRecursive() descends into
-     * subdirectories and appends every ROM to one flat list, so a library
-     * organised into folders arrives as an undifferentiated pile and there is
-     * no field anywhere that remembers where a file came from.
-     *
-     * Kept as a relative path, not absolute: it is shown to a person, and
-     * "RPG/Zelda" is readable where
-     * "content://com.android.externalstorage.../RPG%2FZelda" is not.
-     *
-     * Default "" so every existing call site still compiles and any game
-     * stored by an older build reads back as top-level rather than crashing.
-     */
-    val folder: String = ""
+    val isHomebrew: Boolean = false
 ) : Parcelable {
-    /** Name of the folder itself, for a group heading. */
-    val folderName: String
-        get() = folder.substringAfterLast('/', folder)
-
     val keyAddedToLibraryTime get() = "${path}_AddedToLibraryTime"
     val keyLastPlayedTime get() = "${path}_LastPlayed"
 

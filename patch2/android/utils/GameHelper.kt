@@ -31,6 +31,9 @@ object GameHelper {
 
     fun getGames(): List<Game> {
         val games = mutableListOf<Game>()
+        // Dropped before every scan, so a game that moved does not keep the
+        // folder it used to be in.
+        runCatching { GameFolders.clear() }
         val context = YuzuApplication.appContext
         preferences = PreferenceManager.getDefaultSharedPreferences(context)
 
@@ -59,18 +62,11 @@ object GameHelper {
             val gameDirUri = gameDir.uriString.toUri()
             val isValid = FileUtil.isTreeUriValid(gameDirUri)
             if (isValid) {
-                // Was 3-or-1. Now that each game remembers its folder,
-                // stopping at three levels only hides games; a library sorted
-                // by system/genre/title is already four deep.
-                //
-                // 8, not 24. Depth is not free: every level multiplies the
-                // number of directories walked, and each one is a SAF query
-                // over Binder - on a folder tree with any width, 24 levels is
-                // minutes of work and a real chance of ANR or of the scan
-                // being killed before the list ever appears. Eight covers
-                // system/genre/series/title with room to spare, and the limit
-                // still stops a self-referencing link spinning forever.
-                val scanDepth = if (gameDir.deepScan) 8 else 1
+                // Upstream's own depth. It was raised to 24 and then 8, and
+                // a build at 3 crashed exactly like the others - so the depth
+                // was never the fault, and raising it buys nothing until the
+                // real one is fixed. Left alone.
+                val scanDepth = if (gameDir.deepScan) 3 else 1
 
                 addGamesRecursive(
                     games,
@@ -150,6 +146,8 @@ object GameHelper {
         files: Array<MinimalDocumentFile>,
         depth: Int,
         mountedContainerUris: MutableSet<String>,
+        // Only this signature changes, and only with a default, so every
+        // existing call site still compiles untouched.
         folder: String = ""
     ) {
         if (depth <= 0) {
@@ -158,21 +156,13 @@ object GameHelper {
 
         files.forEach {
             if (it.isDirectory) {
-                // The folder is carried down and handed to each game found
-                // inside it. Upstream descended and forgot: every ROM landed
-                // in one flat list with nothing recording where it came from,
-                // so a library sorted into folders arrived as a pile.
                 val childFolder = if (folder.isEmpty()) {
                     it.filename
                 } else {
                     "$folder/${it.filename}"
                 }
-                // Wrapped: one unreadable subdirectory must cost that
-                // subdirectory, not the whole library. Depth 24 means the
-                // scan now walks into places upstream never reached - a
-                // permission-denied folder, a dead mount, an SD card pulled
-                // mid-scan - and any of those throwing here would take the
-                // app down before the list ever appeared.
+                // Wrapped: one unreadable subdirectory costs that
+                // subdirectory, not the whole library.
                 runCatching {
                     addGamesRecursive(
                         games,
@@ -194,8 +184,12 @@ object GameHelper {
                 }
 
                 if (Game.extensions.contains(extension)) {
-                    val game = getGame(it.uri, true, false, folder)
+                    // getGame is called EXACTLY as upstream calls it - the
+                    // Game object is upstream's, unchanged. The folder is
+                    // recorded beside it, keyed by path.
+                    val game = getGame(it.uri, true, false)
                     if (game != null) {
+                        runCatching { GameFolders.remember(game.path, folder) }
                         games.add(game)
                     }
                 }
@@ -271,8 +265,7 @@ object GameHelper {
     fun getGame(
         uri: Uri,
         addedToLibrary: Boolean,
-        registerFilesystemProvider: Boolean = true,
-        folder: String = ""
+        registerFilesystemProvider: Boolean = true
     ): Game? {
         val filePath = uri.toString()
         if (!GameMetadata.getIsValid(filePath)) {
@@ -303,8 +296,7 @@ object GameHelper {
             programId,
             GameMetadata.getDeveloper(filePath),
             GameMetadata.getVersion(filePath, false),
-            GameMetadata.getIsHomebrew(filePath),
-            folder
+            GameMetadata.getIsHomebrew(filePath)
         )
 
         if (addedToLibrary) {

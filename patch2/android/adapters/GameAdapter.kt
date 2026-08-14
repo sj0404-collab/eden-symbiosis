@@ -29,6 +29,7 @@ import org.yuzu.yuzu_emu.databinding.CardGameGridBinding
 import org.yuzu.yuzu_emu.databinding.CardGameCarouselBinding
 import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.model.GamesViewModel
+import org.yuzu.yuzu_emu.utils.GameFolders
 import org.yuzu.yuzu_emu.utils.GameIconUtils
 import org.yuzu.yuzu_emu.utils.ViewUtils.marquee
 import org.yuzu.yuzu_emu.viewholder.AbstractViewHolder
@@ -163,30 +164,15 @@ class GameAdapter(private val activity: AppCompatActivity) :
             GameIconUtils.loadGameIcon(model, listBinding.imageGameScreen)
 
             listBinding.textGameTitle.text = model.title.replace("[\\t\\n\\r]+".toRegex(), " ")
-            // ── Show which folder the game came from ────────────────
-            //
-            // The scan records the folder and the list is ordered by it, but
-            // until now nothing on screen said so: two games called "Mario"
-            // in different folders looked identical, and the ordering looked
-            // arbitrary rather than grouped. R8 spotted the same thing from
-            // the other side and stripped Game.folderName as unused - a fair
-            // verdict on a field nobody read.
-            //
-            // The second line of the list card already exists and holds the
-            // developer, which for a dumped game is very often blank. So:
-            // folder when there is one, developer otherwise, developer when
-            // there is no folder either. Nothing is hidden that was visible
-            // before - a game at the top level still shows its developer.
-            //
-            // Wrapped, and falling back to upstream's own line: this runs for
-            // every card, so an exception here would take the list down with
-            // it. Eight installs have crashed with no diagnosis, so nothing
-            // added by this patch is allowed to be fatal any more.
+            // The folder comes from GameFolders, not from the Game object -
+            // Game is upstream's, untouched. Falls back to exactly what
+            // upstream showed if anything at all goes wrong.
             listBinding.textGameDeveloper.text = runCatching {
+                val folderName = GameFolders.folderNameOf(model.path)
                 when {
-                    model.folder.isNotEmpty() && model.developer.isNotEmpty() ->
-                        "${model.folderName} · ${model.developer}"
-                    model.folder.isNotEmpty() -> model.folderName
+                    folderName.isNotEmpty() && model.developer.isNotEmpty() ->
+                        "$folderName \u00b7 ${model.developer}"
+                    folderName.isNotEmpty() -> folderName
                     else -> model.developer
                 }
             }.getOrElse {

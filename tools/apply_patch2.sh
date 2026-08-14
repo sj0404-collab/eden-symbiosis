@@ -80,8 +80,13 @@ copy_one "$PATCH_DIR/android/root/YuzuApplication.kt" "$J/YuzuApplication.kt"
 #   sort   + GamesFragment.kt        - ordering the list by it
 #   folders (= all four)             - and showing it on the card
 if want folders || want scan || want sort || want depth3; then
-  copy_one "$PATCH_DIR/android/model/Game.kt"            "$J/model/Game.kt"
   copy_one "$PATCH_DIR/android/utils/GameHelper.kt"      "$J/utils/GameHelper.kt"
+  # The folder lives here now, not on Game. Game.kt is left exactly as
+  # upstream wrote it: it is @Parcelize and @Serializable, and every build
+  # that added a field to it crashed on the device.
+  cp "$PATCH_DIR/android/utils/GameFolders.kt" "$J/utils/GameFolders.kt"
+  copied=$((copied + 1))
+  echo "  copied GameFolders.kt (new file)"
 
   # ── depth3: folders, at upstream's own scan depth ─────────────────
   #
@@ -96,7 +101,7 @@ if want folders || want scan || want sort || want depth3; then
   # runs and the depth-8 build does not, the depth is the fault and the
   # code is fine.
   if want depth3; then
-    sed -i "s/deepScan) 8 else 1/deepScan) 3 else 1/" "$J/utils/GameHelper.kt"
+    true  # depth is already upstream's 3
     echo "  scan depth put back to upstream's 3"
   fi
 fi
@@ -192,6 +197,13 @@ fi
 # whether a file was copied - that mistake has cost a full 30-minute build in
 # this project more than once.
 echo "verifying:"
+# Game.kt must be untouched. Every build that changed it crashed.
+if [ -f "$J/model/Game.kt" ] && grep -q "val folder: String" "$J/model/Game.kt"; then
+  echo "  FAIL Game.kt was modified - it must stay upstream"
+  fail=1
+else
+  echo "  ok   Game.kt left as upstream"
+fi
 fail=0
 # Only what this subset copied is asserted; the rest is upstream by design.
 check() {
@@ -203,13 +215,13 @@ check() {
     fail=1
   fi
 }
-{ want folders || want scan || want sort || want depth3; } && check "$J/model/Game.kt"       "val folder: String"  "Game.folder field"
-{ want folders || want scan || want sort || want depth3; } && check "$J/model/Game.kt"       "folderName"          "Game.folderName"
+{ want folders || want scan || want sort || want depth3; } && check "$J/utils/GameFolders.kt" "object GameFolders" "folder side table"
+{ want folders || want scan || want sort || want depth3; } && check "$J/utils/GameHelper.kt" "GameFolders.remember" "scan records the folder"
 { want folders || want scan || want sort || want depth3; } && check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the scan"
-{ want folders || want scan || want sort; } && check "$J/utils/GameHelper.kt" "deepScan) 8"         "scan depth raised to 8"
-want depth3 && check "$J/utils/GameHelper.kt" "deepScan) 3"         "scan depth left at upstream 3"
-{ want folders || want sort || want depth3; } && check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
-{ want folders || want depth3; } && check "$J/adapters/GameAdapter.kt" "model.folderName" "folder shown on the card"
+{ want folders || want scan || want sort; } && check "$J/utils/GameHelper.kt" "deepScan) 3"         "scan depth is upstream's 3"
+
+{ want folders || want sort || want depth3; } && check "$J/ui/GamesFragment.kt" "GameFolders.folderOf" "list grouped by folder"
+{ want folders || want depth3; } && check "$J/adapters/GameAdapter.kt" "GameFolders.folderNameOf" "folder shown on the card"
 { want button || want minimal || want ui; } && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
 { want shared || want ui; } && check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
 { want shared || want ui; } && check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
