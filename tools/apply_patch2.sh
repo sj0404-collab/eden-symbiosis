@@ -110,12 +110,15 @@ fi
 # "minimal" is the safest thing the patch can offer: the floating button and
 # nothing else. It touches no list, no scan, no model - only a view added on
 # top of the emulation surface, and only once a game is already running.
-if want button || want minimal; then
+# "ui" is the interface half: the floating button and the shared-folder
+# button, and NOT ONE of the four folder files. G proved the button alone
+# runs; this adds the only other thing that draws.
+if want button || want minimal || want ui; then
   copy_one "$PATCH_DIR/android/fragments/EmulationFragment.kt" "$J/fragments/EmulationFragment.kt"
   copy_one "$PATCH_DIR/android/activities/EmulationActivity.kt" "$J/activities/EmulationActivity.kt"
 fi
 
-if want shared; then
+if want shared || want ui; then
   copy_one "$PATCH_DIR/android/fragments/GameFoldersFragment.kt" "$J/fragments/GameFoldersFragment.kt"
 fi
 
@@ -124,7 +127,7 @@ fi
 # missing resource - which is how R.string.select was caught before it cost a
 # twenty-minute compile.
 RES="$(cd "$J/../../../../res" && pwd)"
-if want shared; then
+if want shared || want ui; then
   copy_one "$PATCH_DIR/android/layout/fragment_folders.xml" "$RES/layout/fragment_folders.xml"
 fi
 # ── Strings are APPENDED, never overwritten ─────────────────────────
@@ -172,14 +175,14 @@ add_strings "$RES/values/strings.xml"    "$PATCH_DIR/android/values/values__stri
 add_strings "$RES/values-ru/strings.xml" "$PATCH_DIR/android/values/values-ru__strings.xml"
 
 # The floating button is a new file with no upstream counterpart.
-if { want button || want minimal; } && [ -f "$PATCH_DIR/android/views/FloatingGameButton.kt" ]; then
+if { want button || want minimal || want ui; } && [ -f "$PATCH_DIR/android/views/FloatingGameButton.kt" ]; then
   mkdir -p "$J/views"
   cp "$PATCH_DIR/android/views/FloatingGameButton.kt" "$J/views/FloatingGameButton.kt"
   copied=$((copied + 1))
   echo "  copied FloatingGameButton.kt (new file)"
 fi
 
-if want shared && [ -f "$PATCH_DIR/android/utils/SharedDataDirectory.kt" ]; then
+if { want shared || want ui; } && [ -f "$PATCH_DIR/android/utils/SharedDataDirectory.kt" ]; then
   cp "$PATCH_DIR/android/utils/SharedDataDirectory.kt" "$J/utils/SharedDataDirectory.kt"
   copied=$((copied + 1))
   echo "  copied SharedDataDirectory.kt (new file)"
@@ -207,23 +210,23 @@ check() {
 want depth3 && check "$J/utils/GameHelper.kt" "deepScan) 3"         "scan depth left at upstream 3"
 { want folders || want sort || want depth3; } && check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
 { want folders || want depth3; } && check "$J/adapters/GameAdapter.kt" "model.folderName" "folder shown on the card"
-{ want button || want minimal; } && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
-want shared && check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
-want shared && check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
+{ want button || want minimal || want ui; } && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
+{ want shared || want ui; } && check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
+{ want shared || want ui; } && check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
 check "$J/YuzuApplication.kt" "installCrashLogger" "crash logger"
 check "$RES/values/strings.xml" "shared_folder_choose" "English labels"
 check "$RES/values-ru/strings.xml" "shared_folder_choose" "Russian labels"
-{ want button || want minimal; } && check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
-{ want button || want minimal; } && check "$J/activities/EmulationActivity.kt" "PREF_KEEP_IN_MEMORY" "keep-in-memory switch"
-{ want button || want minimal; } && check "$J/activities/EmulationActivity.kt" "editingOverlayOnly" "no memory hold in overlay-edit mode"
-{ want button || want minimal; } && check "$J/views/FloatingGameButton.kt" "keepInMemory" "switch reachable from the button menu"
+{ want button || want minimal || want ui; } && check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
+{ want button || want minimal || want ui; } && check "$J/activities/EmulationActivity.kt" "PREF_KEEP_IN_MEMORY" "keep-in-memory switch"
+{ want button || want minimal || want ui; } && check "$J/activities/EmulationActivity.kt" "editingOverlayOnly" "no memory hold in overlay-edit mode"
+{ want button || want minimal || want ui; } && check "$J/views/FloatingGameButton.kt" "keepInMemory" "switch reachable from the button menu"
 
 # The button must never pause the game. Anything matching here is a real call,
 # not a comment - the comments are stripped first.
 # Strip BOTH comment styles before looking. Stripping only // left the KDoc
 # block at the top of the file - which explains, in prose, that nothing here
 # pauses - and the check failed on its own documentation.
-if { want button || want minimal; } && python3 -c "
+if { want button || want minimal || want ui; } && python3 -c "
 import re, sys
 src = open(sys.argv[1], encoding='utf-8').read()
 src = re.sub(r'/\*.*?\*/', '', src, flags=re.S)
