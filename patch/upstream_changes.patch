@@ -1459,7 +1459,7 @@ diff --git a/src/android/app/src/main/res/navigation/home_navigation.xml b/src/a
 index dd567abc1a..39c285bf0f 100644
 --- a/src/android/app/src/main/res/navigation/home_navigation.xml
 +++ b/src/android/app/src/main/res/navigation/home_navigation.xml
-@@ -99,6 +99,73 @@
+@@ -99,6 +99,80 @@
          android:id="@+id/installableFragment"
          android:name="org.yuzu.yuzu_emu.fragments.InstallableFragment"
          android:label="InstallableFragment" />
