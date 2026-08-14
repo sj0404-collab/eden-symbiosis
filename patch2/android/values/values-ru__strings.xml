@@ -1167,4 +1167,14 @@
     <string name="shared_folder_set">Общая папка выбрана: %1$s</string>
     <string name="shared_folder_failed">Не удалось использовать папку: %1$s</string>
     <string name="shared_folder_choose">Выбрать папку</string>
+    <string name="status_keys">Ключи</string>
+    <string name="status_firmware">Прошивка</string>
+    <string name="status_driver">Драйвер</string>
+    <string name="status_games">Игры</string>
+    <string name="status_saves">Сейвы</string>
+    <string name="status_shaders">Шейдеры</string>
+    <string name="status_data_root">Папка данных</string>
+    <string name="status_change_folder">Сменить папку данных</string>
+    <string name="folders_open_list">Папки с играми</string>
+    <string name="folder_unreadable">Не читается — проверьте разрешение на доступ к памяти</string>
 </resources>

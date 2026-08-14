@@ -1795,4 +1795,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="shared_folder_set">Shared folder set: %1$s</string>
     <string name="shared_folder_failed">Could not use that folder: %1$s</string>
     <string name="shared_folder_choose">Choose folder</string>
+    <string name="status_keys">Keys</string>
+    <string name="status_firmware">Firmware</string>
+    <string name="status_driver">Driver</string>
+    <string name="status_games">Games</string>
+    <string name="status_saves">Saves</string>
+    <string name="status_shaders">Shaders</string>
+    <string name="status_data_root">Data folder</string>
+    <string name="status_change_folder">Change data folder</string>
+    <string name="folders_open_list">Game folders</string>
+    <string name="folder_unreadable">Cannot be read — check storage permission</string>
 </resources>

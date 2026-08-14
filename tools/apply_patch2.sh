@@ -112,6 +112,7 @@ if want folders || want depth3; then
   copy_one "$PATCH_DIR/android/adapters/GameAdapter.kt"  "$J/adapters/GameAdapter.kt"
 fi
 
+
 # "minimal" is the safest thing the patch can offer: the floating button and
 # nothing else. It touches no list, no scan, no model - only a view added on
 # top of the emulation surface, and only once a game is already running.
@@ -123,18 +124,35 @@ if want button || want minimal || want ui; then
   copy_one "$PATCH_DIR/android/activities/EmulationActivity.kt" "$J/activities/EmulationActivity.kt"
 fi
 
-if want shared || want ui; then
-  copy_one "$PATCH_DIR/android/fragments/GameFoldersFragment.kt" "$J/fragments/GameFoldersFragment.kt"
-fi
+
 
 # Layout and strings. The shared-folder button lives beside "add game folder",
 # and its labels have to exist in both languages or the build fails on a
 # missing resource - which is how R.string.select was caught before it cost a
 # twenty-minute compile.
 RES="$(cd "$J/../../../../res" && pwd)"
-if want shared || want ui; then
-  copy_one "$PATCH_DIR/android/layout/fragment_folders.xml" "$RES/layout/fragment_folders.xml"
+
+# ── Панель состояния на экране игр ──────────────────────────────────
+#
+# То, что было в старом Symbiosis и чего не хватает пользователю: что
+# установлено, где лежит и сколько весит - ключи, прошивка, драйвер, игры,
+# сейвы, шейдеры, плюс карточки папок с числом игр и размером.
+#
+# Читается заново при каждом открытии экрана. Мастер первого запуска
+# показывал запомненный ответ и говорил "Готово" там, где ничего не было
+# установлено - поэтому здесь только настоящее состояние файлов.
+if want folders || want ui || want status; then
+  cp "$PATCH_DIR/android/utils/SetupStatus.kt"        "$J/utils/SetupStatus.kt"
+  cp "$PATCH_DIR/android/utils/GameFolderScanner.kt"  "$J/utils/GameFolderScanner.kt"
+  mkdir -p "$J/adapters"
+  cp "$PATCH_DIR/android/adapters/GameFolderAdapter.kt" "$J/adapters/GameFolderAdapter.kt"
+  cp "$PATCH_DIR/android/layout/card_game_folder.xml"   "$RES/layout/card_game_folder.xml"
+  copy_one "$PATCH_DIR/android/layout/fragment_games.xml" "$RES/layout/fragment_games.xml"
+  copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"       "$J/ui/GamesFragment.kt"
+  copied=$((copied + 4))
+  echo "  copied SetupStatus.kt, GameFolderScanner.kt, GameFolderAdapter.kt, card_game_folder.xml"
 fi
+
 # ── Strings are APPENDED, never overwritten ─────────────────────────
 #
 # These two files were the one thing present in every crashing build and
@@ -160,8 +178,11 @@ t = open(target, encoding='utf-8').read()
 s = open(src, encoding='utf-8').read()
 
 have = set(re.findall(r'<string name="([^"]+)"', t))
-add = [m.group(0) for m in re.finditer(r'<string name="(shared_folder[^"]*)"[^>]*>.*?</string>', s, re.S)
-       if m.group(1) not in have]
+# Только наши строки, по именам. Целиком файл не копируется: снимок
+# апстримовского strings.xml разошёлся бы с собираемой версией.
+WANTED = ('shared_folder', 'status_', 'folders_open_list', 'folder_unreadable')
+add = [m.group(0) for m in re.finditer(r'<string name="([^"]+)"[^>]*>.*?</string>', s, re.S)
+       if m.group(1).startswith(WANTED) and m.group(1) not in have]
 if not add:
     print("    strings already present")
     sys.exit(0)
@@ -222,9 +243,11 @@ check() {
 
 { want folders || want sort || want depth3; } && check "$J/ui/GamesFragment.kt" "GameFolders.folderOf" "list grouped by folder"
 { want folders || want depth3; } && check "$J/adapters/GameAdapter.kt" "GameFolders.folderNameOf" "folder shown on the card"
+{ want folders || want ui || want status; } && check "$J/utils/SetupStatus.kt" "object SetupStatus" "setup status panel"
+{ want folders || want ui || want status; } && check "$RES/layout/fragment_games.xml" "status_strip" "status panel in the layout"
+{ want folders || want ui || want status; } && check "$J/ui/GamesFragment.kt" "refreshStatusStrip" "status panel wired in"
+{ want folders || want ui || want status; } && check "$J/ui/GamesFragment.kt" "SettingsSubscreen.GAME_FOLDERS" "folders button uses Eden's own route"
 { want button || want minimal || want ui; } && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
-{ want shared || want ui; } && check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
-{ want shared || want ui; } && check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
 check "$J/YuzuApplication.kt" "installCrashLogger" "crash logger"
 check "$RES/values/strings.xml" "shared_folder_choose" "English labels"
 check "$RES/values-ru/strings.xml" "shared_folder_choose" "Russian labels"

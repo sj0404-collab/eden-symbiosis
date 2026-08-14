@@ -40,6 +40,17 @@ import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.model.GamesViewModel
 import org.yuzu.yuzu_emu.model.HomeViewModel
 import org.yuzu.yuzu_emu.ui.main.MainActivity
+import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
+import androidx.navigation.findNavController
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.yuzu.yuzu_emu.adapters.GameFolderAdapter
+import org.yuzu.yuzu_emu.utils.GameFolderScanner
+import org.yuzu.yuzu_emu.utils.SetupStatus
+import org.yuzu.yuzu_emu.features.settings.model.SettingsSubscreen
+import org.yuzu.yuzu_emu.utils.SharedDataDirectory
 import org.yuzu.yuzu_emu.utils.GameFolders
 import org.yuzu.yuzu_emu.utils.ViewUtils.setVisible
 import org.yuzu.yuzu_emu.utils.collect
@@ -103,6 +114,42 @@ class GamesFragment : Fragment() {
     }
 
     @SuppressLint("NotifyDataSetChanged")
+    /**
+     * Выбор папки данных.
+     *
+     * Регистрируется как обычный ActivityResult - Eden делает так же для
+     * папки с играми. Результат проверяется до применения: SharedDataDirectory
+     * умеет сказать, что папка не годится, до того как что-то будет записано.
+     */
+    private val getDataRootFolder =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { result ->
+            if (result == null) return@registerForActivityResult
+            runCatching {
+                val path = SharedDataDirectory.resolveTreePath(result)
+                    ?: SharedDataDirectory.suggestedNeutralPath()
+                val check = SharedDataDirectory.inspect(requireContext(), path)
+                if (check.verdict != SharedDataDirectory.Verdict.Usable) {
+                    Toast.makeText(
+                        requireContext(),
+                        getString(R.string.shared_folder_failed, SharedDataDirectory.summarise(check)),
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@runCatching
+                }
+                SharedDataDirectory.ensureLayout(path)
+                if (SharedDataDirectory.redirectNow(path)) {
+                    Toast.makeText(
+                        requireContext(),
+                        getString(R.string.shared_folder_set, path),
+                        Toast.LENGTH_LONG
+                    ).show()
+                    refreshStatusStrip()
+                }
+            }.onFailure {
+                android.util.Log.e("Symbiosis", "data root change failed", it)
+            }
+        }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         homeViewModel.setStatusBarShadeVisibility(true)
@@ -190,6 +237,92 @@ class GamesFragment : Fragment() {
         }
 
         setInsets()
+
+        // Панель состояния и карточки папок. Всё внутри runCatching: если
+        // что-то пойдёт не так, экран игр останется точно таким же, как в
+        // апстриме, а не упадёт.
+        runCatching { setUpStatusStrip() }
+            .onFailure { android.util.Log.e("Symbiosis", "status strip failed", it) }
+    }
+
+    /**
+     * Показывает, что установлено и где - прямо на экране игр.
+     *
+     * Читается заново при каждом появлении экрана: запомненный ответ - это
+     * ровно то, из-за чего мастер первого запуска говорил "Готово" там, где
+     * ничего не было установлено.
+     */
+    private fun setUpStatusStrip() {
+        val strip = binding.statusStrip ?: return
+
+        // Открывается ровно так же, как это делает сам Eden из настроек:
+        // HomeNavigationDirections + SettingsSubscreen.GAME_FOLDERS. Свой
+        // переход в navigation-графе не изобретается - его там нет, и
+        // сборка бы упала на несуществующем id.
+        binding.foldersButton?.setOnClickListener {
+            runCatching {
+                val action = HomeNavigationDirections.actionGlobalSettingsSubscreenActivity(
+                    SettingsSubscreen.GAME_FOLDERS,
+                    null
+                )
+                binding.root.findNavController().navigate(action)
+            }.onFailure {
+                android.util.Log.e("Symbiosis", "folders button failed", it)
+            }
+        }
+
+        // Папка данных: куда эмулятор кладёт ключи, прошивку, сейвы и
+        // шейдеры. Открывает системный выбор папки; сам перенос делает
+        // SharedDataDirectory, который умеет проверить папку до записи.
+        binding.dataRootButton?.setOnClickListener {
+            runCatching { getDataRootFolder.launch(null) }
+                .onFailure { android.util.Log.e("Symbiosis", "data root picker failed", it) }
+        }
+
+        folderCardAdapter = GameFolderAdapter(requireActivity() as AppCompatActivity)
+        binding.folderCards?.adapter = folderCardAdapter
+
+        strip.isVisible = true
+        refreshStatusStrip()
+    }
+
+    private var folderCardAdapter: GameFolderAdapter? = null
+
+    /** Заново опрашивает состояние: файлы либо есть, либо нет. */
+    private fun refreshStatusStrip() {
+        val line = binding.statusLine ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val ctx = requireContext()
+            val items = withContext(Dispatchers.IO) {
+                runCatching { SetupStatus.all(ctx) }.getOrNull()
+            } ?: return@launch
+            if (_binding == null) return@launch
+
+            line.text = items.joinToString(" · ") { item ->
+                val size = item.bytes?.takeIf { it > 0 }
+                    ?.let { " " + GameFolderScanner.humanSize(it) } ?: ""
+                getString(item.labelRes) + (if (item.present) " ✓" else " ✕") + size
+            }
+
+            binding.statusPaths?.text = buildString {
+                for (item in items) {
+                    append(getString(item.labelRes)).append(": ").append(item.detail)
+                    item.bytes?.takeIf { it > 0 }?.let {
+                        append(" · ").append(GameFolderScanner.humanSize(it))
+                    }
+                    append('\n')
+                }
+                append(getString(R.string.status_data_root)).append(": ")
+                    .append(SetupStatus.dataRoot())
+            }
+
+            val folders = withContext(Dispatchers.IO) {
+                runCatching { GameFolderScanner.scan(ctx) }.getOrDefault(emptyList())
+            }
+            if (_binding == null) return@launch
+            binding.folderCards?.isVisible = folders.isNotEmpty()
+            folderCardAdapter?.submitList(folders)
+        }
     }
 
     val applyGridGamesBinding = {
