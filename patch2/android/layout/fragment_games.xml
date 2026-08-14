@@ -276,6 +276,30 @@
                 android:visibility="gone"
                 app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager" />
 
+            <!-- ── Мои игры ────────────────────────────────────────────
+                 Что ЛЕЖИТ в папке, а не что смог разобрать эмулятор. Имя
+                 файла, размер, пометка если формат незапускаемый. Папка
+                 раскрывается по нажатию, вложенные папки не обходятся,
+                 количество файлов не ограничено. -->
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/my_games_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/my_games"
+                android:textAppearance="@style/TextAppearance.Material3.TitleSmall"
+                android:visibility="gone" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/my_games_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:clipToPadding="false"
+                android:nestedScrollingEnabled="false"
+                android:visibility="gone"
+                app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager" />
+
         </LinearLayout>
 
     </com.google.android.material.card.MaterialCardView>

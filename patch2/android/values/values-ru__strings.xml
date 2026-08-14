@@ -1183,4 +1183,9 @@
         <item quantity="many">%d игр</item>
         <item quantity="other">%d игр</item>
     </plurals>
+    <string name="my_games">Мои игры</string>
+    <string name="my_games_tap_to_show">%1$d файлов · нажми, чтобы посмотреть</string>
+    <string name="my_games_tap_to_hide">%1$d файлов · нажми, чтобы свернуть</string>
+    <string name="my_games_empty">В этой папке нет файлов игр</string>
+    <string name="my_games_not_launchable">· не запустится</string>
 </resources>

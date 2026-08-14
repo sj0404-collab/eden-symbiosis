@@ -280,7 +280,7 @@ jobs:
             grep -vE "^warning: (classpath|language version)" || true
           java -Dfile.encoding=UTF-8 -jar /tmp/gf.jar || fail=1
 
-          for t in FolderScanTest GroupByFolderTest CardSubtitleTest StatusVerdictTest; do
+          for t in FolderScanTest GroupByFolderTest CardSubtitleTest StatusVerdictTest MyGamesTest; do
             echo "── $t ──"
             /tmp/kotlinc/bin/kotlinc "fork/patch2/tests/$t.kt" -include-runtime -d "/tmp/$t.jar" 2>&1 |
               grep -vE "^warning: (classpath|language version)" || true

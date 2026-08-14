@@ -1809,4 +1809,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
         <item quantity="one">%d game</item>
         <item quantity="other">%d games</item>
     </plurals>
+    <string name="my_games">My games</string>
+    <string name="my_games_tap_to_show">%1$d files · tap to see them</string>
+    <string name="my_games_tap_to_hide">%1$d files · tap to collapse</string>
+    <string name="my_games_empty">No game files in this folder</string>
+    <string name="my_games_not_launchable">· cannot be launched</string>
 </resources>

@@ -30,6 +30,63 @@ object GameFolderScanner {
     private val ROM_EXTENSIONS = setOf("xci", "nsp", "nca", "nro")
 
     /**
+     * Всё, что человек считает файлом игры - включая то, что сам эмулятор
+     * не откроет.
+     *
+     * ncz/nsz/xcz - сжатые образы. Eden их не запускает, и в списке игр их
+     * не будет никогда. Но лежат они в той же папке, занимают место, и
+     * пользователь про них знает. Панель "Мои игры" показывает их честно,
+     * помечая как незапускаемые, вместо того чтобы делать вид, что папка
+     * пуста - именно эта пустота и выглядит как "эмулятор ничего не нашёл".
+     */
+    private val SHOWABLE_EXTENSIONS =
+        ROM_EXTENSIONS + setOf("ncz", "nsz", "xcz", "kip", "nso")
+
+    /** Файл этого типа эмулятор запустить не сможет. */
+    fun isLaunchable(name: String): Boolean =
+        name.substringAfterLast('.', "").lowercase(Locale.ROOT) in ROM_EXTENSIONS ||
+            name.lowercase(Locale.ROOT) in ROM_FILENAMES
+
+    /**
+     * Плоский список файлов игр ровно в этой папке, без захода вглубь.
+     *
+     * Отдельно от [listGames], потому что вопросы разные: тот отвечает
+     * "что импортирует библиотека", а этот - "что лежит в папке". Без
+     * рекурсии, без фильтра по тому, примет ли файл эмулятор, и без
+     * ограничения по количеству.
+     */
+    fun listFilesFlat(context: Context, uriString: String): List<Entry> {
+        val tree = runCatching { Uri.parse(uriString) }.getOrNull() ?: return emptyList()
+        val children = childrenUriFor(tree) ?: return emptyList()
+        val out = mutableListOf<Entry>()
+        val cursor = runCatching {
+            context.contentResolver.query(
+                children,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                    DocumentsContract.Document.COLUMN_SIZE
+                ),
+                null, null, null
+            )
+        }.getOrNull() ?: return emptyList()
+
+        cursor.use {
+            while (it.moveToNext()) {
+                val name = it.getString(0) ?: continue
+                val mime = it.getString(1) ?: ""
+                val size = if (it.isNull(2)) 0L else it.getLong(2)
+                if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
+                val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                if (ext in SHOWABLE_EXTENSIONS || name.lowercase(Locale.ROOT) in ROM_FILENAMES) {
+                    out.add(Entry(name, size))
+                }
+            }
+        }
+        return out.sortedByDescending { it.bytes }
+    }
+
+    /**
      * Filenames that are a game without having a game's extension.
      *
      * loader.cpp:GuessFromFilename treats a file literally called "main" as a

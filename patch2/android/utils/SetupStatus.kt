@@ -68,12 +68,39 @@ object SetupStatus {
 
     fun firmware(): Item {
         val dir = root()?.let { "$it/nand/system/Contents/registered" }
-        val count = dir?.let { File(it).listFiles()?.size } ?: 0
+        val files = dir?.let { File(it).listFiles() }
+        val count = files?.size ?: 0
         val available = runCatching { NativeLibrary.isFirmwareAvailable() }.getOrDefault(false)
+
+        // Прошивка должна лежать РАСПАКОВАННОЙ - россыпью .nca прямо в
+        // registered. Zip внутри этой папки эмулятор не читает и молча ведёт
+        // себя как без прошивки: игры при этом не запускаются, а панель
+        // раньше показывала галочку и размер, потому что считала файлы, не
+        // глядя, что это за файлы.
+        val nca = files?.count { it.isFile && it.name.endsWith(".nca", true) } ?: 0
+        val archives = files?.count {
+            it.isFile && (it.name.endsWith(".zip", true) || it.name.endsWith(".7z", true) ||
+                it.name.endsWith(".rar", true))
+        } ?: 0
+
+        val detail = when {
+            count == 0 -> "не установлена — распакуй архив прошивки в эту папку"
+            archives > 0 && nca == 0 ->
+                "архив не распакован ($archives шт.) — нужны файлы .nca россыпью, " +
+                "а не zip · ${dir ?: ""}"
+            nca == 0 ->
+                "$count файлов, но ни одного .nca — прошивка распакована не туда · ${dir ?: ""}"
+            !available ->
+                "$nca .nca есть, но эмулятор их не принял — проверь ключи · ${dir ?: ""}"
+            else -> "$nca файлов · ${dir ?: ""}"
+        }
+
         return Item(
             labelRes = R.string.status_firmware,
-            present = available && count > 0,
-            detail = if (count > 0) "$count файлов · ${dir ?: ""}" else "не установлена",
+            // Галочка только когда эмулятор действительно её видит И на диске
+            // лежат распакованные .nca.
+            present = available && nca > 0,
+            detail = detail,
             bytes = if (count > 0) GameFolderScanner.directoryBytes(dir) else null
         )
     }

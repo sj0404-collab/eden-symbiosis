@@ -147,6 +147,9 @@ if want folders || want ui || want status; then
   mkdir -p "$J/adapters"
   cp "$PATCH_DIR/android/adapters/GameFolderAdapter.kt" "$J/adapters/GameFolderAdapter.kt"
   cp "$PATCH_DIR/android/layout/card_game_folder.xml"   "$RES/layout/card_game_folder.xml"
+  # Панель "Мои игры": что лежит в папке, а не что разобрал эмулятор.
+  cp "$PATCH_DIR/android/adapters/MyGamesAdapter.kt"    "$J/adapters/MyGamesAdapter.kt"
+  cp "$PATCH_DIR/android/layout/card_my_games_folder.xml" "$RES/layout/card_my_games_folder.xml"
   copy_one "$PATCH_DIR/android/layout/fragment_games.xml" "$RES/layout/fragment_games.xml"
   copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"       "$J/ui/GamesFragment.kt"
   # Корень данных применяется при старте. Без этого кнопка "Сменить папку
@@ -186,7 +189,7 @@ have = set(re.findall(r'<string name="([^"]+)"', t))
 # Только наши строки, по именам. Целиком файл не копируется: снимок
 # апстримовского strings.xml разошёлся бы с собираемой версией.
 WANTED = ('shared_folder', 'status_', 'folders_open_list', 'folder_unreadable',
-          'folder_game_count')
+          'folder_game_count', 'my_games')
 add = [m.group(0) for m in re.finditer(r'<string name="([^"]+)"[^>]*>.*?</string>', s, re.S)
        if m.group(1).startswith(WANTED) and m.group(1) not in have]
 # plurals тоже: карточка папки показывает "2 игры" через folder_game_count
@@ -259,6 +262,9 @@ check() {
 { want folders || want ui || want status; } && check "$J/ui/GamesFragment.kt" "SettingsSubscreen.GAME_FOLDERS" "folders button uses Eden's own route"
 { want folders || want ui || want status; } && check "$J/utils/DirectoryInitialization.kt" "SharedDataDirectory.configuredPath" "chosen data folder survives a restart"
 { want folders || want ui || want status; } && check "$J/utils/SharedDataDirectory.kt" "configuredPath = path" "chosen data folder is saved"
+{ want folders || want ui || want status; } && check "$J/adapters/MyGamesAdapter.kt" "listFilesFlat" "my-games panel lists real files"
+{ want folders || want ui || want status; } && check "$RES/layout/fragment_games.xml" "my_games_list" "my-games panel in the layout"
+{ want folders || want ui || want status; } && check "$J/utils/SetupStatus.kt" "архив не распакован" "firmware tells you to unpack it"
 { want button || want minimal || want ui; } && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
 check "$J/YuzuApplication.kt" "installCrashLogger" "crash logger"
 check "$RES/values/strings.xml" "shared_folder_choose" "English labels"

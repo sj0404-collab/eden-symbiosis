@@ -47,6 +47,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.adapters.GameFolderAdapter
+import org.yuzu.yuzu_emu.adapters.MyGamesAdapter
 import org.yuzu.yuzu_emu.utils.GameFolderScanner
 import org.yuzu.yuzu_emu.utils.SetupStatus
 import org.yuzu.yuzu_emu.features.settings.ui.SettingsSubscreen
@@ -316,6 +317,11 @@ class GamesFragment : Fragment() {
             }
             if (_binding == null) return@launch
             binding.folderCards?.isVisible = folders.isNotEmpty()
+
+            // Панель "Мои игры": сами файлы в папках, без обхода вглубь.
+            binding.myGamesTitle?.isVisible = folders.isNotEmpty()
+            binding.myGamesList?.isVisible = folders.isNotEmpty()
+            binding.myGamesList?.adapter = MyGamesAdapter(requireContext(), folders) { }
             // Адаптер строится заново на каждый обход: его список задаётся
             // конструктором, метода submitList у него нет.
             binding.folderCards?.adapter = GameFolderAdapter(
