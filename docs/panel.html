@@ -65,6 +65,7 @@
   .file .fname { flex: 1 1 auto; word-break: break-all; }
   .file .fsize { flex: 0 0 auto; color: var(--dim); }
   .warn { color: var(--bad); font-size: 12px; }
+  .why { color: var(--dim); font-size: 11px; margin-top: 2px; line-height: 1.35; }
   .empty { color: var(--dim); font-style: italic; padding: 8px 0; }
   .stamp { text-align: center; color: var(--dim); font-size: 11px; margin-top: 16px; }
 </style>
@@ -95,6 +96,32 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, function (c) {
     return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
   });
+}
+
+// Почему файл не стал игрой.
+//
+// Живёт на странице, а не в APK: это правило меняется чаще всего - новые
+// расширения, новые пороги размера - и менять его правкой HTML можно за
+// минуту, вместо получасовой пересборки и переустановки.
+function why(x) {
+  var ext = (x.name.split('.').pop() || '').toLowerCase();
+  var mb = Math.round((x.bytes || 0) / 1048576);
+
+  if (ext === 'ncz' || ext === 'nsz' || ext === 'xcz') {
+    return 'сжатый образ .' + ext + ' — Eden такие не открывает. ' +
+           'Нужен обычный .nsp или .xci';
+  }
+  if (ext === 'nro') return 'homebrew-программа, не игра Switch';
+  if (ext === 'kip' || ext === 'nso') return 'системный файл, не игра';
+  if (ext === 'xci' && mb < 700) {
+    return mb + ' МБ — для картриджа мало, возможно обрезан при скачивании';
+  }
+  if (ext === 'nsp' && mb < 700) {
+    return mb + ' МБ — для игры мало. Обычно это обновление или DLC, ' +
+           'а не сама игра';
+  }
+  if (!x.launchable) return 'этот формат Eden не открывает';
+  return '';
 }
 
 function drawStatus() {
@@ -157,6 +184,7 @@ function drawFolders() {
             return '<div class="file">' +
               '<span class="fname">' + esc(x.name) +
               (x.launchable ? '' : ' <span class="warn">· не запустится</span>') +
+              '<div class="why">' + esc(why(x)) + '</div>' +
               '</span>' +
               '<span class="fsize">' + esc(x.size) + '</span>' +
               '</div>';
@@ -175,7 +203,7 @@ drawStatus();
 drawFolders();
 
 document.getElementById('stamp').textContent =
-  'панель обновлена 14.08.2026' +
+  'панель обновлена 14.08.2026 (диагностика файлов)' +
   (api ? ' · мост v' + api.bridgeVersion() : ' · вне приложения');
 </script>
 
