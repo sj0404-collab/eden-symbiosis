@@ -1,12 +1,6 @@
 {
-  "kind": "CLI-агент",
-  "os": "linux",
-  "url": "https://funk-subjects-demo-yea.trycloudflare.com",
-  "agentUrl": "https://funk-subjects-demo-yea.trycloudflare.com/hub?token=zen-b9e4ac684319dd5c7424dae9",
-  "agentToken": "zen-b9e4ac684319dd5c7424dae9",
-  "branch": "agent-work",
-  "startedAt": "2026-08-14T10:05:48Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-14T15:55:50Z",
   "runId": "31790779121",
   "runNumber": "22",
   "repo": "sj0404-collab/eden-symbiosis"
