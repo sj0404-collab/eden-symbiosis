@@ -44,7 +44,7 @@ fun main() {
     )
 
     val flat = mutableListOf<Found>()
-    walk(tree, 24, flat)
+    walk(tree, 8, flat)
 
     check("найдены все 6 игр", flat.size == 6, flat.size.toString())
     check("игра сверху без папки", flat.first { it.name == "top.nsp" }.folder == "")

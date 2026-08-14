@@ -407,8 +407,25 @@ class GamesFragment : Fragment() {
      * not scattered among the grouped ones.
      */
     private fun groupByFolder(list: List<Game>): List<Game> =
-        list.sortedWith(compareBy({ it.folder.lowercase(Locale.getDefault()) },
-                                  { it.title.lowercase(Locale.getDefault()) }))
+        // Falls back to the list exactly as upstream would leave it.
+        //
+        // WHY EVERY ADDITION HERE IS WRAPPED
+        //   Eight installs have crashed and I could not find the cause by
+        //   reading, so the code stops being allowed to crash. A failure in
+        //   my own sorting must cost the grouping, not the app: upstream
+        //   returned baseList untouched here, and that is exactly what is
+        //   returned if anything at all goes wrong.
+        runCatching {
+            list.sortedWith(
+                compareBy(
+                    { it.folder.lowercase(Locale.getDefault()) },
+                    { it.title.lowercase(Locale.getDefault()) }
+                )
+            )
+        }.getOrElse {
+            android.util.Log.e("Symbiosis", "groupByFolder failed", it)
+            list
+        }
 
     private fun filterAndSearch(baseList: List<Game> = gamesViewModel.games.value) {
         val filteredList: List<Game> = when (currentFilter) {

@@ -61,9 +61,16 @@ object GameHelper {
             if (isValid) {
                 // Was 3-or-1. Now that each game remembers its folder,
                 // stopping at three levels only hides games; a library sorted
-                // by system/genre/title is already four deep. The number stays
-                // finite so a symlinked loop cannot spin forever.
-                val scanDepth = if (gameDir.deepScan) 24 else 1
+                // by system/genre/title is already four deep.
+                //
+                // 8, not 24. Depth is not free: every level multiplies the
+                // number of directories walked, and each one is a SAF query
+                // over Binder - on a folder tree with any width, 24 levels is
+                // minutes of work and a real chance of ANR or of the scan
+                // being killed before the list ever appears. Eight covers
+                // system/genre/series/title with room to spare, and the limit
+                // still stops a self-referencing link spinning forever.
+                val scanDepth = if (gameDir.deepScan) 8 else 1
 
                 addGamesRecursive(
                     games,
@@ -160,13 +167,23 @@ object GameHelper {
                 } else {
                     "$folder/${it.filename}"
                 }
-                addGamesRecursive(
-                    games,
-                    FileUtil.listFiles(it.uri),
-                    depth - 1,
-                    mountedContainerUris,
-                    childFolder
-                )
+                // Wrapped: one unreadable subdirectory must cost that
+                // subdirectory, not the whole library. Depth 24 means the
+                // scan now walks into places upstream never reached - a
+                // permission-denied folder, a dead mount, an SD card pulled
+                // mid-scan - and any of those throwing here would take the
+                // app down before the list ever appeared.
+                runCatching {
+                    addGamesRecursive(
+                        games,
+                        FileUtil.listFiles(it.uri),
+                        depth - 1,
+                        mountedContainerUris,
+                        childFolder
+                    )
+                }.onFailure { e ->
+                    android.util.Log.e("Symbiosis", "scan failed in $childFolder", e)
+                }
             } else {
                 val extension = FileUtil.getExtension(it.uri).lowercase()
                 val filePath = it.uri.toString()

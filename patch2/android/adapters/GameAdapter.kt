@@ -177,11 +177,21 @@ class GameAdapter(private val activity: AppCompatActivity) :
             // folder when there is one, developer otherwise, developer when
             // there is no folder either. Nothing is hidden that was visible
             // before - a game at the top level still shows its developer.
-            listBinding.textGameDeveloper.text = when {
-                model.folder.isNotEmpty() && model.developer.isNotEmpty() ->
-                    "${model.folderName} · ${model.developer}"
-                model.folder.isNotEmpty() -> model.folderName
-                else -> model.developer
+            //
+            // Wrapped, and falling back to upstream's own line: this runs for
+            // every card, so an exception here would take the list down with
+            // it. Eight installs have crashed with no diagnosis, so nothing
+            // added by this patch is allowed to be fatal any more.
+            listBinding.textGameDeveloper.text = runCatching {
+                when {
+                    model.folder.isNotEmpty() && model.developer.isNotEmpty() ->
+                        "${model.folderName} · ${model.developer}"
+                    model.folder.isNotEmpty() -> model.folderName
+                    else -> model.developer
+                }
+            }.getOrElse {
+                android.util.Log.e("Symbiosis", "card subtitle failed", it)
+                model.developer
             }
 
             listBinding.textGameTitle.marquee()

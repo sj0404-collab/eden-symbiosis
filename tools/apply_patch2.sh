@@ -142,7 +142,7 @@ check() {
 { want folders || want scan || want sort; } && check "$J/model/Game.kt"       "val folder: String"  "Game.folder field"
 { want folders || want scan || want sort; } && check "$J/model/Game.kt"       "folderName"          "Game.folderName"
 { want folders || want scan || want sort; } && check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the scan"
-{ want folders || want scan || want sort; } && check "$J/utils/GameHelper.kt" "deepScan) 24"        "scan depth raised to 24"
+{ want folders || want scan || want sort; } && check "$J/utils/GameHelper.kt" "deepScan) 8"         "scan depth raised to 8"
 { want folders || want sort; } && check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
 want folders && check "$J/adapters/GameAdapter.kt" "model.folderName" "folder shown on the card"
 want button && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
