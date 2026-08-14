@@ -74,29 +74,37 @@ object SharedDataDirectory {
         File(Environment.getExternalStorageDirectory(), "Eden Debug").absolutePath
 
     /**
-     * Uses the visible folder when it is writable, otherwise private storage.
+     * The default data root: private storage, exactly as upstream.
      *
-     * Called only when the user has not chosen a folder of their own, so an
-     * explicit choice always wins.
+     * ЭТА ФУНКЦИЯ РАНЬШЕ ЛОМАЛА СЕЙВЫ И МОДЫ
+     *
+     * Здесь стояло: «если есть доступ ко всем файлам и /sdcard/Eden Debug
+     * доступен на запись - вернуть его». Последствия:
+     *
+     *  1. Корень данных МЕНЯЛСЯ САМ, в момент выдачи разрешения. До выдачи
+     *     корень - Android/data/dev.legacy.eden_emulator/files. После -
+     *     /sdcard/Eden Debug. Пользователь ничего не выбирал, его не
+     *     спрашивали, и нигде это не было написано.
+     *
+     *  2. От корня native-слой выводит ВСЁ: keys, nand (сейвы), load
+     *     (моды), shader, sdmc. Значит сейвы, лежащие там, где их
+     *     оставил официальный Eden, перестают находиться - их ищут в
+     *     /sdcard/Eden Debug/nand/user/save, а там пусто. Ровно то же с
+     *     модами: PatchManager читает <корень>/load/<TitleID>/, а мод
+     *     лежит в load официальной установки.
+     *
+     *  3. Отсюда же «в официальном мод работал исправно»: официальная
+     *     сборка никогда не уходит из приватной папки, потому что
+     *     upstream делает ровно одно -
+     *     `getExternalFilesDir(null).canonicalPath`.
+     *
+     * Теперь по умолчанию - приватная папка, как в апстриме. Корень
+     * меняется ТОЛЬКО явным выбором пользователя (Инструменты → Сменить
+     * папку данных), и тогда это его решение, а не побочный эффект
+     * выданного разрешения.
      */
-    fun preferredDefault(context: Context): String {
-        if (!hasAllFilesAccess()) {
-            // Without All Files Access a folder outside Android/data cannot be
-            // written to, and failing there would mean the emulator does not
-            // start at all. Private storage is the safe answer.
-            return privatePath(context) ?: visibleDefaultPath()
-        }
-        val visible = File(visibleDefaultPath())
-        val usable = runCatching {
-            if (!visible.exists()) visible.mkdirs()
-            val probe = File(visible, ".eden_write_probe")
-            probe.writeText("1")
-            val ok = probe.exists()
-            probe.delete()
-            ok
-        }.getOrDefault(false)
-        return if (usable) visible.absolutePath else (privatePath(context) ?: visible.absolutePath)
-    }
+    fun preferredDefault(context: Context): String =
+        privatePath(context) ?: visibleDefaultPath()
 
     /**
      * Resolves the directory to hand to the native layer.
