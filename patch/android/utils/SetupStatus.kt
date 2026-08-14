@@ -148,9 +148,12 @@ object SetupStatus {
                 "файлы есть ($skipped), но это не игры — нужны .xci .nsp .nca .nro"
             games == 0 ->
                 "в «$name» нет файлов игр"
+            // Назвать файлы поимённо и сказать про каждый, почему он не
+            // подошёл. "Проверь ключи и прошивку" при зелёных галочках на
+            // ключах и прошивке - это тупик: человек идёт перепроверять
+            // заведомо исправное. Имя файла и его размер говорят больше.
             imported in 0 until games ->
-                "$games файлов, распознано $imported — остальные не читаются: " +
-                "проверь ключи и прошивку"
+                "$games файлов, распознано $imported. " + whyNotGames(context)
             dirs.size == 1 -> "$games в «$name»"
             else -> "$games в ${dirs.size} папках"
         }
@@ -165,6 +168,39 @@ object SetupStatus {
     }
 
     /** Save data. Grows quietly and is the thing worth backing up. */
+    /**
+     * Почему найденные файлы не стали играми.
+     *
+     * Смотрит на сами файлы, а не на настройки: расширение и размер. Это
+     * ровно те две вещи, по которым видно самые частые случаи - сжатый
+     * образ, который Eden не открывает, и обновление или DLC, положенное
+     * вместо игры.
+     */
+    private fun whyNotGames(context: Context): String {
+        val dirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return ""
+        val names = mutableListOf<String>()
+        for (dir in dirs) {
+            runCatching { GameFolderScanner.listFilesFlat(context, dir.uriString) }
+                .getOrDefault(emptyList())
+                .forEach { e ->
+                    val ext = e.name.substringAfterLast('.', "").lowercase()
+                    val mb = e.bytes / 1048576
+                    val why = when {
+                        ext in setOf("ncz", "nsz", "xcz") ->
+                            "сжатый образ .$ext — Eden такие не открывает, нужен .nsp или .xci"
+                        ext == "nsp" && mb in 1..600 ->
+                            "$mb МБ — для игры мало, похоже на обновление или DLC"
+                        ext == "nro" -> "homebrew, не игра Switch"
+                        ext in setOf("kip", "nso") -> "системный файл, не игра"
+                        else -> "не прочитался: файл повреждён или обрезан при скачивании"
+                    }
+                    names.add("«${e.name}» — $why")
+                }
+        }
+        if (names.isEmpty()) return "проверь ключи и прошивку"
+        return names.joinToString("; ")
+    }
+
     fun saves(): Item {
         val dir = savesPath().takeIf { it != "—" }
         val bytes = GameFolderScanner.directoryBytes(dir)
