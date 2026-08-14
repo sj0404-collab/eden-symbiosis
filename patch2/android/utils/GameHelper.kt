@@ -27,6 +27,18 @@ object GameHelper {
 
     var cachedGameList = mutableListOf<Game>()
 
+    /**
+     * Прошёл ли хоть один скан за этот запуск.
+     *
+     * Без этого пустой cachedGameList не отличить от "эмулятор ещё не
+     * смотрел": и то и другое даёт размер 0. Панель состояния принимала
+     * второе за первое и писала "распознано 0 - проверь ключи", когда
+     * проверять было нечего.
+     */
+    @Volatile
+    var hasScanned = false
+        private set
+
     private lateinit var preferences: SharedPreferences
 
     fun getGames(): List<Game> {
@@ -100,6 +112,7 @@ object GameHelper {
         }
 
         cachedGameList = games.toMutableList()
+        hasScanned = true
         return games.toList()
     }
 

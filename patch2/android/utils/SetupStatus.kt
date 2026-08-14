@@ -131,7 +131,23 @@ object SetupStatus {
         // download - and the emulator's own list is the authority on that.
         // Comparing against it turns "I see a file but no game" from a mystery
         // into a sentence.
-        val imported = runCatching { GameHelper.cachedGameList.size }.getOrDefault(-1)
+        // -1 означает "эмулятор ещё не сканировал", а НЕ "распознал ноль".
+        //
+        // cachedGameList заполняется только в самом конце GameHelper.getGames().
+        // Панель же читается при открытии экрана, и до первого прохода список
+        // пуст - размер 0. Старый код принимал этот ноль за приговор и писал
+        // "распознано 0 - проверь ключи и прошивку" при отмеченных галочкой
+        // ключах и прошивке, то есть обвинял заведомо исправное.
+        //
+        // Отличить одно от другого можно только по факту прохода скана, а не
+        // по размеру списка: пустой список после скана и пустой список до
+        // скана выглядят одинаково.
+        val scanned = runCatching { GameHelper.hasScanned }.getOrDefault(false)
+        val imported = if (scanned) {
+            runCatching { GameHelper.cachedGameList.size }.getOrDefault(-1)
+        } else {
+            -1
+        }
 
         // Storage access is checked before anything else is blamed. The
         // document provider happily lists and counts a folder without it,
@@ -148,9 +164,12 @@ object SetupStatus {
                 "файлы есть ($skipped), но это не игры — нужны .xci .nsp .nca .nro"
             games == 0 ->
                 "в «$name» нет файлов игр"
+            // Только когда скан действительно прошёл и часть файлов отпала.
             imported in 0 until games ->
                 "$games файлов, распознано $imported — остальные не читаются: " +
                 "проверь ключи и прошивку"
+            // Скана ещё не было: сказать нечего, кроме того, что нашлось.
+            imported < 0 && dirs.size == 1 -> "$games в «$name» · открой список"
             dirs.size == 1 -> "$games в «$name»"
             else -> "$games в ${dirs.size} папках"
         }
@@ -158,7 +177,9 @@ object SetupStatus {
             labelRes = R.string.status_games,
             // Green only when the emulator agrees it has something to launch,
             // and only when it is actually allowed to read the files.
-            present = games > 0 && imported != 0 && !noAccess,
+            // Галочка, когда файлы есть и доступ есть. imported == 0 валит
+            // её только если скан РЕАЛЬНО прошёл и ничего не принял.
+            present = games > 0 && !(scanned && imported == 0) && !noAccess,
             detail = detail,
             bytes = bytes
         )
