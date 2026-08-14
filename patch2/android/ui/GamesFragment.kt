@@ -49,7 +49,7 @@ import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.adapters.GameFolderAdapter
 import org.yuzu.yuzu_emu.utils.GameFolderScanner
 import org.yuzu.yuzu_emu.utils.SetupStatus
-import org.yuzu.yuzu_emu.features.settings.model.SettingsSubscreen
+import org.yuzu.yuzu_emu.features.settings.ui.SettingsSubscreen
 import org.yuzu.yuzu_emu.utils.SharedDataDirectory
 import org.yuzu.yuzu_emu.utils.GameFolders
 import org.yuzu.yuzu_emu.utils.ViewUtils.setVisible
@@ -279,14 +279,9 @@ class GamesFragment : Fragment() {
                 .onFailure { android.util.Log.e("Symbiosis", "data root picker failed", it) }
         }
 
-        folderCardAdapter = GameFolderAdapter(requireActivity() as AppCompatActivity)
-        binding.folderCards?.adapter = folderCardAdapter
-
         strip.isVisible = true
         refreshStatusStrip()
     }
-
-    private var folderCardAdapter: GameFolderAdapter? = null
 
     /** Заново опрашивает состояние: файлы либо есть, либо нет. */
     private fun refreshStatusStrip() {
@@ -321,7 +316,22 @@ class GamesFragment : Fragment() {
             }
             if (_binding == null) return@launch
             binding.folderCards?.isVisible = folders.isNotEmpty()
-            folderCardAdapter?.submitList(folders)
+            // Адаптер строится заново на каждый обход: его список задаётся
+            // конструктором, метода submitList у него нет.
+            binding.folderCards?.adapter = GameFolderAdapter(
+                requireActivity() as AppCompatActivity,
+                folders
+            ) { folder ->
+                runCatching {
+                    val action = HomeNavigationDirections.actionGlobalSettingsSubscreenActivity(
+                        SettingsSubscreen.GAME_FOLDERS,
+                        null
+                    )
+                    binding.root.findNavController().navigate(action)
+                }.onFailure {
+                    android.util.Log.e("Symbiosis", "folder card tap failed", it)
+                }
+            }
         }
     }
 

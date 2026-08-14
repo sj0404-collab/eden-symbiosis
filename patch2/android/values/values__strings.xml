@@ -1805,4 +1805,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="status_change_folder">Change data folder</string>
     <string name="folders_open_list">Game folders</string>
     <string name="folder_unreadable">Cannot be read — check storage permission</string>
+    <plurals name="folder_game_count">
+        <item quantity="one">%d game</item>
+        <item quantity="other">%d games</item>
+    </plurals>
 </resources>

@@ -180,9 +180,14 @@ s = open(src, encoding='utf-8').read()
 have = set(re.findall(r'<string name="([^"]+)"', t))
 # Только наши строки, по именам. Целиком файл не копируется: снимок
 # апстримовского strings.xml разошёлся бы с собираемой версией.
-WANTED = ('shared_folder', 'status_', 'folders_open_list', 'folder_unreadable')
+WANTED = ('shared_folder', 'status_', 'folders_open_list', 'folder_unreadable',
+          'folder_game_count')
 add = [m.group(0) for m in re.finditer(r'<string name="([^"]+)"[^>]*>.*?</string>', s, re.S)
        if m.group(1).startswith(WANTED) and m.group(1) not in have]
+# plurals тоже: карточка папки показывает "2 игры" через folder_game_count
+havep = set(re.findall(r'<plurals name="([^"]+)"', t))
+add += [m.group(0) for m in re.finditer(r'<plurals name="([^"]+)".*?</plurals>', s, re.S)
+        if m.group(1).startswith(WANTED) and m.group(1) not in havep]
 if not add:
     print("    strings already present")
     sys.exit(0)

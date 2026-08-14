@@ -1177,4 +1177,10 @@
     <string name="status_change_folder">Сменить папку данных</string>
     <string name="folders_open_list">Папки с играми</string>
     <string name="folder_unreadable">Не читается — проверьте разрешение на доступ к памяти</string>
+    <plurals name="folder_game_count">
+        <item quantity="one">%d игра</item>
+        <item quantity="few">%d игры</item>
+        <item quantity="many">%d игр</item>
+        <item quantity="other">%d игр</item>
+    </plurals>
 </resources>
