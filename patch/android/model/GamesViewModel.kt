@@ -148,7 +148,12 @@ class GamesViewModel : ViewModel() {
                     // Обход не должен ронять приложение. Раньше исключение
                     // из GameHelper.getGames() - битый файл, отозванный
                     // доступ - уходило наверх из корутины.
+                    //
+                    // Unit в конце обязателен: Log.e возвращает Int, и без
+                    // него try/catch становится выражением типа Any, а
+                    // тогда Kotlin требует else у if внутри try.
                     android.util.Log.e("Symbiosis", "не удалось прочитать список игр", e)
+                    Unit
                 } finally {
                     reloading.set(false)
                     _isReloading.value = false
