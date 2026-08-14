@@ -243,6 +243,13 @@ object SharedDataDirectory {
 
         NativeLibrary.setAppDirectory(path)
         ensureLayout(path)
+        // Записывается СРАЗУ, а не после успеха: иначе выбранная папка
+        // действует только до перезапуска. DirectoryInitialization при
+        // каждом старте безусловно ставит getExternalFilesDir(), поэтому
+        // без сохранённого пути приложение молча возвращалось в свою
+        // приватную папку - вместе с ключами, прошивкой и списком игр,
+        // которые пользователь туда положил.
+        configuredPath = path
         // Rebuild the filesystem factories against the new root, then reload
         // the configuration that lives inside it. Without the reload the
         // in-memory settings still belong to the previous directory and would

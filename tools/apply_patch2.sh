@@ -149,6 +149,11 @@ if want folders || want ui || want status; then
   cp "$PATCH_DIR/android/layout/card_game_folder.xml"   "$RES/layout/card_game_folder.xml"
   copy_one "$PATCH_DIR/android/layout/fragment_games.xml" "$RES/layout/fragment_games.xml"
   copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"       "$J/ui/GamesFragment.kt"
+  # Корень данных применяется при старте. Без этого кнопка "Сменить папку
+  # данных" держалась только до перезапуска: DirectoryInitialization
+  # безусловно ставит getExternalFilesDir(), и эмулятор возвращался в свою
+  # приватную папку вместе с ключами, прошивкой и списком игр.
+  copy_one "$PATCH_DIR/android/utils/DirectoryInitialization.kt" "$J/utils/DirectoryInitialization.kt"
   copied=$((copied + 4))
   echo "  copied SetupStatus.kt, GameFolderScanner.kt, GameFolderAdapter.kt, card_game_folder.xml"
 fi
@@ -252,6 +257,8 @@ check() {
 { want folders || want ui || want status; } && check "$RES/layout/fragment_games.xml" "status_strip" "status panel in the layout"
 { want folders || want ui || want status; } && check "$J/ui/GamesFragment.kt" "refreshStatusStrip" "status panel wired in"
 { want folders || want ui || want status; } && check "$J/ui/GamesFragment.kt" "SettingsSubscreen.GAME_FOLDERS" "folders button uses Eden's own route"
+{ want folders || want ui || want status; } && check "$J/utils/DirectoryInitialization.kt" "SharedDataDirectory.configuredPath" "chosen data folder survives a restart"
+{ want folders || want ui || want status; } && check "$J/utils/SharedDataDirectory.kt" "configuredPath = path" "chosen data folder is saved"
 { want button || want minimal || want ui; } && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
 check "$J/YuzuApplication.kt" "installCrashLogger" "crash logger"
 check "$RES/values/strings.xml" "shared_folder_choose" "English labels"
