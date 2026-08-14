@@ -2114,4 +2114,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="folder_launch_unreadable">The file cannot be read - check keys and firmware</string>
     <string name="engine_choice">Emulation engine</string>
     <string name="engine_choice_description">Eden or Kenji-NX. A game that stalls on one sometimes runs on the other.</string>
+    <string name="live_panel">Panel</string>
+    <string name="live_panel_description">Status, folders and files. Updates itself, no reinstall</string>
 </resources>

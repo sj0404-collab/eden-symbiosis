@@ -1484,6 +1484,13 @@ index dd567abc1a..39c285bf0f 100644
 +        android:id="@+id/action_global_guideFragment"
 +        app:destination="@id/guideFragment" />
 +    <fragment
++        android:id="@+id/livePanelFragment"
++        android:name="org.yuzu.yuzu_emu.fragments.LivePanelFragment"
++        android:label="LivePanelFragment" />
++    <action
++        android:id="@+id/action_global_livePanelFragment"
++        app:destination="@id/livePanelFragment" />
++    <fragment
 +        android:id="@+id/toolsFragment"
 +        android:name="org.yuzu.yuzu_emu.fragments.ToolsFragment"
 +        android:label="ToolsFragment" />

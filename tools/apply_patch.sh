@@ -189,6 +189,14 @@ J="$A/java/org/yuzu/yuzu_emu"
 cp "$P"/android/fragments/*.kt "$J/fragments/"
 cp "$P"/android/adapters/*.kt  "$J/adapters/"
 cp "$P"/android/utils/*.kt     "$J/utils/"
+# Встроенная копия панели: та же страница, показывается когда сети нет.
+# Панель не обязана быть онлайн - она обязана работать.
+if [ -d "$P/android/assets" ]; then
+  mkdir -p "$A/assets"
+  cp "$P"/android/assets/* "$A/assets/"
+  echo "  copied assets: $(ls "$P/android/assets" | tr '\n' ' ')"
+fi
+
 # ui/ holds upstream screens this fork modifies wholesale rather than by diff.
 if [ -d "$P/android/ui" ]; then
   cp "$P"/android/ui/*.kt "$J/ui/"

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<!--
+  Панель Symbiosis, живущая отдельно от APK.
+
+  Правка этого файла видна на телефоне сразу после того, как GitHub Pages
+  её опубликует - пересобирать и переустанавливать приложение не нужно.
+
+  Данные берутся не из сети: их отдаёт сам APK через мост Symbiosis.
+  Поэтому страница показывает настоящие пути и размеры и работает без
+  интернета, если браузер её уже кэшировал.
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Symbiosis — офлайн</title>
+<style>
+  :root {
+    --bg: #0b0b0f;
+    --card: #14141b;
+    --line: #26263a;
+    --text: #e9e9f2;
+    --dim: #8f8fa8;
+    --ok: #34d399;
+    --bad: #fb7185;
+    --accent: #22d3ee;
+    --accent2: #f472b6;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 14px;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Roboto", sans-serif;
+  }
+  h1 {
+    font-size: 22px; margin: 4px 0 14px;
+    letter-spacing: .5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px; margin-bottom: 12px;
+  }
+  .row { display: flex; align-items: baseline; gap: 8px; margin: 7px 0; }
+  .row .name { flex: 0 0 auto; font-weight: 600; }
+  .row .val { flex: 1 1 auto; color: var(--dim); font-size: 13px; word-break: break-all; }
+  .row .size { flex: 0 0 auto; color: var(--accent); font-size: 13px; }
+  .tick { color: var(--ok); }
+  .cross { color: var(--bad); }
+  .muted { color: var(--dim); font-size: 13px; }
+  .folder {
+    border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px; margin-top: 10px; cursor: pointer;
+  }
+  .folder h3 { margin: 0; font-size: 16px; }
+  .folder .meta { color: var(--dim); font-size: 13px; margin-top: 3px; }
+  .folder .size { float: right; color: var(--accent2); font-weight: 600; }
+  .files { margin-top: 10px; display: none; }
+  .files.open { display: block; }
+  .file {
+    display: flex; gap: 8px; padding: 5px 0;
+    border-top: 1px solid var(--line); font-size: 13px;
+  }
+  .file .fname { flex: 1 1 auto; word-break: break-all; }
+  .file .fsize { flex: 0 0 auto; color: var(--dim); }
+  .warn { color: var(--bad); font-size: 12px; }
+  .empty { color: var(--dim); font-style: italic; padding: 8px 0; }
+  .stamp { text-align: center; color: var(--dim); font-size: 11px; margin-top: 16px; }
+</style>
+</head>
+<body>
+
+<h1>Symbiosis</h1>
+
+<div class="card" id="status">
+  <div class="muted">Читаю состояние…</div>
+</div>
+
+<div class="card">
+  <div style="font-weight:600;margin-bottom:2px">Мои игры</div>
+  <div class="muted">Что лежит в папке — нажмите, чтобы раскрыть</div>
+  <div id="folders"></div>
+</div>
+
+<div class="stamp" id="stamp"></div>
+
+<script>
+// Мост может отсутствовать: страницу можно открыть и в обычном браузере,
+// чтобы посмотреть вёрстку. Тогда показываются понятные заглушки вместо
+// пустого экрана.
+var api = window.Symbiosis || null;
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+  });
+}
+
+function drawStatus() {
+  var box = document.getElementById('status');
+  if (!api) {
+    box.innerHTML = '<div class="muted">Открыто вне приложения — данные недоступны.</div>';
+    return;
+  }
+  var d;
+  try { d = JSON.parse(api.status()); } catch (e) {
+    box.innerHTML = '<div class="warn">Не удалось прочитать состояние.</div>';
+    return;
+  }
+  var html = '';
+  (d.items || []).forEach(function (it) {
+    html += '<div class="row">' +
+      '<span class="name">' + esc(it.label) + '</span>' +
+      '<span class="' + (it.present ? 'tick' : 'cross') + '">' +
+        (it.present ? '✓' : '✕') + '</span>' +
+      '<span class="val">' + esc(it.detail) + '</span>' +
+      (it.size ? '<span class="size">' + esc(it.size) + '</span>' : '') +
+      '</div>';
+  });
+  html += '<div class="row"><span class="name">Папка данных</span>' +
+          '<span class="val">' + esc(d.dataRoot || '—') + '</span></div>';
+  box.innerHTML = html;
+}
+
+function drawFolders() {
+  var box = document.getElementById('folders');
+  if (!api) { box.innerHTML = '<div class="empty">Нет данных.</div>'; return; }
+  var d;
+  try { d = JSON.parse(api.folders()); } catch (e) { d = { folders: [] }; }
+
+  if (!d.folders || !d.folders.length) {
+    box.innerHTML = '<div class="empty">Папки с играми не добавлены.</div>';
+    return;
+  }
+
+  box.innerHTML = '';
+  d.folders.forEach(function (f, i) {
+    var el = document.createElement('div');
+    el.className = 'folder';
+    el.innerHTML =
+      '<span class="size">' + esc(f.size) + '</span>' +
+      '<h3>' + esc(f.name) + '</h3>' +
+      '<div class="meta">' + f.games + ' файлов · нажмите, чтобы посмотреть</div>' +
+      '<div class="files" id="files' + i + '"></div>';
+
+    el.addEventListener('click', function () {
+      var list = document.getElementById('files' + i);
+      if (list.classList.contains('open')) { list.classList.remove('open'); return; }
+      if (!list.dataset.loaded) {
+        var fd;
+        try { fd = JSON.parse(api.files(f.uri)); } catch (e) { fd = { files: [] }; }
+        if (!fd.files.length) {
+          list.innerHTML = '<div class="empty">В этой папке нет файлов игр.</div>';
+        } else {
+          list.innerHTML = fd.files.map(function (x) {
+            return '<div class="file">' +
+              '<span class="fname">' + esc(x.name) +
+              (x.launchable ? '' : ' <span class="warn">· не запустится</span>') +
+              '</span>' +
+              '<span class="fsize">' + esc(x.size) + '</span>' +
+              '</div>';
+          }).join('');
+        }
+        list.dataset.loaded = '1';
+      }
+      list.classList.add('open');
+    });
+
+    box.appendChild(el);
+  });
+}
+
+drawStatus();
+drawFolders();
+
+document.getElementById('stamp').textContent =
+  'встроенная копия панели' +
+  (api ? ' · мост v' + api.bridgeVersion() : ' · вне приложения');
+</script>
+
+</body>
+</html>

@@ -1447,4 +1447,6 @@
     <string name="folder_launch_unreadable">Файл не читается — проверь ключи и прошивку</string>
     <string name="engine_choice">Движок эмуляции</string>
     <string name="engine_choice_description">Eden или Kenji-NX. Игра, которая не идёт на одном, иногда идёт на другом.</string>
+    <string name="live_panel">Панель</string>
+    <string name="live_panel_description">Состояние, папки и файлы. Обновляется сама, без переустановки</string>
 </resources>

@@ -129,6 +129,17 @@ class ToolsFragment : Fragment() {
                     { nav(R.id.action_global_guideFragment) }
                 )
             )
+            // Панель, содержимое которой обновляется без пересборки APK:
+            // страница живёт на GitHub Pages, данные читает локально через
+            // мост. Правка вёрстки видна сразу, скачивать 25 МБ не нужно.
+            add(
+                HomeSetting(
+                    R.string.live_panel,
+                    R.string.live_panel_description,
+                    R.drawable.ic_info_outline,
+                    { nav(R.id.action_global_livePanelFragment) }
+                )
+            )
         }
 
         binding.listTools.apply {

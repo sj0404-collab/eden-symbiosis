@@ -66,11 +66,24 @@ jobs:
           done
 
           if [ "$ok" != 1 ]; then
-            echo "::warning::upstream is unreachable; falling back to our mirror"
-            git clone https://github.com/sj0404-collab/eden-upstream-reference.git eden \
+            # AT THE TAG. Cloning the mirror's default branch pulls a
+            # different commit, and the build then dies in CMake with an error
+            # that looks like ours. That cost two runs on build2.yml.
+            echo "::warning::upstream is unreachable; falling back to our mirror at v0.2.1"
+            git clone --branch v0.2.1 \
+              https://github.com/sj0404-collab/eden-upstream-reference.git eden \
               || { echo "::error::neither upstream nor the mirror could be cloned"; exit 1; }
           fi
-          cd eden && echo "upstream: $(git rev-parse --short HEAD)"
+
+          cd eden
+          rev=$(git rev-parse HEAD)
+          echo "upstream: $(git rev-parse --short HEAD)"
+          expected=58c1e20ee58efa3900ba616207d460886214480b
+          if [ "$rev" != "$expected" ]; then
+            echo "::error::wrong upstream commit: $rev (expected v0.2.1)"
+            exit 1
+          fi
+          echo "  ok   upstream is v0.2.1"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -94,6 +107,39 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ runner.os }}-${{ hashFiles('fork/patch/**') }}
           restore-keys: gradle-${{ runner.os }}-
+
+      # ── Кэш объектов C++ ────────────────────────────────────────────
+      #
+      # 1353 объекта пересобираются каждый раз, а патч трогает Kotlin.
+      # Замерено на build2.yml: 25 минут -> 2-3 минуты, попаданий 99.94%.
+      #
+      # Путь ДОЛЖЕН совпадать с CCACHE_DIR ниже: в первой попытке кэш
+      # сохранялся в ~/.ccache, а ccache писал в ~/.cache/ccache, и вся
+      # затея молча не работала.
+      - name: Cache the C++ objects
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-symbiosis-${{ inputs.build_type || 'debug' }}-${{ github.run_number }}
+          restore-keys: |
+            ccache-symbiosis-${{ inputs.build_type || 'debug' }}-
+            ccache-symbiosis-
+
+      - name: Set up ccache
+        run: |
+          sudo apt-get install -y -qq ccache > /dev/null
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+          export CCACHE_DIR="$HOME/.cache/ccache"
+          mkdir -p "$CCACHE_DIR"
+          ccache --set-config=max_size=3G
+          # Абсолютные пути и mtime компилятора на новом раннере каждый раз
+          # другие - без этих трёх настроек не совпадало даже то, что
+          # только что собрали.
+          ccache --set-config=base_dir="$GITHUB_WORKSPACE"
+          ccache --set-config=hash_dir=false
+          ccache --set-config=compiler_check=content
+          ccache --zero-stats
+          ccache --show-config | grep -E "max_size|cache_dir|base_dir"
 
       - name: Apply the Symbiosis patch
         run: |
@@ -172,13 +218,22 @@ jobs:
           # keeps the symbols that make a crash report readable.
           TYPE="${{ inputs.build_type }}"
           TYPE="${TYPE:-debug}"
+          # Апстрим уже читает YUZU_ANDROID_ARGS для доп. флагов CMake, так
+          # что ccache подключается без правки его build-файлов. Переменные
+          # окружения тут НЕ работают: AGP сам вызывает CMake и не передаёт
+          # их в этап конфигурации.
+          CCACHE_FLAGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
           if [ "$TYPE" = "release" ]; then
-            ./gradlew assembleLegacyRelease \
+            ./gradlew assembleLegacyRelease -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
               --parallel --build-cache --max-workers="$(nproc)"
           else
-            ./gradlew assembleLegacyDebug \
+            ./gradlew assembleLegacyDebug -PYUZU_ANDROID_ARGS="$CCACHE_FLAGS" \
               --parallel --build-cache --max-workers="$(nproc)"
           fi
+
+      - name: How much the cache saved
+        if: always()
+        run: ccache --show-stats | head -12
 
       - name: Verify the fixes actually shipped
         # objdump and dex strings, not a green tick: a build can succeed with
