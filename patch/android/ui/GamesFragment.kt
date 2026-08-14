@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -377,6 +378,17 @@ class GamesFragment : Fragment() {
             refreshStatusStrip()
             refreshFolderCards()
         }
+        // Coming back from the system settings page. Android grants All Files
+        // Access without restarting the app, but nothing here notices: the
+        // game list was built while every read outside the private folder was
+        // refused, so it stays empty until something forces a rescan. Do it
+        // here, once, on the transition from "denied" to "granted".
+        val hasStorageNow = !SharedDataDirectory.needsAllFilesAccess() ||
+            SharedDataDirectory.hasAllFilesAccess()
+        if (hasStorageNow && !hadStorageLastResume) {
+            gamesViewModel.reloadGames(true)
+        }
+        hadStorageLastResume = hasStorageNow
         if (getCurrentViewType() == GameAdapter.VIEW_TYPE_CAROUSEL) {
             (binding.gridGames as? CarouselRecyclerView)?.setupCarousel(true)
             (binding.gridGames as? CarouselRecyclerView)?.restoreScrollState(gamesViewModel.lastScrollPosition)
@@ -616,6 +628,16 @@ class GamesFragment : Fragment() {
      * Deliberately not a loop: a user who declines on purpose should not be
      * nagged on every launch. The status strip keeps saying what is missing,
      * and Tools has the same button for later.
+     *
+     * NOT MessageDialogFragment. That helper keeps its button action in an
+     * activity-scoped MessageDialogViewModel, and every dialog built without
+     * an action - MainActivity.checkKeys() is one, and it fires on the same
+     * startup whenever prod.keys is missing - calls clear() / sets
+     * positiveAction = null on that same shared view model. Whichever dialog
+     * is constructed last wins, so the storage prompt's "Open settings"
+     * frequently ran `null?.invoke()`: the dialog closed and nothing happened,
+     * which is exactly what the user reported. The same prompt in Tools works
+     * because it is a plain AlertDialog holding its own lambda. So is this one.
      */
     private fun maybeAskForStorage() {
         if (!SharedDataDirectory.needsAllFilesAccess()) return
@@ -633,19 +655,22 @@ class GamesFragment : Fragment() {
         if (askedForStorageThisSession) return
         askedForStorageThisSession = true
 
-        MessageDialogFragment.newInstance(
-            requireActivity(),
-            titleId = R.string.status_storage_needed,
-            descriptionId = R.string.need_all_files_access,
-            positiveButtonTitleId = R.string.open_settings,
-            positiveAction = { openAllFilesAccessSettings() },
-            showNegativeButton = true,
-            negativeButtonTitleId = android.R.string.cancel
-        ).show(childFragmentManager, MessageDialogFragment.TAG)
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.status_storage_needed)
+            .setMessage(R.string.need_all_files_access)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.open_settings) { _, _ ->
+                openAllFilesAccessSettings()
+            }
+            .show()
     }
 
     /** True once the prompt has been shown in this run of the app. */
     private var askedForStorageThisSession = false
+
+    /** Storage access as it stood at the previous onResume. */
+    private var hadStorageLastResume =
+        !SharedDataDirectory.needsAllFilesAccess() || SharedDataDirectory.hasAllFilesAccess()
 
     /**
      * Opens the All Files Access screen for this app.
