@@ -90,7 +90,10 @@ if want folders; then
   copy_one "$PATCH_DIR/android/adapters/GameAdapter.kt"  "$J/adapters/GameAdapter.kt"
 fi
 
-if want button; then
+# "minimal" is the safest thing the patch can offer: the floating button and
+# nothing else. It touches no list, no scan, no model - only a view added on
+# top of the emulation surface, and only once a game is already running.
+if want button || want minimal; then
   copy_one "$PATCH_DIR/android/fragments/EmulationFragment.kt" "$J/fragments/EmulationFragment.kt"
   copy_one "$PATCH_DIR/android/activities/EmulationActivity.kt" "$J/activities/EmulationActivity.kt"
 fi
@@ -107,11 +110,52 @@ RES="$(cd "$J/../../../../res" && pwd)"
 if want shared; then
   copy_one "$PATCH_DIR/android/layout/fragment_folders.xml" "$RES/layout/fragment_folders.xml"
 fi
-copy_one "$PATCH_DIR/android/values/values__strings.xml"    "$RES/values/strings.xml"
-copy_one "$PATCH_DIR/android/values/values-ru__strings.xml" "$RES/values-ru/strings.xml"
+# ── Strings are APPENDED, never overwritten ─────────────────────────
+#
+# These two files were the one thing present in every crashing build and
+# absent from the only working one: they were copied for EVERY subset,
+# including the narrowest, because the shared-folder labels live in them.
+#
+# Copying them wholesale replaces upstream's 1125 strings with my snapshot
+# of them. If upstream changes one line - or if my copy was taken from a
+# different revision - every screen that reads a moved string is wrong, and
+# a missing one is a crash at inflate time with no hint of where it came
+# from.
+#
+# So the six labels are inserted into upstream's own file instead. Nothing
+# upstream wrote is touched, and there is no snapshot to drift.
+add_strings() {
+  local target="$1" src="$2"
+  [ -f "$target" ] || return 0
+  [ -f "$src" ] || return 0
+  python3 - "$target" "$src" <<'ADDSTR'
+import re, sys
+target, src = sys.argv[1], sys.argv[2]
+t = open(target, encoding='utf-8').read()
+s = open(src, encoding='utf-8').read()
+
+have = set(re.findall(r'<string name="([^"]+)"', t))
+add = [m.group(0) for m in re.finditer(r'<string name="(shared_folder[^"]*)"[^>]*>.*?</string>', s, re.S)
+       if m.group(1) not in have]
+if not add:
+    print("    strings already present")
+    sys.exit(0)
+
+# Before the closing tag, so the file stays valid whatever else is in it.
+i = t.rindex('</resources>')
+t = t[:i] + '\n'.join('    ' + a for a in add) + '\n' + t[i:]
+open(target, 'w', encoding='utf-8').write(t)
+print(f"    added {len(add)} string(s)")
+ADDSTR
+  echo "  merged strings into $(basename "$(dirname "$target")")/strings.xml"
+  copied=$((copied + 1))
+}
+
+add_strings "$RES/values/strings.xml"    "$PATCH_DIR/android/values/values__strings.xml"
+add_strings "$RES/values-ru/strings.xml" "$PATCH_DIR/android/values/values-ru__strings.xml"
 
 # The floating button is a new file with no upstream counterpart.
-if want button && [ -f "$PATCH_DIR/android/views/FloatingGameButton.kt" ]; then
+if { want button || want minimal; } && [ -f "$PATCH_DIR/android/views/FloatingGameButton.kt" ]; then
   mkdir -p "$J/views"
   cp "$PATCH_DIR/android/views/FloatingGameButton.kt" "$J/views/FloatingGameButton.kt"
   copied=$((copied + 1))
@@ -145,23 +189,23 @@ check() {
 { want folders || want scan || want sort; } && check "$J/utils/GameHelper.kt" "deepScan) 8"         "scan depth raised to 8"
 { want folders || want sort; } && check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
 want folders && check "$J/adapters/GameAdapter.kt" "model.folderName" "folder shown on the card"
-want button && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
+{ want button || want minimal; } && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
 want shared && check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
 want shared && check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
 check "$J/YuzuApplication.kt" "installCrashLogger" "crash logger"
 check "$RES/values/strings.xml" "shared_folder_choose" "English labels"
 check "$RES/values-ru/strings.xml" "shared_folder_choose" "Russian labels"
-want button && check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
-want button && check "$J/activities/EmulationActivity.kt" "PREF_KEEP_IN_MEMORY" "keep-in-memory switch"
-want button && check "$J/activities/EmulationActivity.kt" "editingOverlayOnly" "no memory hold in overlay-edit mode"
-want button && check "$J/views/FloatingGameButton.kt" "keepInMemory" "switch reachable from the button menu"
+{ want button || want minimal; } && check "$J/fragments/EmulationFragment.kt" "attachFloatingButton" "floating button wired in"
+{ want button || want minimal; } && check "$J/activities/EmulationActivity.kt" "PREF_KEEP_IN_MEMORY" "keep-in-memory switch"
+{ want button || want minimal; } && check "$J/activities/EmulationActivity.kt" "editingOverlayOnly" "no memory hold in overlay-edit mode"
+{ want button || want minimal; } && check "$J/views/FloatingGameButton.kt" "keepInMemory" "switch reachable from the button menu"
 
 # The button must never pause the game. Anything matching here is a real call,
 # not a comment - the comments are stripped first.
 # Strip BOTH comment styles before looking. Stripping only // left the KDoc
 # block at the top of the file - which explains, in prose, that nothing here
 # pauses - and the check failed on its own documentation.
-if want button && python3 -c "
+if { want button || want minimal; } && python3 -c "
 import re, sys
 src = open(sys.argv[1], encoding='utf-8').read()
 src = re.sub(r'/\*.*?\*/', '', src, flags=re.S)

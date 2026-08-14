@@ -44,7 +44,7 @@ on:
       patch_subset:
         description: "which parts of patch2 to apply: all | folders | button | shared"
         type: choice
-        options: [all, folders, scan, sort, button, shared]
+        options: [all, folders, scan, sort, button, shared, minimal]
         default: all
       flavour:
         description: "mainline (upstream default) or legacy (what the working control was built with)"
@@ -387,6 +387,7 @@ jobs:
           # happened on the first subset build.
           subset = os.environ.get("PATCH_SUBSET", "all")
           folders = subset in ("all", "folders")
+          minimal = subset == "minimal"
           scan = subset in ("all", "folders", "scan", "sort")
           sort = subset in ("all", "folders", "sort")
           button = subset in ("all", "button")
@@ -395,6 +396,8 @@ jobs:
           if release:
               # Literals, not names: R8 rewrites names but never these.
               wanted.append(("crash logger", "Symbiosis crash report".encode()))
+              if minimal:
+                  wanted.append(("floating button position key", b"symbiosis_float_x"))
               if folders:
                   wanted.append(("subtitle separator", " \u00b7 ".encode()))
               elif scan:
@@ -403,6 +406,8 @@ jobs:
                   wanted.append(("floating button position key", b"symbiosis_float_x"))
           else:
               wanted.append(("crash logger", b"installCrashLogger"))
+              if minimal:
+                  wanted.append(("FloatingGameButton", b"FloatingGameButton"))
               if folders:
                   wanted += [
                       ("groupByFolder", b"groupByFolder"),
