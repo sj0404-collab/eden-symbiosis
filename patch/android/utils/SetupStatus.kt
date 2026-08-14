@@ -178,27 +178,32 @@ object SetupStatus {
      */
     private fun whyNotGames(context: Context): String {
         val dirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return ""
-        val names = mutableListOf<String>()
+        val out = mutableListOf<String>()
+
         for (dir in dirs) {
             runCatching { GameFolderScanner.listFilesFlat(context, dir.uriString) }
                 .getOrDefault(emptyList())
                 .forEach { e ->
-                    val ext = e.name.substringAfterLast('.', "").lowercase()
-                    val mb = e.bytes / 1048576
-                    val why = when {
-                        ext in setOf("ncz", "nsz", "xcz") ->
-                            "сжатый образ .$ext — Eden такие не открывает, нужен .nsp или .xci"
-                        ext == "nsp" && mb in 1..600 ->
-                            "$mb МБ — для игры мало, похоже на обновление или DLC"
-                        ext == "nro" -> "homebrew, не игра Switch"
-                        ext in setOf("kip", "nso") -> "системный файл, не игра"
-                        else -> "не прочитался: файл повреждён или обрезан при скачивании"
+                    // Спросить у самого эмулятора, а не гадать.
+                    //
+                    // diagnoseRom() проходит ровно тот же путь, что и запуск
+                    // игры, и возвращает НАСТОЯЩУЮ причину отказа: нет
+                    // title key, повреждён файл, внутри только обновление,
+                    // не тот prod.keys. Догадки по размеру уже привели к
+                    // ошибке - 283 МБ настоящей игры были объявлены "мало
+                    // для игры, похоже на DLC".
+                    val uri = GameFolderScanner.childUri(dir.uriString, e)
+                    val fromCore = uri?.let {
+                        runCatching { NativeSymbiosis.romProblem(it.toString()) }.getOrNull()
                     }
-                    names.add("«${e.name}» — $why")
+                    if (fromCore != null) {
+                        out.add("«${e.name}» — $fromCore")
+                    }
                 }
         }
-        if (names.isEmpty()) return "проверь ключи и прошивку"
-        return names.joinToString("; ")
+
+        if (out.isEmpty()) return "все файлы читаются — открой список игр"
+        return out.joinToString("; ")
     }
 
     fun saves(): Item {
