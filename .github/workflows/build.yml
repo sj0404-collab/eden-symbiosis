@@ -120,9 +120,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: ccache-symbiosis-${{ inputs.build_type || 'debug' }}-${{ github.run_number }}
+          # НЕ github.run_number. Номер прогона каждый раз новый, значит
+          # сборка #47 клала кэш под именем -47, а #48 искала -48 и не
+          # находила: "Cache not found for input keys", 0.86% попаданий и
+          # тридцать минут компиляции с нуля. Запасной поиск по префиксу
+          # спасал только когда предыдущая сборка успевала дойти до шага
+          # сохранения - а падавшие не доходили, и так три раза подряд.
+          #
+          # Ключ теперь зависит от того, что реально влияет на объекты C++:
+          # версии апстрима и содержимого патча, который трогает .cpp. Тот
+          # же код - тот же ключ - прямое попадание.
+          key: ccache-symbiosis-v0.2.1-${{ inputs.build_type || 'debug' }}-${{ hashFiles('fork/patch/upstream_changes.patch', 'fork/patch/native_symbiosis.cpp') }}
           restore-keys: |
-            ccache-symbiosis-${{ inputs.build_type || 'debug' }}-
+            ccache-symbiosis-v0.2.1-${{ inputs.build_type || 'debug' }}-
+            ccache-symbiosis-v0.2.1-
             ccache-symbiosis-
 
       - name: Set up ccache

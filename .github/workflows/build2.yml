@@ -175,7 +175,12 @@ jobs:
           # Keyed on the upstream tag, not on our patch: our patch never
           # changes a .cpp, so a new key would throw away a cache that is
           # still perfectly valid.
-          key: ccache-eden-v0.2.1-${{ inputs.build_type || 'debug' }}-${{ github.run_number }}
+          # Не github.run_number: он новый на каждом запуске, поэтому
+          # прямого попадания не бывает никогда - только запасной поиск по
+          # префиксу, а он не срабатывает, если прошлая сборка упала до
+          # шага сохранения. patch2 не трогает ни одного .cpp, значит ключу
+          # достаточно версии апстрима.
+          key: ccache-eden-v0.2.1-${{ inputs.build_type || 'debug' }}
           restore-keys: |
             ccache-eden-v0.2.1-${{ inputs.build_type || 'debug' }}-
             ccache-eden-v0.2.1-
