@@ -92,10 +92,18 @@ class GamesViewModel : ViewModel() {
     }
 
     fun reloadGames(directoriesChanged: Boolean, firstStartup: Boolean = false) {
-        if (reloading.get()) {
+        // Запрос, пришедший во время идущего обхода, раньше просто
+        // выбрасывался - `return`, и всё. А обход папок при старте длится
+        // секунды: пользователь успевает выбрать папку ровно в это окно,
+        // его запрос теряется, и папка снова "не появляется до
+        // перезапуска". Второй случай той же жалобы.
+        //
+        // Теперь такой запрос запоминается и выполняется сразу после
+        // текущего.
+        if (!reloading.compareAndSet(false, true)) {
+            rescanRequested.set(true)
             return
         }
-        reloading.set(true)
         _isReloading.value = true
 
         viewModelScope.launch {
@@ -136,13 +144,26 @@ class GamesViewModel : ViewModel() {
                     if (directoriesChanged) {
                         setShouldSwapData(true)
                     }
+                } catch (e: Exception) {
+                    // Обход не должен ронять приложение. Раньше исключение
+                    // из GameHelper.getGames() - битый файл, отозванный
+                    // доступ - уходило наверх из корутины.
+                    android.util.Log.e("Symbiosis", "не удалось прочитать список игр", e)
                 } finally {
                     reloading.set(false)
                     _isReloading.value = false
                 }
             }
+
+            // Кто-то просил обновиться, пока мы работали.
+            if (rescanRequested.compareAndSet(true, false)) {
+                reloadGames(directoriesChanged = true, firstStartup = false)
+            }
         }
     }
+
+    /** Запрос на обход, пришедший во время другого обхода. */
+    private val rescanRequested = AtomicBoolean(false)
 
     fun addFolder(gameDir: GameDir, savedFromGameFragment: Boolean) =
         viewModelScope.launch {
@@ -154,9 +175,30 @@ class GamesViewModel : ViewModel() {
                 when (gameDir.type) {
                     DirectoryType.GAME -> {
                         NativeConfig.addGameDir(gameDir)
-                        val isFirstTimeSetup = PreferenceManager.getDefaultSharedPreferences(YuzuApplication.appContext)
-                            .getBoolean(org.yuzu.yuzu_emu.features.settings.model.Settings.PREF_FIRST_APP_LAUNCH, true)
-                        getGameDirsAndExternalContent(!isFirstTimeSetup)
+                        // ПОЧЕМУ ПАПКА ПОЯВЛЯЛАСЬ ТОЛЬКО ПОСЛЕ ПЕРЕЗАПУСКА
+                        //
+                        // Здесь стояло getGameDirsAndExternalContent(
+                        //     !isFirstTimeSetup)
+                        // то есть: перечитать список игр, только если
+                        // "первый запуск" уже пройден. Флаг снимался
+                        // РОВНО В ОДНОМ месте - в finishSetup() мастера
+                        // первичной настройки. Мастер из этой сборки
+                        // удалён, значит finishSetup() не вызывается
+                        // никогда, значит PREF_FIRST_APP_LAUNCH остаётся
+                        // true навсегда, значит reloadGames не звался
+                        // никогда.
+                        //
+                        // Папка при этом добавлялась в конфиг честно -
+                        // поэтому после перезапуска игры и появлялись:
+                        // при старте список читается сам. Выглядело как
+                        // "приложение не видит папку, пока не
+                        // перезапустишь", а на деле оно её видело и
+                        // просто не обновляло экран.
+                        //
+                        // Условие убрано целиком. Пользователь только что
+                        // выбрал папку - перечитать список нужно всегда,
+                        // безусловно.
+                        getGameDirsAndExternalContent(reloadList = true)
                     }
                     DirectoryType.EXTERNAL_CONTENT -> {
                         addExternalContentDir(gameDir.uriString)

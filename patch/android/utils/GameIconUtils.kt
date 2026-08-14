@@ -29,27 +29,97 @@ class GameIconFetcher(
     private val game: Game,
     private val options: Options
 ) : Fetcher {
+    /**
+     * ПОЧЕМУ ЗДЕСЬ ПАДАЛО
+     *
+     * Строка была такая:
+     *
+     *     drawable = decodeGameIcon(game.path)!!.toDrawable(...)
+     *
+     * `!!` на результате, который штатно бывает null. Пустая или битая
+     * обложка - это `BitmapFactory.decodeByteArray` возвращает null, и
+     * тогда `!!` кидает NullPointerException. А кидает он его внутри
+     * корутины загрузчика Coil, куда `.error(R.drawable.default_icon)`
+     * не дотягивается: заглушка показывается, когда fetch вернул отказ,
+     * а не когда он бросил исключение. Исключение уходит наверх и роняет
+     * приложение.
+     *
+     * Пустая обложка - не редкость, а норма: её нет у homebrew, у части
+     * NSP, у любого файла, чей заголовок не расшифровался текущими
+     * ключами. Именно поэтому падало "при сканировании, когда ищет
+     * обложки" - список доходил до первого такого файла.
+     *
+     * Теперь ни одного `!!` на всём пути, а любой отказ - это заглушка.
+     */
     override suspend fun fetch(): FetchResult {
+        val bitmap = decodeGameIcon(game.path)
+            ?: return DrawableResult(
+                drawable = fallbackDrawable(),
+                isSampled = false,
+                dataSource = DataSource.DISK
+            )
         return DrawableResult(
-            drawable = decodeGameIcon(game.path)!!.toDrawable(options.context.resources),
+            drawable = bitmap.toDrawable(options.context.resources),
             isSampled = false,
             dataSource = DataSource.DISK
         )
     }
 
-    private fun decodeGameIcon(uri: String): Bitmap? {
+    /** Стандартная иконка. Последний рубеж: сюда приходят все отказы. */
+    private fun fallbackDrawable(): android.graphics.drawable.Drawable =
+        ResourcesCompat.getDrawable(
+            options.context.resources,
+            R.drawable.default_icon,
+            null
+        ) ?: android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT)
+
+    private fun decodeGameIcon(uri: String): Bitmap? = runCatching {
+        // getIcon читает и расшифровывает ROM. На битом файле нативный
+        // слой может бросить, и раньше это тоже улетало наверх.
         val data = GameMetadata.getIcon(uri)
-        return BitmapFactory.decodeByteArray(
-            data,
-            0,
-            data.size,
-            BitmapFactory.Options()
-        )
+        if (data == null || data.isEmpty()) return@runCatching null
+
+        // Сначала только размеры, без выделения памяти под пиксели.
+        //
+        // Обложка Switch - 256x256, но в файле лежит что угодно, и
+        // повреждённый заголовок объявляет какие угодно размеры.
+        // decodeByteArray верил им на слово и пытался выделить буфер под
+        // объявленное: на 3 ГБ памяти это OutOfMemoryError, то есть
+        // второй способ уронить приложение на обложках.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight)
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
+        BitmapFactory.decodeByteArray(data, 0, data.size, opts)
+    }.getOrNull()
+
+    /** Уменьшает картинку до разумного размера степенями двойки. */
+    private fun sampleSizeFor(width: Int, height: Int): Int {
+        var sample = 1
+        while (width / sample > MAX_ICON_EDGE || height / sample > MAX_ICON_EDGE) {
+            sample *= 2
+        }
+        return sample
     }
 
     class Factory : Fetcher.Factory<Game> {
         override fun create(data: Game, options: Options, imageLoader: ImageLoader): Fetcher =
             GameIconFetcher(data, options)
+    }
+
+    private companion object {
+        /**
+         * Больше этого обложке быть незачем.
+         *
+         * У Switch она 256x256. Ячейка списка меньше, так что запас
+         * четырёхкратный, а защита - от файла, который объявляет размер
+         * в тысячи пикселей.
+         */
+        const val MAX_ICON_EDGE = 512
     }
 }
 
@@ -102,14 +172,28 @@ object GameIconUtils {
         imageLoader.enqueue(request)
     }
 
+    /**
+     * Обложка как Bitmap. Второе место с тем же `!!`.
+     *
+     * `execute()` возвращает результат с пустым drawable, если запрос не
+     * удался - а `!!` превращал это в NullPointerException. Отсюда её
+     * берут ярлыки на рабочий стол и экран загрузки игры.
+     */
     suspend fun getGameIcon(lifecycleOwner: LifecycleOwner, game: Game): Bitmap {
         val request = ImageRequest.Builder(YuzuApplication.appContext)
             .data(game)
             .lifecycle(lifecycleOwner)
             .error(R.drawable.default_icon)
             .build()
-        return imageLoader.execute(request)
-            .drawable!!.toBitmap(config = Bitmap.Config.ARGB_8888)
+        val drawable = runCatching { imageLoader.execute(request).drawable }.getOrNull()
+            ?: ResourcesCompat.getDrawable(
+                YuzuApplication.appContext.resources,
+                R.drawable.default_icon,
+                null
+            )
+        return drawable?.toBitmap(config = Bitmap.Config.ARGB_8888)
+        // Совсем последний рубеж: даже стандартная иконка не прочиталась.
+            ?: Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
     }
 
     suspend fun getShortcutIcon(lifecycleOwner: LifecycleOwner, game: Game): IconCompat {
