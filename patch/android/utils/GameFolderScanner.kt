@@ -105,26 +105,6 @@ object GameFolderScanner {
         return lower.substringAfterLast('.', "") in ROM_EXTENSIONS
     }
 
-
-    /**
-     * Filenames that are a game without having a game's extension.
-     *
-     * loader.cpp:GuessFromFilename treats a file literally called "main" as a
-     * DeconstructedRomDirectory - an unpacked game, where the folder is the
-     * title and "main" is its executable - and "00" as an NCA, which is how a
-     * split dump names its first part. Both are ordinary in real libraries and
-     * both were invisible here: the scanner only looked at extensions, so an
-     * unpacked game showed up as an empty folder.
-     */
-    private val ROM_FILENAMES = setOf("main", "00")
-
-    /** True when this file is something the emulator can load. */
-    private fun isRom(name: String): Boolean {
-        val lower = name.lowercase(Locale.ROOT)
-        if (lower in ROM_FILENAMES) return true
-        return lower.substringAfterLast('.', "") in ROM_EXTENSIONS
-    }
-
     /**
      * Extensions that look like content but are never listed as games.
      *

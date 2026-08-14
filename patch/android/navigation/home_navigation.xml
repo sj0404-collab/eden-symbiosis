@@ -120,6 +120,13 @@
         android:id="@+id/action_global_guideFragment"
         app:destination="@id/guideFragment" />
     <fragment
+        android:id="@+id/livePanelFragment"
+        android:name="org.yuzu.yuzu_emu.fragments.LivePanelFragment"
+        android:label="LivePanelFragment" />
+    <action
+        android:id="@+id/action_global_livePanelFragment"
+        app:destination="@id/livePanelFragment" />
+    <fragment
         android:id="@+id/enginesFragment"
         android:name="org.yuzu.yuzu_emu.fragments.EnginesFragment"
         android:label="EnginesFragment" />
