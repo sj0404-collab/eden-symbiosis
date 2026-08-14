@@ -115,10 +115,19 @@ object SharedDataDirectory {
             // Do not clear the preference: the volume may simply be unmounted
             // and the user would silently lose their choice.
         }
-        // No explicit choice: prefer the visible /sdcard/Eden Debug folder over
-        // the hidden Android/data one, so saves and firmware can be reached
-        // with a file manager and survive uninstalling the app.
-        return preferredDefault(context)
+        // Выбора не было - берём то же, что и апстрим: приватную папку
+        // приложения.
+        //
+        // Старая версия подставляла здесь /sdcard/Eden Debug, и это меняло
+        // корень данных БЕЗ ведома пользователя: человек ставит сборку, а
+        // ключи и прошивка, лежавшие в Android/data, перестают находиться -
+        // потому что смотрим уже в другое место. Пустая папка при этом
+        // создаётся сама, так что и ошибки никакой не видно.
+        //
+        // Видимая папка - это то, что пользователь выбирает кнопкой
+        // "Сменить папку данных", осознанно. По умолчанию ничего не
+        // переносится.
+        return privatePath(context)
     }
 
     /** True when a directory other than the private one is active. */

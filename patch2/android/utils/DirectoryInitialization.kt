@@ -55,20 +55,26 @@ object DirectoryInitialization {
             // памяти могли вынуть, а пользователь - удалить папку. Если
             // что-то не так, берётся приватная папка, как в апстриме, и
             // приложение запускается вместо того, чтобы упасть.
-            val chosen = runCatching { SharedDataDirectory.configuredPath }.getOrNull()
-            val usable = chosen != null && runCatching {
-                val f = java.io.File(chosen)
-                f.isDirectory && f.canWrite()
-            }.getOrDefault(false)
+            // resolve() сам проверяет, что папка на месте и доступна для
+            // записи, и откатывается на приватную, если карту вынули. Это
+            // тот же путь, которым пользовалась старая рабочая версия -
+            // читать configuredPath напрямую значило бы повторять проверки
+            // и разойтись с ней в мелочах.
+            val resolved = runCatching {
+                SharedDataDirectory.resolve(YuzuApplication.appContext)
+            }.getOrNull() ?: fallback
 
-            userPath = if (usable) chosen else fallback
-            if (chosen != null && !usable) {
-                android.util.Log.e(
-                    "Symbiosis",
-                    "выбранная папка данных недоступна, беру приватную: $chosen"
-                )
-            }
-            NativeLibrary.setAppDirectory(userPath!!)
+            userPath = resolved
+            NativeLibrary.setAppDirectory(resolved)
+
+            // Создать папки, которых эмулятор ждёт: keys, nand/system/
+            // Contents/registered, nand/user/save, load, cache/shader и
+            // остальные. Android-сборка НИКОГДА не зовёт CreateEdenPaths(),
+            // поэтому в папке, которую создал не сам Eden, их просто нет -
+            // и прошивка с сейвами оказываются некуда класть. Именно это
+            // делало общую папку рабочей в старой версии.
+            runCatching { SharedDataDirectory.ensureLayout(resolved) }
+                .onFailure { android.util.Log.e("Symbiosis", "ensureLayout failed", it) }
         } catch (e: IOException) {
             e.printStackTrace()
         }
