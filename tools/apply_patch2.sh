@@ -79,14 +79,31 @@ copy_one "$PATCH_DIR/android/root/YuzuApplication.kt" "$J/YuzuApplication.kt"
 #   scan   Game.kt + GameHelper.kt   - the field, and filling it in
 #   sort   + GamesFragment.kt        - ordering the list by it
 #   folders (= all four)             - and showing it on the card
-if want folders || want scan || want sort; then
+if want folders || want scan || want sort || want depth3; then
   copy_one "$PATCH_DIR/android/model/Game.kt"            "$J/model/Game.kt"
   copy_one "$PATCH_DIR/android/utils/GameHelper.kt"      "$J/utils/GameHelper.kt"
+
+  # ── depth3: folders, at upstream's own scan depth ─────────────────
+  #
+  # The user reports the crash looks like memory or interface. Depth is
+  # the memory side: every level multiplies the directories walked, and
+  # each game found becomes an object AND a JSON string held in one
+  # SharedPreferences set that is read synchronously at startup. Going
+  # 3 -> 8 can multiply a large library several times over.
+  #
+  # This subset keeps every folder feature and puts the depth back to
+  # what upstream shipped, so the two variables are separated: if this
+  # runs and the depth-8 build does not, the depth is the fault and the
+  # code is fine.
+  if want depth3; then
+    sed -i "s/deepScan) 8 else 1/deepScan) 3 else 1/" "$J/utils/GameHelper.kt"
+    echo "  scan depth put back to upstream's 3"
+  fi
 fi
-if want folders || want sort; then
+if want folders || want sort || want depth3; then
   copy_one "$PATCH_DIR/android/ui/GamesFragment.kt"      "$J/ui/GamesFragment.kt"
 fi
-if want folders; then
+if want folders || want depth3; then
   copy_one "$PATCH_DIR/android/adapters/GameAdapter.kt"  "$J/adapters/GameAdapter.kt"
 fi
 
@@ -183,12 +200,13 @@ check() {
     fail=1
   fi
 }
-{ want folders || want scan || want sort; } && check "$J/model/Game.kt"       "val folder: String"  "Game.folder field"
-{ want folders || want scan || want sort; } && check "$J/model/Game.kt"       "folderName"          "Game.folderName"
-{ want folders || want scan || want sort; } && check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the scan"
+{ want folders || want scan || want sort || want depth3; } && check "$J/model/Game.kt"       "val folder: String"  "Game.folder field"
+{ want folders || want scan || want sort || want depth3; } && check "$J/model/Game.kt"       "folderName"          "Game.folderName"
+{ want folders || want scan || want sort || want depth3; } && check "$J/utils/GameHelper.kt" "childFolder"         "folder carried through the scan"
 { want folders || want scan || want sort; } && check "$J/utils/GameHelper.kt" "deepScan) 8"         "scan depth raised to 8"
-{ want folders || want sort; } && check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
-want folders && check "$J/adapters/GameAdapter.kt" "model.folderName" "folder shown on the card"
+want depth3 && check "$J/utils/GameHelper.kt" "deepScan) 3"         "scan depth left at upstream 3"
+{ want folders || want sort || want depth3; } && check "$J/ui/GamesFragment.kt" "groupByFolder"       "list grouped by folder"
+{ want folders || want depth3; } && check "$J/adapters/GameAdapter.kt" "model.folderName" "folder shown on the card"
 { want button || want minimal; } && check "$J/views/FloatingGameButton.kt" "class FloatingGameButton" "floating button present"
 want shared && check "$RES/layout/fragment_folders.xml" "button_shared_folder" "shared-folder button in the layout"
 want shared && check "$J/fragments/GameFoldersFragment.kt" "processSharedFolder" "shared-folder button wired in"
