@@ -44,6 +44,8 @@ const char* ToString(AutoMode mode) {
         return "Turbo";
     case AutoMode::Custom:
         return "Custom";
+    case AutoMode::AaaMin:
+        return "AAA min";
     case AutoMode::COUNT:
         break;
     }
@@ -245,6 +247,42 @@ ModeDefinition AutoModeEngine::BuildTurbo(GpuFamily family, DriverOrigin origin)
     return d;
 }
 
+
+ModeDefinition AutoModeEngine::BuildAaaMin(GpuFamily family, DriverOrigin origin) const {
+    ModeDefinition d{};
+    d.mode = AutoMode::AaaMin;
+    d.key = "aaa";
+    d.display_name = "AAA минимум";
+    d.summary = "Самые низкие настройки. Памяти может хватить. Если нет — так и будет.";
+    d.detail = "0.25x, без фильтров, без расширенной RAM гостя, кэш шейдеров на диск. "
+               "Не обещает, что открытый мир поедет на Mali-G57 / 8 ГБ. Цель — не "
+               "убить процесс по OOM и дать шанс загрузиться.";
+    d.temp_ceiling = 82;
+
+    d.tweaks = {
+        {"resolution_setup", "0", "0.25x (Res1_4X): меньше пикселей — меньше текстурных буферов."},
+        {"scaling_filter", "0", "Nearest: без промежуточных поверхностей."},
+        {"anti_aliasing", "0", "AA держит полный кадр в памяти. Выключено."},
+        {"max_anisotropy", "1", "1x: анизотропия раздувает выборки."},
+        {"gpu_accuracy", "0", "Low: меньше промежуточных копий кадра."},
+        {"astc_recompression", "1", "Сжать ASTC, чтобы текстуры занимали меньше RAM."},
+        {"use_asynchronous_shaders", "false",
+         "На Mali async часто вешает драйвер в тяжёлых играх."},
+        {"use_asynchronous_gpu_emulation", "true", "CPU не ждёт GPU лишний кадр."},
+        {"use_disk_shader_cache", "true", "Шейдеры на диск, не копятся в RAM между запусками."},
+        {"use_speed_limit", "true", "Не гонять лишние кадры — меньше пиков памяти."},
+        {"speed_limit", "100", "100%: не ускорять и не раздувать очередь."},
+        {"use_reactive_flushing", "false", "Readback на тайлере — лишние буферы и зависания."},
+        {"use_vsync", "2", "FIFO: не копить кадры в очереди показа."},
+        {"fast_gpu_time", "1", "Слабее синхронизация GPU — меньше stall-буферов."},
+        {"accelerate_astc", "0", "CPU ASTC: Mali native path часто держит вторую копию."},
+        {"force_max_clock", "false", "Не греть SoC впустую на 0.25x."},
+        {"use_extended_memory_layout", "false",
+         "Гостевые +1 ГБ забирают RAM у Android и часто роняют 8 ГБ телефон."},
+    };
+    return d;
+}
+
 ModeDefinition AutoModeEngine::Resolve(AutoMode mode, GpuFamily family,
                                        DriverOrigin origin) const {
     switch (mode) {
@@ -258,6 +296,8 @@ ModeDefinition AutoModeEngine::Resolve(AutoMode mode, GpuFamily family,
         return BuildCompatibility(family, origin);
     case AutoMode::Turbo:
         return BuildTurbo(family, origin);
+    case AutoMode::AaaMin:
+        return BuildAaaMin(family, origin);
     case AutoMode::Custom: {
         ModeDefinition d{};
         d.mode = AutoMode::Custom;
@@ -279,9 +319,9 @@ std::vector<ModeDefinition> AutoModeEngine::AllFor(GpuFamily family, DriverOrigi
     std::vector<ModeDefinition> out;
     out.reserve(static_cast<std::size_t>(AutoMode::COUNT));
     // Ordered by how likely they are to be the right answer, not by enum value.
-    for (const auto mode : {AutoMode::Balanced, AutoMode::Performance, AutoMode::Quality,
-                            AutoMode::Stability, AutoMode::Compatibility, AutoMode::Turbo,
-                            AutoMode::Custom}) {
+    for (const auto mode : {AutoMode::Balanced, AutoMode::AaaMin, AutoMode::Performance,
+                            AutoMode::Quality, AutoMode::Stability, AutoMode::Compatibility,
+                            AutoMode::Turbo, AutoMode::Custom}) {
         out.push_back(Resolve(mode, family, origin));
     }
     return out;

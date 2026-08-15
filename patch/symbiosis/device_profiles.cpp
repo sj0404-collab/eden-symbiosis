@@ -69,6 +69,32 @@ void ProfileEngine::BuildCatalogue() {
     });
 
     profiles.push_back(Profile{
+        .id = "mali_stock_aaamin",
+        .display_name = "Mali (system driver) — AAA минимум",
+        .summary = "0.25x and stripped extras so an open-world title might fit in 8 GB.",
+        .family = GpuFamily::Mali,
+        .origin = DriverOrigin::System,
+        .intent = TuningIntent::MaxFps,
+        .tweaks =
+            {
+                {"resolution_setup", "0", "0.25x (Res1_4X): smallest framebuffer Mali will accept."},
+                {"scaling_filter", "0", "Nearest."},
+                {"anti_aliasing", "0", "No AA buffers."},
+                {"max_anisotropy", "0", "No aniso."},
+                {"gpu_accuracy", "0", "Low accuracy."},
+                {"astc_recompression", "1", "Smaller textures."},
+                {"use_asynchronous_shaders", "false", "Async shaders hang Mali in heavy titles."},
+                {"use_disk_shader_cache", "true", "Shaders on disk."},
+                {"use_reactive_flushing", "false", "No mid-frame readback."},
+                {"use_vsync", "2", "FIFO, no queued frames."},
+                {"use_extended_memory_layout", "false", "Do not steal 1 GB for guest RAM."},
+            },
+        .expected_effect = "May boot. Will look muddy. May still OOM on BOTW/TOTK.",
+        .works_on_stock_driver = true,
+    });
+
+
+    profiles.push_back(Profile{
         .id = "mali_stock_balanced",
         .display_name = "Mali (system driver) — Balanced",
         .summary = "Recommended starting point when you cannot install a custom driver.",

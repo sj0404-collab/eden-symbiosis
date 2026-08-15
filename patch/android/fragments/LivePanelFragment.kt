@@ -347,6 +347,22 @@ class LivePanelFragment : Fragment() {
         }.getOrDefault(false)
 
         @JavascriptInterface
+        fun applyAaaMode(): String = runCatching {
+            val modes = org.yuzu.yuzu_emu.utils.NativeSymbiosis.autoModes()
+            val m = modes.firstOrNull { it.key == "aaa" }
+                ?: return@runCatching org.json.JSONObject()
+                    .put("ok", false).put("message", "режим AAA нет в этой сборке").toString()
+            val n = org.yuzu.yuzu_emu.utils.NativeSymbiosis.applyAutoMode(m.enumValue)
+            runCatching { org.yuzu.yuzu_emu.utils.NativeConfig.saveGlobalConfig() }
+            org.json.JSONObject().put("ok", n > 0).put("applied", n)
+                .put("message",
+                    "Поздравляю: AAA минимум · $n настроек. 0.25x, без лишней RAM. " +
+                        "Не обещает, что открытый мир поедет.")
+                .put("where", "настройки эмулятора · resolution 0.25x")
+                .toString()
+        }.getOrDefault("""{"ok":false,"message":"не применилось"}""")
+
+        @JavascriptInterface
         fun reloadInterface() {
             main.post {
                 // Только по кнопке. Автоматический timestamp рвал список.

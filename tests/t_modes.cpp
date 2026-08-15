@@ -10,7 +10,7 @@ int main(){
     // Твоё железо: Mali + системный драйвер
     auto all = e.AllFor(GpuFamily::Mali, DriverOrigin::System);
     printf("modes offered: %zu\n", all.size());
-    assert(all.size() == 7);
+    assert(all.size() == 8);
     for (auto& m : all)
         printf("  %-14s ceiling=%2u  tweaks=%2zu  %s\n",
                m.display_name.c_str(), m.temp_ceiling, m.tweaks.size(), m.summary.c_str());
@@ -73,6 +73,17 @@ int main(){
         if (t.key.rfind("use_",0)==0 || t.key=="force_max_clock")
             if (t.value!="true" && t.value!="false" && !isdigit(t.value[0])) { printf("BAD bool %s=%s\n",t.key.c_str(),t.value.c_str()); assert(false); }
     printf("all boolean values well-formed: OK\n");
+
+    auto aaa = e.Resolve(AutoMode::AaaMin, GpuFamily::Mali, DriverOrigin::System);
+    std::string raaa;
+    bool no_ext = false;
+    for (auto& tw : aaa.tweaks) {
+        if (tw.key == "resolution_setup") raaa = tw.value;
+        if (tw.key == "use_extended_memory_layout" && tw.value == "false") no_ext = true;
+    }
+    printf("AAA min res=%s no_extended_ram=%d\n", raaa.c_str(), (int)no_ext);
+    assert(raaa == "0");
+    assert(no_ext);
 
     printf("\nALL MODE TESTS PASSED\n");
 }

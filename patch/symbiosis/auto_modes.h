@@ -40,6 +40,7 @@ enum class AutoMode : u32 {
     Compatibility, ///< For titles that refuse to boot or render correctly.
     Turbo,         ///< Maximum load up to a temperature ceiling.
     Custom,        ///< User-managed; the layer applies nothing.
+    AaaMin,        ///< Lowest possible quality so AAA might fit in 8 GB.
     COUNT,
 };
 
@@ -108,6 +109,7 @@ private:
     [[nodiscard]] ModeDefinition BuildStability(GpuFamily family, DriverOrigin origin) const;
     [[nodiscard]] ModeDefinition BuildCompatibility(GpuFamily family, DriverOrigin origin) const;
     [[nodiscard]] ModeDefinition BuildTurbo(GpuFamily family, DriverOrigin origin) const;
+    [[nodiscard]] ModeDefinition BuildAaaMin(GpuFamily family, DriverOrigin origin) const;
 };
 
 AutoModeEngine& GetAutoModeEngine();

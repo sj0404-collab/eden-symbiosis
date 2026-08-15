@@ -1,5 +1,5 @@
 /* Offline cache for the library page. The APK still supplies live data. */
-const CACHE = 'symbiosis-library-v9';
+const CACHE = 'symbiosis-library-v10';
 const PRECACHE = ['./library.html', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', event => {

@@ -324,9 +324,14 @@ function holdMenu(g) {
   $('sheet-note').textContent = bits.join(' · ');
   $('sheet-actions').innerHTML = `
     <button class="ghost" id="a-props">Свойства</button>
+    <button class="ghost" id="a-aaa-g">AAA минимум</button>
     <button class="ghost" id="a-sh">Кешировать шейдеры</button>
     <button class="ghost" id="a-close">Закрыть</button>`;
   $('a-props').onclick = () => { closeSheet(); if (N() && N().openGameMenu) N().openGameMenu(g.path); };
+  $('a-aaa-g').onclick = () => {
+    const r = parse(call('applyAaaMode'), { message: 'нет моста — нужен новый APK' });
+    $('sheet-note').textContent = r.message || '';
+  };
   $('a-sh').onclick = () => cacheShaders();
   $('a-close').onclick = closeSheet;
   openSheet();
@@ -562,12 +567,17 @@ function openSettingsSheet() {
   $('sheet-note').textContent = saveLine;
   $('sheet-actions').innerHTML = `
     <button class="ghost" id="a-set">Настройки Eden</button>
+    <button class="ghost" id="a-aaa">AAA минимум</button>
     <button class="ghost" id="a-data">Папка данных</button>
     <button class="ghost" id="a-saves">Папка сейвов</button>
     <button class="ghost" id="a-saves-off">Сбросить сейвы</button>
     <button class="ghost" id="a-utils">Утилиты</button>
     <button class="ghost" id="a-close">Закрыть</button>`;
   $('a-set').onclick = () => { closeSheet(); if (N() && N().openSettings) N().openSettings(); };
+  $('a-aaa').onclick = () => {
+    const r = parse(call('applyAaaMode'), { message: 'нет моста — нужен новый APK' });
+    $('sheet-note').textContent = (r.message || '') + (r.where ? ' · ' + r.where : '');
+  };
   $('a-data').onclick = () => { if (N() && N().pickDataRoot) N().pickDataRoot(); };
   $('a-saves').onclick = () => { pickSaves(); };
   $('a-saves-off').onclick = () => {
