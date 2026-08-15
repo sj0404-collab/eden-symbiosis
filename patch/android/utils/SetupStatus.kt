@@ -261,8 +261,19 @@ object SetupStatus {
     /** Where saves live; worth stating because it moves with the data root. */
     fun savesPath(): String = root()?.let { "$it/nand/user/save" } ?: "—"
 
-    /** The data root every other path is derived from. */
-    fun dataRoot(): String = root() ?: "—"
+    /**
+     * The data root every other path is derived from.
+     *
+     * Если используется не та папка, которую выбрал пользователь, это
+     * сказано прямо здесь. Молчаливая подмена корня - причина, по которой
+     * выбранная папка выглядела «пустышкой»: ключи в ней лежат, а
+     * эмулятор смотрит в приватную и не говорит об этом ни слова.
+     */
+    fun dataRoot(): String {
+        val actual = root() ?: "—"
+        val reason = SharedDataDirectory.lastFallbackReason ?: return actual
+        return "$actual  ⚠ $reason"
+    }
 
     /** One-line summary for a collapsed strip. */
     fun summary(context: Context): String {

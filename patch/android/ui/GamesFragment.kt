@@ -108,7 +108,9 @@ class GamesFragment : Fragment() {
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri == null) return@registerForActivityResult
             val ctx = context ?: return@registerForActivityResult
+            // Папку «Eden» приводим к её настоящему корню «Eden/files».
             val path = SharedDataDirectory.resolveTreePath(uri)
+                ?.let { SharedDataDirectory.normaliseRoot(it) }
             if (path == null) {
                 Toast.makeText(
                     ctx,

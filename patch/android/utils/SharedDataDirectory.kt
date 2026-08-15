@@ -107,26 +107,76 @@ object SharedDataDirectory {
         privatePath(context) ?: visibleDefaultPath()
 
     /**
-     * Resolves the directory to hand to the native layer.
+     * Почему выбранная папка иногда оказывалась «пустышкой».
      *
-     * Falls back to private storage whenever the configured directory is
-     * missing or unwritable, so a removed SD card degrades into "starts with
-     * empty data" rather than "will not start".
+     * Здесь стояло условие `dir.isDirectory && dir.canWrite()`, и при
+     * любом из двух отказов молча возвращалась приватная папка.
+     *
+     * Беда в `canWrite()`: на путях вне Android/data он врёт. Для
+     * /storage/emulated/0/... он отвечает false, пока «Доступ ко всем
+     * файлам» не выдан, а корень данных вычисляется на СТАРТЕ приложения
+     * - раньше, чем пользователь успевает что-либо выдать. Выбор при
+     * этом сохранён и виден в настройках, а работает приложение с
+     * приватной папкой. Отсюда и «пустышки»: папка выбрана, ключи в ней
+     * лежат, а эмулятор смотрит в другое место и молчит.
+     *
+     * Теперь выбор пользователя не отменяется никогда, пока папка
+     * физически существует. Нет папки - карту вынули, и только тогда
+     * приватная. Причина подмены запоминается в [lastFallbackReason],
+     * чтобы панель могла сказать об этом вслух вместо тишины.
      */
     fun resolve(context: Context): String? {
         val configured = configuredPath
         if (configured != null) {
             val dir = File(configured)
-            if (dir.isDirectory && dir.canWrite()) {
+            if (dir.isDirectory) {
+                lastFallbackReason = null
                 return configured
             }
-            // Do not clear the preference: the volume may simply be unmounted
-            // and the user would silently lose their choice.
+            // Выбор НЕ стирается: том может быть просто отмонтирован.
+            lastFallbackReason = "папка не найдена: $configured"
+            Log.warning("[SharedData] выбранная папка недоступна: $configured")
+        } else {
+            lastFallbackReason = null
         }
-        // No explicit choice: prefer the visible /sdcard/Eden Debug folder over
-        // the hidden Android/data one, so saves and firmware can be reached
-        // with a file manager and survive uninstalling the app.
         return preferredDefault(context)
+    }
+
+    /**
+     * Почему используется не выбранная папка, или null если всё в порядке.
+     * Читается панелью состояния.
+     */
+    var lastFallbackReason: String? = null
+        private set
+
+    /**
+     * Приводит выбор пользователя к настоящему корню данных.
+     *
+     * Люди выбирают папку «Eden», а корнем данных Eden на Android
+     * является «Eden/files»: именно там лежат keys, nand и load. Выбрать
+     * на уровень выше - самая естественная ошибка, и заканчивается она
+     * пустой библиотекой при полной папке рядом.
+     *
+     * Решается без вопросов к пользователю: если внутри выбранной папки
+     * нет признаков корня, но они есть в её подпапке `files`, берётся
+     * подпапка. Признак - keys, nand или load: любая настоящая установка
+     * содержит хотя бы одно из них.
+     */
+    fun normaliseRoot(path: String): String {
+        fun looksLikeRoot(dir: File): Boolean =
+            File(dir, "keys").isDirectory ||
+                File(dir, "nand").isDirectory ||
+                File(dir, "load").isDirectory
+
+        val chosen = File(path)
+        if (looksLikeRoot(chosen)) return path
+
+        val inner = File(chosen, "files")
+        if (inner.isDirectory && looksLikeRoot(inner)) {
+            Log.info("[SharedData] выбран $path, корень данных - ${inner.absolutePath}")
+            return inner.absolutePath
+        }
+        return path
     }
 
     /** True when a directory other than the private one is active. */
@@ -175,6 +225,11 @@ object SharedDataDirectory {
         }.getOrDefault(false)
 
         if (!writable) {
+            // Нечитаемая папка - отказ. Но папка, в которую нельзя писать
+            // ТОЛЬКО из-за невыданного разрешения, отказом быть не должна:
+            // разрешение выдаётся за десять секунд, а выбор папки человек
+            // сделал сейчас и повторять его не захочет. Сохраняем выбор и
+            // говорим, чего не хватает.
             val verdict = if (needsAllFilesAccess() && !hasAllFilesAccess()) {
                 Verdict.NoPermission
             } else {

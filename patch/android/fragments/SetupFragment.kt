@@ -122,6 +122,7 @@ class SetupFragment : Fragment() {
             }
 
             val path = SharedDataDirectory.resolveTreePath(uri)
+                ?.let { SharedDataDirectory.normaliseRoot(it) }
             if (path == null) {
                 // Android 11+ blocks Android/data of other apps outright. Say so
                 // rather than silently accepting a folder that will not work.

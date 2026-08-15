@@ -387,7 +387,9 @@ class UtilitiesFragment : Fragment() {
             )
         }
 
+        // Папку «Eden» приводим к её настоящему корню «Eden/files».
         val path = SharedDataDirectory.resolveTreePath(uri)
+            ?.let { SharedDataDirectory.normaliseRoot(it) }
         if (path == null) {
             AlertDialog.Builder(requireContext())
                 .setTitle(R.string.util_shared_dir)
