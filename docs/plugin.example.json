@@ -1,0 +1,13 @@
+{
+  "id": "example-quiet",
+  "name": "Тише шапка",
+  "version": "1",
+  "enabled": true,
+  "hide": ["#btn-tools"],
+  "theme": {
+    "--pink": "#ff7aa8"
+  },
+  "strings": {
+    "Search games…": "Найти игру…"
+  }
+}

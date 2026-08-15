@@ -19,16 +19,19 @@
     display:flex; flex-direction:column;
     overflow:hidden;
     padding-top:48px;
+    transition:background .2s ease, color .2s ease;
   }
   header {
-    display:flex; align-items:center; gap:8px;
+    display:flex; align-items:center; gap:6px;
     padding:6px 12px 0;
   }
   header h1 { font-size:22px; font-weight:700; margin:0; flex:1; }
   .iconbtn {
-    min-width:38px; height:38px; border-radius:12px; border:1px solid var(--line);
-    background:#1c1c26; color:var(--text); font-size:14px; padding:0 10px;
+    min-width:36px; height:36px; border-radius:12px; border:1px solid var(--line);
+    background:#1c1c26; color:var(--text); font-size:13px; padding:0 9px;
+    transition:transform .12s ease, background .12s ease, opacity .12s ease;
   }
+  .iconbtn:active { transform:scale(.96); background:var(--on); }
   .search {
     margin:10px 12px 6px; display:flex; align-items:center; gap:10px;
     border:1px solid var(--line); border-radius:22px; padding:0 14px; height:42px;
@@ -57,8 +60,9 @@
     display:flex; align-items:stretch; gap:12px;
     margin:6px; padding:8px; border-radius:16px; border:1px solid var(--line);
     background:var(--card);
+    transition:background .12s ease, transform .12s ease, opacity .18s ease;
   }
-  .game:active { background:var(--on); }
+  .game:active { background:var(--on); transform:scale(.985); }
   .thumb {
     width:64px; height:64px; border-radius:12px; flex:0 0 64px;
     background:linear-gradient(145deg,#2a1630,#16222a);
@@ -89,7 +93,9 @@
   .fab {
     height:48px; padding:0 16px; border:0; border-radius:24px;
     background:var(--pink); color:#fff; font:600 14px/48px inherit;
+    transition:transform .12s ease, opacity .12s ease;
   }
+  .fab:active { transform:scale(.97); }
   .fab.ghost {
     background:#1c1c26; color:var(--text); border:1px solid var(--line);
   }
@@ -101,30 +107,53 @@
   }
   .bar b { color:var(--text); }
   .sheet {
-    display:none; position:absolute; inset:0; background:rgba(0,0,0,.55);
+    display:flex; position:absolute; inset:0; background:rgba(0,0,0,.55);
     z-index:6; align-items:flex-end;
+    opacity:0; visibility:hidden; pointer-events:none;
+    transition:opacity .18s ease, visibility .18s ease;
   }
-  .sheet.on { display:flex; }
+  .sheet.on { opacity:1; visibility:visible; pointer-events:auto; }
   .sheet .box {
     width:100%; background:#14141a; border-radius:18px 18px 0 0;
     padding:16px 16px 24px; max-height:80%; overflow:auto;
+    transform:translateY(18px);
+    transition:transform .18s ease;
   }
+  .sheet.on .box { transform:translateY(0); }
   .sheet h2 { margin:0 0 10px; font-size:16px; }
   .row { display:flex; gap:8px; flex-wrap:wrap; }
   button.ghost {
     background:transparent; color:var(--cyan); border:1px solid var(--line);
     border-radius:10px; padding:10px 12px; font:600 13px inherit;
+    transition:transform .12s ease, background .12s ease;
   }
+  button.ghost:active { transform:scale(.97); background:var(--on); }
   .note { color:var(--dim); font-size:12.5px; margin-top:8px; word-break:break-all; }
   .note pre {
     white-space:pre-wrap; word-break:break-word;
     margin:8px 0 0; font:12px/1.4 ui-monospace,monospace; color:var(--text);
   }
+  .plug {
+    border:1px solid var(--line); border-radius:12px;
+    padding:8px 10px; margin:6px 0;
+    display:flex; gap:8px; align-items:center;
+  }
+  .plug .nm { flex:1; min-width:0; }
+  .plug .nm b { display:block; }
+  .logline {
+    border-top:1px solid var(--line); padding:7px 0;
+    font-size:12.5px;
+  }
+  .logline .ok { color:var(--cyan); }
+  .logline .bad { color:var(--pink); }
+  .logline .wh { color:var(--dim); font-size:11px; margin-top:2px; }
 </style>
 </head>
 <body>
 <header>
   <h1>Eden</h1>
+  <button class="iconbtn" id="btn-plugins">Плагины</button>
+  <button class="iconbtn" id="btn-reload" title="Обновить интерфейс">↻</button>
   <button class="iconbtn" id="btn-tools">Утилиты</button>
   <button class="iconbtn" id="btn-settings">Настройки</button>
 </header>
@@ -248,7 +277,7 @@ function holdMenu(g) {
   $('a-props').onclick = () => { closeSheet(); if (N() && N().openGameMenu) N().openGameMenu(g.path); };
   $('a-sh').onclick = () => cacheShaders();
   $('a-close').onclick = closeSheet;
-  $('sheet').classList.add('on');
+  openSheet();
 }
 
 function cacheShaders() {
@@ -268,9 +297,10 @@ function openAddonFile(path, name) {
     $('sheet-actions').innerHTML = `<button class="ghost" id="a-close">Закрыть</button>`;
   }
   $('a-close').onclick = closeSheet;
-  $('sheet').classList.add('on');
+  openSheet();
 }
 
+function openSheet() { $('sheet').classList.add('on'); }
 function closeSheet() { $('sheet').classList.remove('on'); }
 
 function loadGames() {
@@ -323,6 +353,135 @@ function pickSaves() {
   if (N() && N().pickSavesFolder) N().pickSavesFolder();
 }
 
+function applyPlugins() {
+  const p = parse(call('pluginPayload'), null);
+  if (!p) return;
+  const root = document.documentElement;
+  Object.keys(p.theme || {}).forEach(k => {
+    try { root.style.setProperty(k, p.theme[k]); } catch (e) {}
+  });
+  let st = document.getElementById('plugin-css');
+  if (!st) {
+    st = document.createElement('style');
+    st.id = 'plugin-css';
+    document.head.appendChild(st);
+  }
+  st.textContent = p.css || '';
+  document.querySelectorAll('[data-plugin-hide]').forEach(el => {
+    el.style.removeProperty('display');
+    el.removeAttribute('data-plugin-hide');
+  });
+  (p.hide || []).forEach(sel => {
+    try {
+      document.querySelectorAll(sel).forEach(el => {
+        el.setAttribute('data-plugin-hide', '1');
+        el.style.display = 'none';
+      });
+    } catch (e) {}
+  });
+  document.querySelectorAll('[data-plugin-html]').forEach(el => el.remove());
+  (p.html || []).forEach(item => {
+    const at = String(item.at || '');
+    const html = item.html || '';
+    if (!at || !html) return;
+    try {
+      const wrap = document.createElement('div');
+      wrap.setAttribute('data-plugin-html', '1');
+      wrap.innerHTML = html;
+      if (at.startsWith('after:')) {
+        const t = document.querySelector(at.slice(6));
+        if (t && t.parentNode) t.parentNode.insertBefore(wrap, t.nextSibling);
+      } else if (at.startsWith('before:')) {
+        const t = document.querySelector(at.slice(7));
+        if (t && t.parentNode) t.parentNode.insertBefore(wrap, t);
+      } else {
+        const t = document.querySelector(at);
+        if (t) t.appendChild(wrap);
+      }
+    } catch (e) {}
+  });
+  const strings = p.strings || {};
+  if (strings['Search games…'] && $('q')) $('q').placeholder = strings['Search games…'];
+}
+
+function openPluginsSheet() {
+  HOLD = null;
+  const data = parse(call('plugins'), { items: [], logs: [] });
+  $('sheet-title').textContent = 'Плагины';
+  const items = data.items || [];
+  const logs = data.logs || [];
+  const list = items.length ? items.map(it => `
+    <div class="plug" data-id="${esc(it.id)}">
+      <div class="nm"><b>${esc(it.name || it.id)}</b>
+        <span style="color:var(--dim);font-size:12px">${it.enabled === false ? 'скрыт' : 'включён'} · ${it.files || 0} · ${esc(it.size || '')}</span>
+      </div>
+      <button class="ghost p-tog">${it.enabled === false ? 'Вкл' : 'Скрыть'}</button>
+      <button class="ghost p-del">Снести</button>
+    </div>`).join('') : '<div class="empty" style="padding:12px">пока пусто — добавьте zip, json, css, tar.gz</div>';
+  const logHtml = logs.length ? logs.slice(0, 12).map(l => `
+    <div class="logline">
+      <div class="${l.ok ? 'ok' : 'bad'}">${esc(l.message || '')}</div>
+      <div class="wh">${esc(l.where || '')}${l.file ? ' · файл ' + esc(l.file) : ''}</div>
+    </div>`).join('') : '<div class="note">лог появится после первого файла</div>';
+  $('sheet-note').innerHTML =
+    '<div class="note">Как DLC: сколько угодно файлов, каждый пишет куда попал. Снести можно сразу. Пересборка APK не нужна.</div>' +
+    list + '<div style="margin-top:10px;font-weight:600">Лог</div>' + logHtml;
+  $('sheet-actions').innerHTML = `
+    <button class="ghost" id="a-add">＋ Файл</button>
+    <button class="ghost" id="a-reload">Обновить интерфейс</button>
+    <button class="ghost" id="a-close">Закрыть</button>`;
+  $('a-add').onclick = () => { if (N() && N().pickPlugin) N().pickPlugin(); };
+  $('a-reload').onclick = reloadUi;
+  $('a-close').onclick = closeSheet;
+  $('sheet-note').querySelectorAll('.plug').forEach(el => {
+    const id = el.dataset.id;
+    const tog = el.querySelector('.p-tog');
+    const del = el.querySelector('.p-del');
+    if (tog) tog.onclick = ev => {
+      ev.stopPropagation();
+      const nowHidden = (tog.textContent || '').indexOf('Вкл') >= 0;
+      parse(call('enablePlugin', id, nowHidden), null);
+      applyPlugins();
+      openPluginsSheet();
+    };
+    if (del) del.onclick = ev => {
+      ev.stopPropagation();
+      parse(call('removePlugin', id), null);
+      applyPlugins();
+      openPluginsSheet();
+    };
+  });
+  openSheet();
+}
+
+function onPluginsChanged(info) {
+  applyPlugins();
+  openPluginsSheet();
+  if (info && info.message) {
+    const extra = document.createElement('div');
+    extra.className = 'logline';
+    extra.innerHTML = `<div class="${info.ok ? 'ok' : 'bad'}">${esc(info.message)}</div>
+      <div class="wh">${esc(info.where || '')}</div>`;
+    $('sheet-note').appendChild(extra);
+  }
+}
+
+function reloadUi() {
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.update()));
+    }
+    if (window.caches) {
+      caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).catch(()=>{});
+    }
+  } catch (e) {}
+  if (N() && N().reloadInterface) {
+    N().reloadInterface();
+    return;
+  }
+  location.reload();
+}
+
 function openSettingsSheet() {
   HOLD = null;
   $('sheet-title').textContent = 'Настройки';
@@ -348,7 +507,7 @@ function openSettingsSheet() {
   };
   $('a-utils').onclick = () => { closeSheet(); if (N() && N().openUtilities) N().openUtilities(); };
   $('a-close').onclick = closeSheet;
-  $('sheet').classList.add('on');
+  openSheet();
 }
 
 $('q').addEventListener('input', render);
@@ -356,11 +515,14 @@ $('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); };
 $('fab-saves').onclick = pickSaves;
 $('btn-tools').onclick = () => { if (N() && N().openUtilities) N().openUtilities(); };
 $('btn-settings').onclick = openSettingsSheet;
+$('btn-plugins').onclick = openPluginsSheet;
+$('btn-reload').onclick = reloadUi;
 $('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 loadGames();
 loadStatus();
+applyPlugins();
 </script>
 </body>
 </html>

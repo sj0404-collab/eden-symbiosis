@@ -26,6 +26,7 @@ import org.yuzu.yuzu_emu.model.GamesViewModel
 import org.yuzu.yuzu_emu.ui.main.MainActivity
 import org.yuzu.yuzu_emu.utils.GameAddons
 import org.yuzu.yuzu_emu.utils.LivePanel
+import org.yuzu.yuzu_emu.utils.PluginPack
 import org.yuzu.yuzu_emu.utils.SaveSource
 import org.yuzu.yuzu_emu.utils.SharedDataDirectory
 
@@ -106,6 +107,27 @@ class LivePanelFragment : Fragment() {
                 )
                 reloadPageData()
             }, 200)
+        }
+
+    private val pickPluginFiles =
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNullOrEmpty()) return@registerForActivityResult
+            val ctx = context?.applicationContext ?: return@registerForActivityResult
+            Thread {
+                val last = uris.map { uri ->
+                    runCatching { PluginPack.install(ctx, uri) }.getOrDefault(
+                        org.json.JSONObject().put("ok", false).put("message", "сбой установки").toString()
+                    )
+                }.lastOrNull() ?: "{}"
+                main.post {
+                    web?.evaluateJavascript(
+                        "try{if(typeof onPluginsChanged==='function')onPluginsChanged(" +
+                            last +
+                            ")}catch(e){}",
+                        null
+                    )
+                }
+            }.start()
         }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -258,6 +280,41 @@ class LivePanelFragment : Fragment() {
         fun prepareShaders(): String = runCatching {
             LivePanel.prepareShaders()
         }.getOrDefault("""{"ok":false,"note":"недоступно"}""")
+
+        @JavascriptInterface
+        fun plugins(): String = runCatching { PluginPack.listJson() }
+            .getOrDefault("""{"items":[],"logs":[]}""")
+
+        @JavascriptInterface
+        fun pluginPayload(): String = runCatching { PluginPack.payloadJson() }
+            .getOrDefault("""{"css":"","hide":[],"html":[]}""")
+
+        @JavascriptInterface
+        fun pickPlugin() {
+            main.post {
+                runCatching { pickPluginFiles.launch(arrayOf("*/*")) }
+            }
+        }
+
+        @JavascriptInterface
+        fun removePlugin(id: String): String = runCatching {
+            PluginPack.remove(id)
+        }.getOrDefault("""{"ok":false,"message":"не удалился"}""")
+
+        @JavascriptInterface
+        fun enablePlugin(id: String, on: Boolean): String = runCatching {
+            PluginPack.setEnabled(id, on)
+        }.getOrDefault("""{"ok":false,"message":"не переключился"}""")
+
+        @JavascriptInterface
+        fun reloadInterface() {
+            main.post {
+                // Только по кнопке. Автоматический timestamp рвал список.
+                runCatching {
+                    web?.loadUrl(LivePanel.panelUrl() + "&r=" + System.currentTimeMillis())
+                }
+            }
+        }
 
         @JavascriptInterface
         fun rescan() {
