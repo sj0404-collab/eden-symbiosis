@@ -382,35 +382,21 @@ class GamesFragment : Fragment() {
             refreshStatusStrip()
             refreshFolderCards()
         }
-        // Coming back from the system settings page. Android grants All Files
-        // Access without restarting the app, but nothing here notices: the
-        // game list was built while every read outside the private folder was
-        // refused, so it stays empty until something forces a rescan. Do it
-        // here, once, on the transition from "denied" to "granted".
-        val hasStorageNow = !SharedDataDirectory.needsAllFilesAccess() ||
-            SharedDataDirectory.hasAllFilesAccess()
-        if (hasStorageNow && !hadStorageLastResume) {
-            gamesViewModel.reloadGames(true)
-        }
-        hadStorageLastResume = hasStorageNow
-
-        // Список папок изменился, пока экрана не было видно.
+        // Автоматический обход при возврате на экран УБРАН.
         //
-        // Последний рубеж, и намеренно тупой: сравнить число настроенных
-        // папок с тем, что было при прошлом показе экрана. Прошлая правка
-        // чинила ОДИН путь добавления папки (addFolder -> reloadGames), но
-        // путей несколько: диалог добавления, экран папок, кнопка «+»,
-        // импорт из Инструментов, - и каждый может обновление не дозваться.
-        // Проверка здесь ловит их все разом, потому что вернуться на этот
-        // экран человек обязан в любом случае.
+        // Здесь было два условия: «выдали доступ к файлам» и «изменилось
+        // число папок». Оба звали reloadGames(), то есть полный обход с
+        // разбором каждого ROM. Возврат из системных настроек, из игры,
+        // из любого другого экрана - и снова обход.
         //
-        // Стоит она один вызов getGameDirs() (чтение уже разобранного
-        // конфига в памяти), обход папок при этом не запускается.
+        // Обход теперь только по явной команде пользователя: потянуть
+        // список вниз или добавить папку. Список берётся из кэша и живёт
+        // между запусками.
+        //
+        // Число папок всё же отслеживается - но лишь чтобы обновить
+        // карточки папок и строку состояния, без чтения самих файлов.
         val folderCount = runCatching { NativeConfig.getGameDirs().size }.getOrDefault(-1)
         if (folderCount >= 0 && folderCount != lastFolderCount) {
-            if (lastFolderCount >= 0) {
-                gamesViewModel.reloadGames(true)
-            }
             lastFolderCount = folderCount
         }
         if (getCurrentViewType() == GameAdapter.VIEW_TYPE_CAROUSEL) {
@@ -702,9 +688,7 @@ class GamesFragment : Fragment() {
     /** Сколько папок было настроено при прошлом показе экрана. -1 = ещё не знаем. */
     private var lastFolderCount: Int = -1
 
-    /** Storage access as it stood at the previous onResume. */
-    private var hadStorageLastResume =
-        !SharedDataDirectory.needsAllFilesAccess() || SharedDataDirectory.hasAllFilesAccess()
+
 
     /**
      * Opens the All Files Access screen for this app.

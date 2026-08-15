@@ -35,9 +35,21 @@ object GameHelper {
         preferences = PreferenceManager.getDefaultSharedPreferences(context)
 
         val gameDirs = mutableListOf<GameDir>()
-        val oldGamesDir = preferences.getString(KEY_OLD_GAME_PATH, "") ?: ""
-        if (oldGamesDir.isNotEmpty()) {
-            gameDirs.add(GameDir(oldGamesDir, true))
+
+        // Папка игр «по умолчанию» больше не появляется сама.
+        //
+        // Здесь читался старый ключ game_path и МОЛЧА добавлялся как
+        // папка игр, причём с deepScan = true - обход на три уровня
+        // вглубь. Пользователь такую папку не выбирал и в списке папок
+        // её не видел; если она указывала на корень данных или на
+        // родителя игровой папки, обход шёл по слоям вложенных
+        // каталогов (nand, load, cache, sdmc - их создаёт ensureLayout)
+        // и мешал запуску.
+        //
+        // Единственный источник папок теперь - конфиг, куда они попадают
+        // только явным выбором пользователя. Устаревший ключ вычищается,
+        // чтобы не всплыл позже.
+        if (!preferences.getString(KEY_OLD_GAME_PATH, "").isNullOrEmpty()) {
             preferences.edit() { remove(KEY_OLD_GAME_PATH) }
         }
         gameDirs.addAll(NativeConfig.getGameDirs())

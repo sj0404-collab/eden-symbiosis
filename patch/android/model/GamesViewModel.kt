@@ -57,7 +57,53 @@ class GamesViewModel : ViewModel() {
         NativeLibrary.reloadKeys()
 
         getGameDirsAndExternalContent()
-        reloadGames(directoriesChanged = false, firstStartup = true)
+
+        // ЛЕНИВЫЙ СТАРТ: показать сохранённый список, НЕ обходя папки.
+        //
+        // Здесь стояло reloadGames(firstStartup = true). Внутри неё
+        // firstStartup лишь ПРЕДВАРИТЕЛЬНО показывает кэш, а сразу за
+        // этим безусловно идёт setGames(GameHelper.getGames()) - полный
+        // обход дерева с разбором заголовка каждого ROM. То есть кэш
+        // существовал, но не экономил ничего: каждый запуск заново читал
+        // и расшифровывал все файлы.
+        //
+        // Это и есть вылет при перезапуске: обход стартует в первые
+        // миллисекунды, до готовности интерфейса, и любой сбой в нём
+        // валит приложение прежде, чем его можно закрыть по-человечески.
+        //
+        // Теперь при старте берётся только кэш. Обход - по явной
+        // команде: потянуть список вниз, добавить папку или кнопкой
+        // «Искать игры».
+        loadCachedGames()
+    }
+
+    /**
+     * Список из кэша, без единого обращения к папкам.
+     *
+     * Кэш пишет GameHelper.getGames() в SharedPreferences, поэтому он
+     * переживает и перезапуск, и смену корня данных. Существование
+     * файлов НЕ проверяется: DocumentFile.exists() на каждую игру - это
+     * снова запрос к хранилищу на каждый файл, то самое, чего мы
+     * избегаем. Удалённая игра отвалится при попытке запуска или при
+     * следующем ручном обходе.
+     */
+    private fun loadCachedGames() {
+        viewModelScope.launch {
+            val cached = withContext(Dispatchers.IO) {
+                runCatching {
+                    PreferenceManager.getDefaultSharedPreferences(YuzuApplication.appContext)
+                        .getStringSet(GameHelper.KEY_GAMES, emptySet())
+                        ?.mapNotNull { entry ->
+                            runCatching { Json.decodeFromString<Game>(entry) }.getOrNull()
+                        }
+                        ?: emptyList()
+                }.getOrDefault(emptyList())
+            }
+            if (cached.isNotEmpty()) {
+                setGames(cached)
+                GameHelper.cachedGameList = cached.toMutableList()
+            }
+        }
     }
 
     fun setGames(games: List<Game>) {

@@ -1160,24 +1160,28 @@ diff --git a/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInit
 index f961c5e984..ba1ece6185 100644
 --- a/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
 +++ b/src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DirectoryInitialization.kt
-@@ -24,9 +24,20 @@ object DirectoryInitialization {
+@@ -24,9 +24,24 @@ object DirectoryInitialization {
          if (!areDirectoriesReady) {
              initializeInternalStorage()
              NativeConfig.initializeGlobalConfig()
 +
-+            // The game list is stored in config.ini, which belongs to the data
-+            // root. If the user switched roots, the list just loaded is the new
-+            // root's - empty, for a folder that never had a config of its own.
-+            // Put back anything that was remembered before the switch.
-+            SharedDataDirectory.restoreGameDirs()
++            // Восстановление списка папок при старте УБРАНО.
++            //
++            // restoreGameDirs() подмешивала в конфиг папки, запомненные
++            // до смены корня данных. Задумано было для переезда, а на
++            // деле срабатывало при каждом запуске: удалённая папка
++            // возвращалась, папка родителя ложилась поверх вложенной, и
++            // список рос слоями. Обход такого списка проходил по одним
++            // и тем же каталогам многократно.
++            //
++            // Список папок теперь целиком принадлежит config.ini и
++            // меняется только пользователем. Перенести папки при смене
++            // корня по-прежнему можно - это делает redirectNow(), в
++            // момент самой смены, а не на каждом старте.
 +
              NativeLibrary.initializeSystem(false)
              NativeLibrary.reloadProfiles()
              migrateSettings()
-+
-+            // Snapshot the effective list so the next root change has something
-+            // to restore from.
-+            SharedDataDirectory.rememberGameDirs()
              areDirectoriesReady = true
          }
      }
