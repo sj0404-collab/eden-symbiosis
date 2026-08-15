@@ -240,7 +240,21 @@ function render() {
     return;
   }
   if (!list.length) {
-    $('list').innerHTML = '<div class="empty">' + (GAMES.length ? 'ничего не найдено' : 'Нет игр в кэше. Добавьте папку снизу.') + '</div>';
+    if (GAMES.length) {
+      $('list').innerHTML = '<div class="empty">ничего не найдено</div>';
+      return;
+    }
+    const folders = parse(call('folders'), { folders: [] }).folders || [];
+    const bytes = folders.reduce((n, f) => n + (f.bytes || 0), 0);
+    const hint = folders.length
+      ? ('Папка «' + (folders[0].name || 'игры') + '» есть' +
+         (folders[0].size ? ' · ' + folders[0].size : '') +
+         ', но в кэше 0 игр. Ключи должны быть зелёными — тогда «Найти игры».')
+      : 'Нет игр в кэше. Добавьте папку снизу.';
+    $('list').innerHTML = '<div class="empty">' + hint +
+      '<div style="margin-top:14px"><button class="ghost" id="btn-find">Найти игры</button></div></div>';
+    const b = $('btn-find');
+    if (b) b.onclick = findGames;
     return;
   }
   $('list').innerHTML = list.map(g => {
@@ -340,6 +354,22 @@ function openAddonFile(path, name) {
 
 function openSheet() { $('sheet').classList.add('on'); }
 function closeSheet() { $('sheet').classList.remove('on'); }
+
+function findGames() {
+  if (N() && N().rescan) N().rescan();
+  const btn = $('btn-find');
+  if (btn) btn.textContent = 'ищу…';
+  let n = 0;
+  const tmr = setInterval(() => {
+    n++;
+    loadGames();
+    loadStatus();
+    if (GAMES.length || n > 20) {
+      clearInterval(tmr);
+      if (!GAMES.length && $('btn-find')) $('btn-find').textContent = 'ещё раз';
+    }
+  }, 700);
+}
 
 function loadGames() {
   GAMES = (parse(call('games'), { games: [] }).games) || [];

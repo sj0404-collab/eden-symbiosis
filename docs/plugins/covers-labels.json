@@ -1,0 +1,16 @@
+{
+  "id": "covers-labels",
+  "name": "Обложки и подписи",
+  "version": "1",
+  "enabled": true,
+  "strings": {
+    "Search games…": "Найти игру…"
+  },
+  "theme": {
+    "--pink": "#ff4d8d",
+    "--cyan": "#5ef0e6"
+  },
+  "html": {
+    "after:#status": "<div style=\"margin:0 12px 8px;padding:10px 12px;border:1px solid #2a2a36;border-radius:12px;font-size:13px;color:#ececf4\">Плагин «Обложки и подписи» включён. Обложка читается из ROM — сначала игра должна быть в списке. Если папка есть, а игр 0: нажмите «Найти игры».</div>"
+  }
+}
