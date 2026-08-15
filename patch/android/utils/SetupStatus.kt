@@ -139,16 +139,13 @@ object SetupStatus {
 
     /** Save data. Grows quietly and is the thing worth backing up. */
     fun saves(): Item {
-        val dir = savesPath().takeIf { it != "—" }
-        // Один listFiles, без рекурсии по профилям. Обход сейвов на
-        // каждом onResume — лишняя работа, от которой строка состояния
-        // не становится честнее.
-        val profiles = dir?.let { File(it).listFiles()?.size } ?: 0
+        val dir = savesPath().takeIf { it != "—" }?.let { File(it) }
+        val bytes = dir?.let { LivePanel.realSaveBytes(it) } ?: 0L
         return Item(
             labelRes = R.string.status_saves,
-            present = profiles > 0,
-            detail = if (profiles > 0) (dir ?: "") else "пусто",
-            bytes = null
+            present = bytes >= 2048L,
+            detail = if (bytes >= 2048L) GameFolderScanner.humanSize(bytes) else "слоты пустые",
+            bytes = if (bytes >= 2048L) bytes else null
         )
     }
 

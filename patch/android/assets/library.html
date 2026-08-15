@@ -152,7 +152,7 @@ function render() {
   }
   $('list').innerHTML = list.map(g => {
     const i = GAMES.indexOf(g);
-    const save = g.hasSave ? ' · сейв есть' : '';
+    const save = g.hasSave ? (' · сейв ' + (g.saveSize || 'есть')) : '';
     return `<div class="game" data-i="${i}">
       <div class="thumb" id="ic-${i}">▶</div>
       <div class="meta">

@@ -16,7 +16,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 4
+    const val BRIDGE_VERSION = 5
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
@@ -102,19 +102,18 @@ object LivePanel {
     fun gamesJson(): String {
         val arr = JSONArray()
         rememberedGames().forEach { g ->
-            val saveDir = runCatching { g.saveDir }.getOrNull().orEmpty()
-            val hasSave = saveDir.isNotEmpty() && runCatching {
-                val f = File(saveDir)
-                f.exists() && (f.isFile || (f.listFiles()?.any { it.length() > 0 || (it.isDirectory && (it.list()?.isNotEmpty() == true)) } == true))
-            }.getOrDefault(false)
+            val probe = saveProbe(g)
             arr.put(
                 JSONObject().apply {
                     put("title", g.title)
                     put("path", g.path)
                     put("programId", g.programId)
                     put("developer", g.developer)
-                    put("saveDir", saveDir)
-                    put("hasSave", hasSave)
+                    put("saveDir", probe.path)
+                    put("hasSave", probe.bytes >= MIN_SAVE_BYTES)
+                    put("saveBytes", probe.bytes)
+                    put("saveSize", if (probe.bytes >= MIN_SAVE_BYTES)
+                        GameFolderScanner.humanSize(probe.bytes) else "")
                 }
             )
         }
@@ -264,6 +263,79 @@ object LivePanel {
 
     private fun looksLikeTitleId(name: String): Boolean =
         name.length == 16 && name.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+
+    /** Меньше этого — пустые слоты, которые игра рисует как NEW GAME. */
+    private const val MIN_SAVE_BYTES = 2048L
+
+    data class SaveProbe(val path: String, val bytes: Long)
+
+    /**
+     * Настоящий сейв — файлы с данными в nand/user/save/<user>/<titleid>/.
+     * Папку слота Eden создаёт при первом запуске, даже если слоты пустые.
+     * Именно поэтому на карточке писало «сейв есть», а в игре — NEW GAME.
+     */
+    fun saveProbe(game: Game): SaveProbe {
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+            ?: return SaveProbe("", 0)
+        val nand = File(root, "nand/user/save")
+        val tid = titleIdHex(game.programId)
+        var total = 0L
+        var path = ""
+        runCatching {
+            val sd = game.saveDir
+            if (sd.isNotBlank()) {
+                val b = fileBytes(File(sd))
+                if (b > 0) { total += b; path = sd }
+            }
+        }
+        if (tid.isNotEmpty() && nand.isDirectory) {
+            nand.listFiles()?.forEach { user ->
+                if (!user.isDirectory || user.name == "0000000000000000") return@forEach
+                val folder = File(user, tid)
+                val b = fileBytes(folder)
+                if (b > 0) {
+                    total += b
+                    if (path.isEmpty()) path = folder.absolutePath
+                }
+            }
+        }
+        return SaveProbe(path, total)
+    }
+
+    fun titleIdHex(programId: String): String {
+        val raw = programId.trim()
+        if (looksLikeTitleId(raw)) return raw.uppercase()
+        val n = raw.toLongOrNull() ?: return ""
+        if (n == 0L) return ""
+        return n.toString(16).uppercase().padStart(16, '0')
+    }
+
+    fun realSaveBytes(nandSave: File): Long {
+        if (!nandSave.isDirectory) return 0
+        var total = 0L
+        nandSave.listFiles()?.forEach { user ->
+            if (!user.isDirectory || user.name == "0000000000000000") return@forEach
+            total += fileBytes(user)
+        }
+        return total
+    }
+
+    private fun fileBytes(dir: File): Long {
+        if (!dir.exists()) return 0
+        if (dir.isFile) return dir.length()
+        var sum = 0L
+        val q = ArrayDeque<File>()
+        q.add(dir)
+        var steps = 0
+        while (q.isNotEmpty() && steps < 80) {
+            steps++
+            val kids = q.removeFirst().listFiles() ?: continue
+            for (k in kids) {
+                if (k.isFile) sum += k.length() else if (k.isDirectory) q.add(k)
+            }
+        }
+        return sum
+    }
 
     private fun dirHasFiles(dir: File): Boolean {
         val q = ArrayDeque<File>()
