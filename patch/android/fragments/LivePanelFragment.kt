@@ -192,6 +192,44 @@ class LivePanelFragment : Fragment() {
         }
 
         @JavascriptInterface
+        fun icon(path: String): String = runCatching {
+            LivePanel.iconJpeg(path)
+        }.getOrDefault("")
+
+        @JavascriptInterface
+        fun openTools() {
+            main.post {
+                runCatching {
+                    findNavController().navigate(org.yuzu.yuzu_emu.R.id.action_global_toolsFragment)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun openUtilities() {
+            main.post {
+                runCatching {
+                    findNavController().navigate(org.yuzu.yuzu_emu.R.id.action_global_utilitiesFragment)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun openGameMenu(path: String) {
+            if (path.isBlank()) return
+            main.post {
+                val cached = org.yuzu.yuzu_emu.utils.GameHelper.cachedGameList
+                    .firstOrNull { it.path == path }
+                    ?: LivePanel.gameFrom(path, "")
+                runCatching {
+                    findNavController().navigate(
+                        HomeNavigationDirections.actionGlobalPerGamePropertiesFragment(cached)
+                    )
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun openSettings() {
             main.post {
                 runCatching {
