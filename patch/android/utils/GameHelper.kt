@@ -147,7 +147,7 @@ object GameHelper {
 
     // File extensions considered as external content, buuut should
     // be done better imo.
-    private val externalContentExtensions = setOf("nsp", "xci")
+    private val externalContentExtensions = GameFormats.CONTAINERS
 
     private fun scanContentContainersRecursive(
         files: Array<MinimalDocumentFile>,
@@ -201,7 +201,10 @@ object GameHelper {
                     NativeLibrary.addGameFolderFileToFilesystemProvider(filePath)
                 }
 
-                if (Game.extensions.contains(extension)) {
+                // Game.extensions — урезанный список. Ядро открывает
+                // ещё nso/kip и файлы main/00 (loader.cpp).
+                val filename = FileUtil.getFilename(it.uri)
+                if (Game.extensions.contains(extension) || GameFormats.isLaunchable(filename)) {
                     val game = getGame(it.uri, true, false)
                     if (game != null) {
                         games.add(game)

@@ -16,9 +16,9 @@
 
 import java.util.Locale
 
-val UPSTREAM = setOf("xci","nsp","nca","nro")          // Game.extensions
-val OLD_SCANNER = setOf("xci","nsp","nca","nro","nso","kip")
-val NON_GAME = setOf("nso","kip","bin","zip","7z","rar")
+val LAUNCHABLE = setOf("xci","nsp","nca","nro","nso","kip")  // loader.cpp
+val COMPRESSED = setOf("nsz","xcz","ncz")
+val NON_GAME = setOf("bin","zip","7z","rar")
 
 sealed class N { data class D(val n:String, val c:MutableList<N> = mutableListOf()):N()
                  data class F(val n:String, val b:Long):N() }
@@ -45,32 +45,32 @@ fun check(name:String, cond:Boolean){ if(cond){pass++;println("  ok  $name")} el
 fun main(){
     println("\ngame counting")
 
-    // The reported case: one .nso sitting in the folder. Old scanner counted
-    // it, Eden ignores it -> "1 game" over an empty list.
+    // NSO is a loader format. Counting it only in the scanner and not
+    // importing it was the old "1 game / empty list" bug. Both sides
+    // now use the same set, so an .nso is a game if the core accepts it.
     val nsoOnly = N.D("ed", mutableListOf(N.F("game.nso", 284L*1024*1024)))
-    check("old scanner counted a .nso as a game", count(nsoOnly, OLD_SCANNER, 1).first == 1)
-    check("upstream does not accept .nso",        count(nsoOnly, UPSTREAM, 1).first == 0)
-    check("new scanner agrees with upstream",     count(nsoOnly, UPSTREAM, 1).first == 0)
-    check("and reports it as a skipped file",     count(nsoOnly, UPSTREAM, 1).second == 1)
+    check("nso is a launchable format", count(nsoOnly, LAUNCHABLE, 1).first == 1)
+    val nszOnly = N.D("ed", mutableListOf(N.F("game.nsz", 100L)))
+    check("nsz is not launchable", count(nszOnly, LAUNCHABLE, 1).first == 0)
 
     // Depth: a game one level down, deep scan off.
     val nested = N.D("ed", mutableListOf(
         N.D("Blade", mutableListOf(N.F("blade.nsp", 2_000_000_000L)))))
-    check("depth 1 misses a nested game, as upstream does", count(nested, UPSTREAM, 1).first == 0)
-    check("depth 3 finds it, as deep scan does",            count(nested, UPSTREAM, 3).first == 1)
+    check("depth 1 misses a nested game, as upstream does", count(nested, LAUNCHABLE, 1).first == 0)
+    check("depth 3 finds it, as deep scan does",            count(nested, LAUNCHABLE, 3).first == 1)
 
     // Deeper than upstream ever looks.
     val deep = N.D("ed", mutableListOf(
         N.D("a", mutableListOf(N.D("b", mutableListOf(N.D("c",
             mutableListOf(N.F("x.nsp", 1L)))))))))
-    check("depth 3 stops where upstream stops", count(deep, UPSTREAM, 3).first == 0)
+    check("depth 3 stops where upstream stops", count(deep, LAUNCHABLE, 3).first == 0)
 
     // A normal library still works.
     val ok = N.D("ed", mutableListOf(
         N.F("a.nsp", 1L), N.F("b.xci", 2L), N.F("readme.txt", 3L), N.F("c.kip", 4L)))
-    val (g,s) = count(ok, UPSTREAM, 1)
-    check("counts real roms only", g == 2)
-    check("kip reported as skipped, txt ignored", s == 1)
+    val (g,s) = count(ok, LAUNCHABLE, 1)
+    check("nsp, xci and kip all count", g == 3)
+    check("txt is not a game", s == 0)
 
     println("\n$pass passed, $fail failed")
     if(fail>0) kotlin.system.exitProcess(1)

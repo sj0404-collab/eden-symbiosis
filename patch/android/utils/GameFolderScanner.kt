@@ -21,13 +21,11 @@ object GameFolderScanner {
     /**
      * Extensions the library will actually import.
      *
-     * Must match Game.extensions upstream exactly. It did not: this listed nso
-     * and kip as well, so the status strip counted files the emulator then
-     * refused to show, and reported "1 game" over an empty list. A count the
-     * library cannot reproduce is worse than no count - it sends the user
-     * looking for a bug in the wrong place.
+     * Same set as [GameFormats] / loader.cpp. GameHelper imports by this
+     * list, not only Game.extensions, so XCI/NCA/NSO/KIP and a file named
+     * "main" actually appear in the library.
      */
-    private val ROM_EXTENSIONS = setOf("xci", "nsp", "nca", "nro")
+    private val ROM_EXTENSIONS = GameFormats.LAUNCHABLE
 
     /**
      * Всё, что человек считает файлом игры - включая то, что сам эмулятор
@@ -39,13 +37,10 @@ object GameFolderScanner {
      * помечая как незапускаемые, вместо того чтобы делать вид, что папка
      * пуста - именно эта пустота и выглядит как "эмулятор ничего не нашёл".
      */
-    private val SHOWABLE_EXTENSIONS =
-        ROM_EXTENSIONS + setOf("ncz", "nsz", "xcz", "kip", "nso")
+    private val SHOWABLE_EXTENSIONS = GameFormats.LAUNCHABLE + GameFormats.COMPRESSED
 
     /** Файл этого типа эмулятор запустить не сможет. */
-    fun isLaunchable(name: String): Boolean =
-        name.substringAfterLast('.', "").lowercase(Locale.ROOT) in ROM_EXTENSIONS ||
-            name.lowercase(Locale.ROOT) in ROM_FILENAMES
+    fun isLaunchable(name: String): Boolean = GameFormats.isLaunchable(name)
 
     /**
      * Плоский список файлов игр ровно в этой папке, без захода вглубь.
@@ -100,14 +95,10 @@ object GameFolderScanner {
      * both were invisible here: the scanner only looked at extensions, so an
      * unpacked game showed up as an empty folder.
      */
-    private val ROM_FILENAMES = setOf("main", "00")
+    private val ROM_FILENAMES = GameFormats.NAMES
 
     /** True when this file is something the emulator can load. */
-    private fun isRom(name: String): Boolean {
-        val lower = name.lowercase(Locale.ROOT)
-        if (lower in ROM_FILENAMES) return true
-        return lower.substringAfterLast('.', "") in ROM_EXTENSIONS
-    }
+    private fun isRom(name: String): Boolean = GameFormats.isLaunchable(name)
 
     /**
      * Extensions that look like content but are never listed as games.
