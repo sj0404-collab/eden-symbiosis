@@ -450,11 +450,13 @@ std::string RomTools::Describe(const DumpReport& report) {
 }
 
 
-#if defined(__has_include)
-#    if __has_include(<zstd.h>)
-#        define SYMBIOSIS_HAS_ZSTD 1
-#        include <zstd.h>
-#    endif
+// zstd lives in the Eden Android tree (externals/zstd) and is already
+// linked into libyuzu-android. Host tests compile this file with g++ and
+// no -lzstd: __has_include(<zstd.h>) was true on Ubuntu and then the
+// linker failed, turning t_rom into a fourth SKIP and failing CI.
+#if defined(__ANDROID__)
+#    define SYMBIOSIS_HAS_ZSTD 1
+#    include <zstd.h>
 #endif
 
 namespace {
