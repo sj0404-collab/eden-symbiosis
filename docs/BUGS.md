@@ -175,6 +175,21 @@ Layout order is firmware, ROM, saves, shared folder, crash analysis; the labels 
 
 ---
 
+## v20 — crash on leaving a game; mods and saves invisible
+
+Leaving a game still died in the native list (icons + overlay + resume scan).
+The home screen is now a PWA (`docs/library.html`) in a WebView: HTML
+updates from GitHub Pages without an APK rebuild, and launching a game
+opens EmulationActivity. Coming back does not rebuild a RecyclerView and
+does not walk the disk.
+
+Mods and saves are read from `<data root>/load` and
+`<data root>/nand/user/save`. If those folders are empty, the page lists
+other Eden installs on the device so the data root can be pointed at the
+one that actually has them.
+
+---
+
 ## v19 — crash on restart while searching for games
 
 **Reported:** вылет при перезапуске APK, когда он ищет игры. Папки по

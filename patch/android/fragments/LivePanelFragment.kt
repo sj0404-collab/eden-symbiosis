@@ -4,44 +4,59 @@
 package org.yuzu.yuzu_emu.fragments
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
+import androidx.navigation.fragment.findNavController
+import org.yuzu.yuzu_emu.HomeNavigationDirections
+import org.yuzu.yuzu_emu.model.GamesViewModel
+import org.yuzu.yuzu_emu.ui.main.MainActivity
 import org.yuzu.yuzu_emu.utils.LivePanel
+import org.yuzu.yuzu_emu.utils.SharedDataDirectory
 
 /**
- * Панель, которая обновляется без пересборки APK.
+ * Весь интерфейс — страница. APK запускает игру.
  *
- * ЗАЧЕМ
- *   Каждая правка интерфейса означала новую сборку и новую установку -
- *   по 25 МБ и по двадцать минут ожидания за штуку. Содержимое этой
- *   панели живёт на GitHub Pages: правка страницы видна на телефоне
- *   сразу, APK при этом остаётся тем же.
- *
- * ЧТО ВНУТРИ, А ЧТО СНАРУЖИ
- *   Снаружи только разметка и тексты. Всё, что читает файлы, знает пути и
- *   считает размеры, остаётся в APK - страница спрашивает данные через
- *   [Bridge] и рисует их. Иначе панель зависела бы от сети, чтобы просто
- *   показать, сколько весит папка.
- *
- * ЕСЛИ СЕТИ НЕТ
- *   Показывается встроенная страница из assets с теми же данными. Панель
- *   не обязана быть онлайн, она обязана работать.
- *
- * БЕЗОПАСНОСТЬ
- *   Мост отдаёт только то, что панель и так показывает на экране: состояние
- *   установки, список папок, размеры. Ничего не пишет и ничего не запускает
- *   по просьбе страницы - страница не может ни удалить файл, ни поменять
- *   настройку. Загружается ровно один адрес, свой собственный.
+ * Краш при выходе из игры часто убивал список игр (RecyclerView + иконки +
+ * скан). WebView остаётся живым, страница не пересобирается, диск не
+ * читается. Правка HTML на GitHub Pages видна без новой сборки.
  */
 class LivePanelFragment : Fragment() {
 
     private var web: WebView? = null
+    private val main = Handler(Looper.getMainLooper())
+    private val gamesViewModel: GamesViewModel by activityViewModels()
+
+    private val pickGamesFolder =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            (activity as? MainActivity)?.processGamesDir(uri, true)
+            main.postDelayed({ reloadPageData() }, 400)
+        }
+
+    private val pickDataFolder =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            val ctx = context ?: return@registerForActivityResult
+            val path = SharedDataDirectory.resolveTreePath(uri)
+                ?.let { SharedDataDirectory.normaliseRoot(it) }
+                ?: return@registerForActivityResult
+            SharedDataDirectory.configuredPath = path
+            SharedDataDirectory.redirectNow(path)
+            main.postDelayed({ reloadPageData() }, 400)
+        }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(
@@ -51,36 +66,35 @@ class LivePanelFragment : Fragment() {
     ): View {
         val view = WebView(requireContext())
         web = view
-
         view.settings.javaScriptEnabled = true
-        // Файлы с диска странице недоступны: она получает данные только
-        // через мост, где решает наш код.
-        view.settings.allowFileAccess = false
-        view.settings.allowContentAccess = false
         view.settings.domStorageEnabled = true
-
+        view.settings.allowFileAccess = true
+        view.settings.allowContentAccess = false
         view.addJavascriptInterface(Bridge(), "Symbiosis")
-
         view.webViewClient = object : WebViewClient() {
             override fun onReceivedError(
                 v: WebView?,
-                request: android.webkit.WebResourceRequest?,
-                error: android.webkit.WebResourceError?
+                request: WebResourceRequest?,
+                error: WebResourceError?
             ) {
-                // Сеть отвалилась - показываем встроенную копию.
                 if (request?.isForMainFrame == true) {
                     v?.loadUrl(LivePanel.OFFLINE_URL)
                 }
             }
         }
-
         view.loadUrl(LivePanel.panelUrl())
         return view
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Вернулись из игры — страница уже на экране, скан не нужен.
+        reloadPageData()
+    }
+
     override fun onDestroyView() {
-        // WebView держит ссылку на активность; без этого фрагмент утекает.
         web?.apply {
+            removeJavascriptInterface("Symbiosis")
             loadUrl("about:blank")
             destroy()
         }
@@ -88,35 +102,89 @@ class LivePanelFragment : Fragment() {
         super.onDestroyView()
     }
 
-    /**
-     * Что страница может спросить у приложения.
-     *
-     * Только чтение. Каждый метод возвращает JSON строкой - так проще
-     * всего передать структуру через мост, и так же это делает панель на
-     * компьютере.
-     */
+    private fun reloadPageData() {
+        web?.evaluateJavascript("try{if(typeof go==='function')go(page||'games')}catch(e){}", null)
+    }
+
     inner class Bridge {
 
-        /** Состояние установки: ключи, прошивка, драйвер, игры, сейвы, шейдеры. */
-        @JavascriptInterface
-        fun status(): String = runCatching {
-            LivePanel.statusJson(requireContext())
-        }.getOrDefault("""{"error":"недоступно"}""")
-
-        /** Папки с играми: имя, число файлов, размер. */
-        @JavascriptInterface
-        fun folders(): String = runCatching {
-            LivePanel.foldersJson(requireContext())
-        }.getOrDefault("""{"folders":[]}""")
-
-        /** Файлы внутри одной папки - без захода в подпапки. */
-        @JavascriptInterface
-        fun files(uriString: String): String = runCatching {
-            LivePanel.filesJson(requireContext(), uriString)
-        }.getOrDefault("""{"files":[]}""")
-
-        /** Версия сборки, чтобы страница могла подстроиться под старый APK. */
         @JavascriptInterface
         fun bridgeVersion(): Int = LivePanel.BRIDGE_VERSION
+
+        @JavascriptInterface
+        fun status(): String = runCatching {
+            LivePanel.statusJson(requireContext().applicationContext)
+        }.getOrDefault("""{"error":"недоступно"}""")
+
+        @JavascriptInterface
+        fun folders(): String = runCatching {
+            LivePanel.foldersJson(requireContext().applicationContext)
+        }.getOrDefault("""{"folders":[]}""")
+
+        @JavascriptInterface
+        fun games(): String = runCatching {
+            LivePanel.gamesJson()
+        }.getOrDefault("""{"games":[]}""")
+
+        @JavascriptInterface
+        fun files(uriString: String): String = runCatching {
+            LivePanel.filesJson(requireContext().applicationContext, uriString)
+        }.getOrDefault("""{"files":[]}""")
+
+        @JavascriptInterface
+        fun dataRoot(): String = runCatching {
+            LivePanel.dataRootJson(requireContext().applicationContext)
+        }.getOrDefault("""{"path":""}""")
+
+        @JavascriptInterface
+        fun mods(): String = runCatching { LivePanel.modsJson() }
+            .getOrDefault("""{"items":[],"emptyReason":"ошибка чтения"}""")
+
+        @JavascriptInterface
+        fun saves(): String = runCatching { LivePanel.savesJson() }
+            .getOrDefault("""{"items":[],"emptyReason":"ошибка чтения"}""")
+
+        @JavascriptInterface
+        fun suggestRoots(): String = runCatching {
+            LivePanel.suggestRootsJson(requireContext().applicationContext)
+        }.getOrDefault("""{"roots":[]}""")
+
+        @JavascriptInterface
+        fun pickFolder() {
+            main.post {
+                runCatching {
+                    pickGamesFolder.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).data)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun pickDataRoot() {
+            main.post {
+                runCatching {
+                    pickDataFolder.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).data)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun rescan() {
+            main.post {
+                runCatching { gamesViewModel.reloadGames(false) }
+            }
+        }
+
+        @JavascriptInterface
+        fun launch(path: String, title: String) {
+            if (path.isBlank()) return
+            main.post {
+                runCatching {
+                    val game = LivePanel.gameFrom(path, title)
+                    findNavController().navigate(
+                        HomeNavigationDirections.actionGlobalEmulationActivity(game)
+                    )
+                }
+            }
+        }
     }
 }

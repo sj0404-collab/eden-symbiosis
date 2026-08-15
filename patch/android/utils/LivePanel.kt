@@ -4,45 +4,25 @@
 package org.yuzu.yuzu_emu.utils
 
 import android.content.Context
+import android.os.Environment
+import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
+import org.yuzu.yuzu_emu.model.Game
 
 /**
- * Данные для панели, которая живёт на GitHub Pages.
- *
- * Разделение простое: здесь всё, что знает про файлы и пути, а на странице
- * только то, как это выглядит. Значит внешний вид можно менять правкой
- * страницы, без новой сборки APK - а данные при этом читаются локально и
- * не зависят от сети.
- *
- * JSON собирается через org.json, а не склейкой строк: имя файла может
- * содержать кавычку или обратный слэш, и склейка молча даст сломанную
- * страницу.
+ * Данные для PWA-интерфейса. Страница живёт на GitHub Pages и в assets;
+ * APK только читает диск и запускает игру.
  */
 object LivePanel {
 
-    /**
-     * Версия моста.
-     *
-     * Страница обновляется чаще APK, поэтому она обязана уметь работать со
-     * старой сборкой: спрашивает bridgeVersion() и не зовёт того, чего в
-     * этой версии ещё нет. Увеличивать при КАЖДОМ добавлении метода.
-     */
-    const val BRIDGE_VERSION = 1
+    const val BRIDGE_VERSION = 2
 
-    /** Страница панели. Меняется правкой в docs/, APK не трогается. */
-    private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/panel.html"
+    private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
-    /** Встроенная копия на случай отсутствия сети. */
-    const val OFFLINE_URL = "file:///android_asset/panel_offline.html"
+    const val OFFLINE_URL = "file:///android_asset/library.html"
 
-    /**
-     * Адрес с версией моста в запросе.
-     *
-     * Так страница знает, с какой сборкой говорит, ещё до первого вызова -
-     * и может сразу показать нужный вариант вместо того, чтобы гадать.
-     */
-    fun panelUrl(): String = "$PANEL_URL?bridge=$BRIDGE_VERSION"
+    fun panelUrl(): String = "$PANEL_URL?bridge=$BRIDGE_VERSION&v=${System.currentTimeMillis() / 60_000}"
 
     fun statusJson(context: Context): String {
         val items = JSONArray()
@@ -64,31 +44,47 @@ object LivePanel {
         }.toString()
     }
 
+    /** Из кэша и конфига. Диск не обходится. */
     fun foldersJson(context: Context): String {
         val arr = JSONArray()
-        runCatching { GameFolderScanner.scan(context) }.getOrDefault(emptyList()).forEach { f ->
+        val dirs = runCatching { NativeConfig.getGameDirs().toList() }.getOrDefault(emptyList())
+        val cached = runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList())
+        dirs.forEach { dir ->
+            val name = GameFolderScanner.displayNameOf(dir.uriString)
+            val prefix = GameFolderScanner.pathOf(dir.uriString)
+            val count = cached.count {
+                val p = GameFolderScanner.pathOf(it.path)
+                p == prefix || p.startsWith("$prefix/")
+            }
             arr.put(
                 JSONObject().apply {
-                    put("uri", f.uriString)
-                    put("name", f.displayName)
-                    put("games", f.gameCount)
-                    put("bytes", f.totalBytes)
-                    put("size", GameFolderScanner.humanSize(f.totalBytes))
-                    put("skipped", f.skipped)
-                    put("unreadable", f.unreadable)
+                    put("uri", dir.uriString)
+                    put("name", name)
+                    put("games", count)
+                    put("bytes", 0L)
+                    put("size", "")
+                    put("skipped", 0)
+                    put("unreadable", false)
                 }
             )
         }
         return JSONObject().put("folders", arr).toString()
     }
 
-    /**
-     * Файлы ровно в этой папке.
-     *
-     * Без захода в подпапки и без ограничения по количеству: вопрос "что у
-     * меня в папке" не требует обхода дерева, а обход - это десятки
-     * запросов к хранилищу и секунды ожидания.
-     */
+    fun gamesJson(): String {
+        val arr = JSONArray()
+        runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList()).forEach { g ->
+            arr.put(
+                JSONObject().apply {
+                    put("title", g.title)
+                    put("path", g.path)
+                    put("programId", g.programId)
+                }
+            )
+        }
+        return JSONObject().put("games", arr).toString()
+    }
+
     fun filesJson(context: Context, uriString: String): String {
         val arr = JSONArray()
         runCatching { GameFolderScanner.listFilesFlat(context, uriString) }
@@ -99,13 +95,118 @@ object LivePanel {
                         put("name", e.name)
                         put("bytes", e.bytes)
                         put("size", GameFolderScanner.humanSize(e.bytes))
-                        // Сжатые образы Eden не открывает. Показать и
-                        // промолчать хуже, чем не показать: человек будет
-                        // искать, почему игра не запускается.
                         put("launchable", GameFolderScanner.isLaunchable(e.name))
                     }
                 )
             }
         return JSONObject().put("files", arr).toString()
     }
+
+    fun dataRootJson(context: Context): String {
+        val path = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+        val load = path?.let { File(it, "load") }
+        val saves = path?.let { File(it, "nand/user/save") }
+        return JSONObject().apply {
+            put("path", path ?: "")
+            put("hasLoad", load?.isDirectory == true)
+            put("hasSaves", saves?.isDirectory == true)
+            put("loadCount", load?.listFiles()?.size ?: 0)
+            put("savesCount", saves?.listFiles()?.size ?: 0)
+        }.toString()
+    }
+
+    fun modsJson(): String {
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+        val load = root?.let { File(it, "load") }
+        val obj = JSONObject()
+        obj.put("path", load?.absolutePath ?: "")
+        if (load == null || !load.isDirectory) {
+            obj.put("emptyReason", "папки load/ нет в корне данных — выберите папку, где лежит официальный Eden (там keys, nand, load)")
+            obj.put("items", JSONArray())
+            return obj.toString()
+        }
+        val items = JSONArray()
+        load.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name }?.forEach { dir ->
+            val kids = dir.listFiles()?.joinToString(", ") { it.name } ?: ""
+            items.put(
+                JSONObject().apply {
+                    put("titleId", dir.name)
+                    put("path", dir.absolutePath)
+                    put("contents", kids.ifBlank { "пусто" })
+                }
+            )
+        }
+        obj.put("items", items)
+        if (items.length() == 0) {
+            obj.put("emptyReason", null)
+        }
+        return obj.toString()
+    }
+
+    fun savesJson(): String {
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+        val dir = root?.let { File(it, "nand/user/save") }
+        val obj = JSONObject()
+        obj.put("path", dir?.absolutePath ?: "")
+        if (dir == null || !dir.isDirectory) {
+            obj.put("emptyReason", "папки nand/user/save нет. Корень данных сейчас не тот, куда Eden писал сейвы.")
+            obj.put("items", JSONArray())
+            return obj.toString()
+        }
+        val items = JSONArray()
+        dir.listFiles()?.sortedBy { it.name }?.forEach { f ->
+            items.put(
+                JSONObject().apply {
+                    put("name", f.name)
+                    put("detail", if (f.isDirectory) "папка" else GameFolderScanner.humanSize(f.length()))
+                }
+            )
+        }
+        obj.put("items", items)
+        return obj.toString()
+    }
+
+    /** Другие установки Eden на устройстве — чтобы не гадать, куда делись моды. */
+    fun suggestRootsJson(context: Context): String {
+        val current = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+        val candidates = mutableListOf<Pair<String, String>>()
+        val sd = Environment.getExternalStorageDirectory()
+        candidates += "официальный Eden" to File(sd, "Android/data/dev.eden.eden_emulator/files").absolutePath
+        candidates += "Eden legacy" to File(sd, "Android/data/dev.legacy.eden_emulator/files").absolutePath
+        candidates += "Eden Debug" to File(sd, "Android/data/dev.legacy.eden_emulator.debug/files").absolutePath
+        candidates += "/sdcard/Eden" to File(sd, "Eden").absolutePath
+        candidates += "/sdcard/Eden/files" to File(sd, "Eden/files").absolutePath
+        candidates += "/sdcard/Eden Debug" to File(sd, "Eden Debug").absolutePath
+        runCatching { SharedDataDirectory.privatePath(context) }.getOrNull()?.let {
+            candidates += "приватная этого APK" to it
+        }
+
+        val arr = JSONArray()
+        val seen = HashSet<String>()
+        for ((label, path) in candidates) {
+            if (!seen.add(path)) continue
+            if (path == current) continue
+            val dir = File(path)
+            if (!dir.isDirectory) continue
+            val keys = File(dir, "keys/prod.keys").isFile
+            val mods = File(dir, "load").listFiles()?.isNotEmpty() == true
+            val saves = File(dir, "nand/user/save").listFiles()?.isNotEmpty() == true
+            if (!keys && !mods && !saves) continue
+            arr.put(
+                JSONObject().apply {
+                    put("label", label)
+                    put("path", path)
+                    put("keys", keys)
+                    put("mods", mods)
+                    put("saves", saves)
+                }
+            )
+        }
+        return JSONObject().put("roots", arr).toString()
+    }
+
+    fun gameFrom(path: String, title: String): Game = Game(
+        title = title.ifBlank { path.substringAfterLast('/').ifBlank { "game" } },
+        path = path
+    )
 }
