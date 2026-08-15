@@ -16,7 +16,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 2
+    const val BRIDGE_VERSION = 3
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
@@ -52,17 +52,22 @@ object LivePanel {
         dirs.forEach { dir ->
             val name = GameFolderScanner.displayNameOf(dir.uriString)
             val prefix = GameFolderScanner.pathOf(dir.uriString)
-            val count = cached.count {
+            val inFolder = cached.filter {
                 val p = GameFolderScanner.pathOf(it.path)
                 p == prefix || p.startsWith("$prefix/")
             }
+            // Размер — список файлов через SAF, без разбора ROM.
+            val listed = runCatching {
+                GameFolderScanner.listFilesFlat(context, dir.uriString)
+            }.getOrDefault(emptyList())
+            val bytes = listed.sumOf { it.bytes }
             arr.put(
                 JSONObject().apply {
                     put("uri", dir.uriString)
                     put("name", name)
-                    put("games", count)
-                    put("bytes", 0L)
-                    put("size", "")
+                    put("games", inFolder.size)
+                    put("bytes", bytes)
+                    put("size", if (bytes > 0) GameFolderScanner.humanSize(bytes) else "")
                     put("skipped", 0)
                     put("unreadable", false)
                 }
@@ -74,17 +79,44 @@ object LivePanel {
     fun gamesJson(): String {
         val arr = JSONArray()
         runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList()).forEach { g ->
+            val saveDir = runCatching { g.saveDir }.getOrNull().orEmpty()
+            val hasSave = saveDir.isNotEmpty() && runCatching {
+                val f = File(saveDir)
+                f.exists() && (f.isFile || (f.listFiles()?.any { it.length() > 0 || (it.isDirectory && (it.list()?.isNotEmpty() == true)) } == true))
+            }.getOrDefault(false)
             arr.put(
                 JSONObject().apply {
                     put("title", g.title)
                     put("path", g.path)
                     put("programId", g.programId)
                     put("developer", g.developer)
+                    put("saveDir", saveDir)
+                    put("hasSave", hasSave)
                 }
             )
         }
         return JSONObject().put("games", arr).toString()
     }
+
+    /** Обложка JPEG 96px, base64. Пустая строка — нет иконки, не ошибка. */
+    fun iconJpeg(path: String): String = runCatching {
+        val raw = GameMetadata.getIcon(path)
+        if (raw == null || raw.isEmpty()) return@runCatching ""
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching ""
+        var sample = 1
+        while (bounds.outWidth / sample > 128 || bounds.outHeight / sample > 128) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+        }
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, opts)
+            ?: return@runCatching ""
+        val out = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 72, out)
+        android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+    }.getOrDefault("")
 
     fun filesJson(context: Context, uriString: String): String {
         val arr = JSONArray()
@@ -127,7 +159,12 @@ object LivePanel {
             return obj.toString()
         }
         val items = JSONArray()
+        // Только папки TitleID, в которых реально лежат файлы.
+        // Пустые каталоги от прошлых прогонов и мусор в load/ давали
+        // «8 модов» при одном настоящем.
         load.listFiles()?.filter { it.isDirectory }?.sortedBy { it.name }?.forEach { dir ->
+            if (!looksLikeTitleId(dir.name) && !hasModPayload(dir)) return@forEach
+            if (!hasModPayload(dir)) return@forEach
             val kids = dir.listFiles()?.joinToString(", ") { it.name } ?: ""
             items.put(
                 JSONObject().apply {

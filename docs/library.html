@@ -12,26 +12,25 @@
     --dim:#8b8b9c; --pink:#ff2d78; --cyan:#3ee0d4; --on:#1c1c24;
   }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body { height:100%; }
+  html, body { height:100%; margin:0; }
   body {
-    margin:0; background:var(--bg); color:var(--text);
+    background:var(--bg); color:var(--text);
     font:15px/1.35 -apple-system,"Segoe UI",Roboto,sans-serif;
     display:flex; flex-direction:column;
-    padding: env(safe-area-inset-top) 0 0;
+    overflow:hidden;
   }
   header {
-    display:flex; align-items:center; gap:10px;
-    padding:10px 16px 0;
+    display:flex; align-items:center; gap:8px;
+    padding:8px 12px 0;
   }
-  header h1 { font-size:24px; font-weight:700; margin:0; letter-spacing:.3px; flex:1; }
+  header h1 { font-size:22px; font-weight:700; margin:0; flex:1; }
   .iconbtn {
-    width:40px; height:40px; border-radius:20px; border:1px solid var(--line);
-    background:transparent; color:var(--text); font-size:16px; padding:0;
+    width:38px; height:38px; border-radius:19px; border:1px solid var(--line);
+    background:transparent; color:var(--text); font-size:15px; padding:0;
   }
   .search {
-    margin:12px 14px 8px; display:flex; align-items:center; gap:10px;
-    border:1px solid var(--line); border-radius:24px; padding:0 14px; height:46px;
-    background:transparent;
+    margin:10px 12px 6px; display:flex; align-items:center; gap:10px;
+    border:1px solid var(--line); border-radius:22px; padding:0 14px; height:42px;
   }
   .search input {
     flex:1; border:0; outline:0; background:transparent; color:var(--text);
@@ -39,42 +38,50 @@
   }
   .search input::placeholder { color:var(--dim); }
   .status {
-    margin:0 14px 8px; border:1px solid var(--line); border-radius:12px;
-    padding:8px 12px; font-size:12.5px; color:var(--dim);
-    display:flex; justify-content:space-between; gap:8px; align-items:center;
+    margin:0 12px 6px; border:1px solid var(--line); border-radius:12px;
+    padding:8px 10px; font-size:12.5px; color:var(--dim);
   }
-  .status b { color:var(--text); font-weight:600; }
-  .list { flex:1; overflow:auto; padding:0 8px 88px; -webkit-overflow-scrolling:touch; }
+  .status .line { color:var(--text); font-weight:600; margin-bottom:4px; }
+  .chips { display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; }
+  .chip {
+    flex:0 0 auto; border:1px solid var(--line); border-radius:999px;
+    padding:3px 10px; font-size:12px; color:var(--text);
+  }
+  .list {
+    flex:1; overflow:auto; padding:0 6px 96px;
+    -webkit-overflow-scrolling:touch;
+  }
   .game {
     display:flex; align-items:center; gap:12px;
-    margin:8px; padding:8px; border-radius:16px; border:1px solid var(--line);
+    margin:6px; padding:8px; border-radius:16px; border:1px solid var(--line);
     background:var(--card);
   }
   .game:active { background:var(--on); }
   .thumb {
     width:64px; height:64px; border-radius:12px; flex:0 0 64px;
     background:linear-gradient(145deg,#2a1630,#16222a);
-    display:flex; align-items:center; justify-content:center;
-    font-size:22px; color:var(--pink);
+    overflow:hidden; display:flex; align-items:center; justify-content:center;
+    color:var(--pink); font-size:20px;
   }
+  .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
   .meta { flex:1; min-width:0; }
   .title { font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .sub { color:var(--dim); font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .empty { color:var(--dim); text-align:center; padding:48px 20px; }
+  .empty { color:var(--dim); text-align:center; padding:40px 20px; }
   .fab {
-    position:fixed; right:16px; bottom:calc(16px + env(safe-area-inset-bottom));
-    height:52px; padding:0 18px; border:0; border-radius:26px;
-    background:var(--pink); color:#fff; font:600 15px/52px inherit;
-    box-shadow:0 8px 24px rgba(255,45,120,.35);
+    position:absolute; right:16px; bottom:20px;
+    height:48px; padding:0 16px; border:0; border-radius:24px;
+    background:var(--pink); color:#fff; font:600 14px/48px inherit;
+    z-index:4;
   }
   .sheet {
-    display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
-    z-index:5; align-items:flex-end;
+    display:none; position:absolute; inset:0; background:rgba(0,0,0,.55);
+    z-index:6; align-items:flex-end;
   }
   .sheet.on { display:flex; }
   .sheet .box {
     width:100%; background:#14141a; border-radius:18px 18px 0 0;
-    padding:16px 16px calc(20px + env(safe-area-inset-bottom));
+    padding:16px 16px 24px;
   }
   .sheet h2 { margin:0 0 10px; font-size:16px; }
   .row { display:flex; gap:8px; flex-wrap:wrap; }
@@ -88,25 +95,30 @@
 <body>
 <header>
   <h1>Eden</h1>
-  <button class="iconbtn" id="btn-refresh" title="Найти игры">↻</button>
+  <button class="iconbtn" id="btn-refresh" title="Найти">↻</button>
+  <button class="iconbtn" id="btn-tools" title="Утилиты">🧰</button>
   <button class="iconbtn" id="btn-more" title="Ещё">⚙</button>
 </header>
 <div class="search">
   <span style="color:var(--cyan)">⌕</span>
   <input id="q" placeholder="Search games…" autocomplete="off">
 </div>
-<div class="status" id="status">Ключи · Прошивка · Игры</div>
+<div class="status" id="status">
+  <div class="line" id="status-line">Ключи · Прошивка · Игры</div>
+  <div class="chips" id="chips"></div>
+</div>
 <div class="list" id="list"><div class="empty">загрузка…</div></div>
 <button class="fab" id="fab">＋ Папка</button>
 
 <div class="sheet" id="sheet">
   <div class="box">
-    <h2>Папка данных</h2>
+    <h2>Данные и утилиты</h2>
     <div class="note" id="root"></div>
     <div class="note" id="modsaves"></div>
     <div class="row" style="margin-top:12px">
-      <button class="ghost" id="btn-data">Сменить папку данных</button>
-      <button class="ghost" id="btn-settings">Настройки Eden</button>
+      <button class="ghost" id="btn-utils">Утилиты</button>
+      <button class="ghost" id="btn-data">Папка данных</button>
+      <button class="ghost" id="btn-settings">Настройки</button>
       <button class="ghost" id="btn-close">Закрыть</button>
     </div>
     <div class="note" id="hint"></div>
@@ -133,66 +145,102 @@ function render() {
     return;
   }
   if (!list.length) {
-    $('list').innerHTML = '<div class="empty">' + (GAMES.length ? 'ничего не найдено' : 'Нет игр. Нажмите «Папка» и укажите каталог с .nsp / .xci, затем ↻') + '</div>';
+    $('list').innerHTML = '<div class="empty">' + (GAMES.length ? 'ничего не найдено' : 'Нет игр. Нажмите «Папка», затем ↻') + '</div>';
     return;
   }
-  $('list').innerHTML = list.map((g,i) => `
-    <div class="game" data-i="${GAMES.indexOf(g)}">
-      <div class="thumb">▶</div>
+  $('list').innerHTML = list.map(g => {
+    const i = GAMES.indexOf(g);
+    const save = g.hasSave ? ' · сейв есть' : '';
+    return `<div class="game" data-i="${i}">
+      <div class="thumb" id="ic-${i}">▶</div>
       <div class="meta">
         <div class="title">${esc(g.title || 'без имени')}</div>
-        <div class="sub">${esc(g.developer || g.programId || '')}</div>
+        <div class="sub">${esc(g.developer || g.programId || '')}${save}</div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   $('list').querySelectorAll('.game').forEach(el => {
-    el.addEventListener('click', () => play(GAMES[+el.dataset.i]));
+    const g = GAMES[+el.dataset.i];
+    el.addEventListener('click', () => play(g));
+    el.addEventListener('contextmenu', ev => { ev.preventDefault(); menu(g); });
+    let t = 0;
+    el.addEventListener('touchstart', () => { t = Date.now(); }, {passive:true});
+    el.addEventListener('touchend', ev => {
+      if (t && Date.now() - t > 480) { ev.preventDefault(); menu(g); }
+      t = 0;
+    });
+  });
+  list.forEach(g => {
+    const i = GAMES.indexOf(g);
+    setTimeout(() => fillIcon(i, g.path), 30 * i);
   });
 }
 
+function fillIcon(i, path) {
+  const el = $('ic-' + i);
+  if (!el || !N() || typeof N().icon !== 'function') return;
+  const b64 = call('icon', path);
+  if (b64) el.innerHTML = '<img alt="" src="data:image/jpeg;base64,' + b64 + '">';
+}
+
 function play(g) {
-  if (!g || !g.path) return;
-  if (!N() || typeof N().launch !== 'function') { alert('Нужен APK'); return; }
+  if (!g || !g.path || !N() || !N().launch) return;
   N().launch(g.path, g.title || '');
+}
+function menu(g) {
+  if (!g || !g.path || !N() || !N().openGameMenu) return;
+  N().openGameMenu(g.path);
 }
 
 function loadGames() {
-  const data = parse(call('games'), { games: [] });
-  GAMES = data.games || [];
+  GAMES = (parse(call('games'), { games: [] }).games) || [];
   render();
 }
 
 function loadStatus() {
   const st = parse(call('status'), null);
+  const folders = parse(call('folders'), { folders: [] }).folders || [];
   const mods = parse(call('mods'), null);
   const saves = parse(call('saves'), null);
   const root = parse(call('dataRoot'), null);
-  if (st && st.items) {
-    $('status').innerHTML = st.items.map(it =>
-      `<span><b>${esc(it.label)}</b> ${it.present ? '✓' : '✕'}</span>`
-    ).join(' · ');
-  }
+
+  const ticks = (st && st.items)
+    ? st.items.map(it => `${esc(it.label)} ${it.present ? '✓' : '✕'}`).join(' · ')
+    : '';
+  const totalGames = folders.reduce((n, f) => n + (f.games || 0), 0);
+  const totalSize = folders.map(f => f.size).filter(Boolean).join(' + ');
+  $('status-line').innerHTML = ticks +
+    (totalGames ? ` · <b>${totalGames}</b> игр` : '') +
+    (totalSize ? ` · ${esc(totalSize)}` : '');
+
+  $('chips').innerHTML = folders.length
+    ? folders.map(f => `<span class="chip">${esc(f.name)} · ${f.games || 0}${f.size ? ' · ' + esc(f.size) : ''}</span>`).join('')
+    : '<span class="chip">папка не выбрана</span>';
+
   $('root').textContent = 'корень: ' + ((root && root.path) || (st && st.dataRoot) || '—');
   const mc = mods && mods.items ? mods.items.length : 0;
   const sc = saves && saves.items ? saves.items.length : 0;
-  $('modsaves').textContent = 'моды: ' + mc + '  ·  сейвы: ' + sc;
+  $('modsaves').textContent = 'моды с файлами: ' + mc + '  ·  сейвы игр: ' + sc;
   const sug = parse(call('suggestRoots'), null);
   $('hint').textContent = (sug && sug.roots && sug.roots.length)
-    ? 'На устройстве есть другая установка Eden с данными. Смените папку данных на неё, если моды/сейвы пустые.'
+    ? 'Есть другая установка Eden с данными. Если сейв не виден в игре — смените папку данных на неё.'
     : '';
 }
 
 $('q').addEventListener('input', render);
-$('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); else alert('Нужен APK'); };
+$('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); };
 $('btn-refresh').onclick = () => {
   if (N() && N().rescan) N().rescan();
   $('list').innerHTML = '<div class="empty">ищу…</div>';
-  setTimeout(loadGames, 1200);
+  setTimeout(() => { loadGames(); loadStatus(); }, 1400);
 };
+$('btn-tools').onclick = () => { if (N() && N().openUtilities) N().openUtilities(); else if (N() && N().openTools) N().openTools(); };
 $('btn-more').onclick = () => { loadStatus(); $('sheet').classList.add('on'); };
 $('btn-close').onclick = () => $('sheet').classList.remove('on');
 $('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') e.currentTarget.classList.remove('on'); });
 $('btn-data').onclick = () => { if (N() && N().pickDataRoot) N().pickDataRoot(); };
 $('btn-settings').onclick = () => { if (N() && N().openSettings) N().openSettings(); };
+$('btn-utils').onclick = () => { if (N() && N().openUtilities) N().openUtilities(); };
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 loadGames();

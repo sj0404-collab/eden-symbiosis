@@ -17,6 +17,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
@@ -78,6 +80,11 @@ class LivePanelFragment : Fragment() {
         view.settings.allowFileAccess = true
         view.settings.allowContentAccess = false
         view.addJavascriptInterface(Bridge(), "Symbiosis")
+        ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
         view.webViewClient = object : WebViewClient() {
             override fun onReceivedError(
                 v: WebView?,
@@ -110,7 +117,10 @@ class LivePanelFragment : Fragment() {
     }
 
     private fun reloadPageData() {
-        web?.evaluateJavascript("try{if(typeof go==='function')go(page||'games')}catch(e){}", null)
+        web?.evaluateJavascript(
+            "try{if(typeof loadGames==='function')loadGames();if(typeof loadStatus==='function')loadStatus();}catch(e){}",
+            null
+        )
     }
 
     inner class Bridge {
