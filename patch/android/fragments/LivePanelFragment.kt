@@ -24,6 +24,7 @@ import org.json.JSONObject
 import org.yuzu.yuzu_emu.HomeNavigationDirections
 import org.yuzu.yuzu_emu.model.GamesViewModel
 import org.yuzu.yuzu_emu.ui.main.MainActivity
+import org.yuzu.yuzu_emu.utils.Converter
 import org.yuzu.yuzu_emu.utils.GameAddons
 import org.yuzu.yuzu_emu.utils.LivePanel
 import org.yuzu.yuzu_emu.utils.PluginPack
@@ -126,6 +127,24 @@ class LivePanelFragment : Fragment() {
                             ")}catch(e){}",
                         null
                     )
+                }
+            }.start()
+        }
+
+    private val pickConvertFiles =
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            if (uris.isNullOrEmpty()) return@registerForActivityResult
+            val ctx = context?.applicationContext ?: return@registerForActivityResult
+            Thread {
+                uris.forEach { uri ->
+                    val raw = runCatching { Converter.importAndConvert(ctx, uri) }
+                        .getOrDefault("""{"ok":false,"message":"сбой"}""")
+                    main.post {
+                        web?.evaluateJavascript(
+                            "try{if(typeof onConverted==='function')onConverted(" + raw + ")}catch(e){}",
+                            null
+                        )
+                    }
                 }
             }.start()
         }
@@ -307,6 +326,27 @@ class LivePanelFragment : Fragment() {
         }.getOrDefault("""{"ok":false,"message":"не переключился"}""")
 
         @JavascriptInterface
+        fun converterItems(): String = runCatching { Converter.listJson() }
+            .getOrDefault("""{"items":[]}""")
+
+        @JavascriptInterface
+        fun pickConvert() {
+            main.post {
+                runCatching { pickConvertFiles.launch(arrayOf("*/*")) }
+            }
+        }
+
+        @JavascriptInterface
+        fun deleteConverted(path: String): String = runCatching {
+            Converter.delete(path)
+        }.getOrDefault("""{"ok":false}""")
+
+        @JavascriptInterface
+        fun canOpen(path: String): Boolean = runCatching {
+            Converter.canOpen(path)
+        }.getOrDefault(false)
+
+        @JavascriptInterface
         fun reloadInterface() {
             main.post {
                 // Только по кнопке. Автоматический timestamp рвал список.
@@ -394,7 +434,10 @@ class LivePanelFragment : Fragment() {
                         org.yuzu.yuzu_emu.activities.EmulationActivity::class.java
                     ).apply {
                         action = android.content.Intent.ACTION_VIEW
-                        data = android.net.Uri.parse(game.path)
+                        data = if (game.path.startsWith("/"))
+                            android.net.Uri.fromFile(java.io.File(game.path))
+                        else
+                            android.net.Uri.parse(game.path)
                         putExtra("SelectedGame", game)
                         putExtra("game", game)
                         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)

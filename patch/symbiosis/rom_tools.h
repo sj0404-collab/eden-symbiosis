@@ -41,6 +41,7 @@ enum class DumpFormat : u32 {
     Nro,   ///< Homebrew.
     Nsz,   ///< Compressed NSP (community format).
     Xcz,   ///< Compressed XCI (community format).
+    Ncz,   ///< Compressed NCA (community format).
 };
 
 const char* ToString(DumpFormat format);
@@ -117,7 +118,18 @@ public:
     /// Formats a report for display.
     [[nodiscard]] static std::string Describe(const DumpReport& report);
 
-    /// Note explaining why NSZ compression is not offered.
+    /**
+     * @brief Decompresses NSZ/XCZ/NCZ into NSP/XCI-as-NSP/NCA.
+     *
+     * Writes a new file. The source is never modified. On failure the
+     * destination is deleted so a half-written dump cannot be launched.
+     *
+     * @return Bytes written, 0 on failure (reason in error_out).
+     */
+    static u64 Decompress(const std::string& source, const std::string& destination,
+                          std::string& error_out);
+
+    /// Note explaining why NSZ compression is not offered as an encoder.
     [[nodiscard]] static std::string CompressionNote();
 };
 

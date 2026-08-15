@@ -825,6 +825,17 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getRomCompressionNote(JNIEnv* env,
     return Common::Android::ToJString(env, Symbiosis::RomTools::CompressionNote());
 }
 
+/// "bytes|error"
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_decompressDump(JNIEnv* env, jobject,
+                                                             jstring j_src, jstring j_dst) {
+    const std::string src = Common::Android::GetJString(env, j_src);
+    const std::string dst = Common::Android::GetJString(env, j_dst);
+    std::string error;
+    const u64 written = Symbiosis::RomTools::Decompress(src, dst, error);
+    return Common::Android::ToJString(env, std::to_string(written) + "|" + error);
+}
+
 // --- Utilities: save vault -----------------------------------------------
 
 JNIEXPORT void JNICALL

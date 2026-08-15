@@ -147,6 +147,27 @@
   .logline .ok { color:var(--cyan); }
   .logline .bad { color:var(--pink); }
   .logline .wh { color:var(--dim); font-size:11px; margin-top:2px; }
+
+  .tabs { display:flex; gap:6px; margin:8px 12px 0; }
+  .tab {
+    flex:1; height:36px; border-radius:12px; border:1px solid var(--line);
+    background:#1c1c26; color:var(--dim); font:600 14px inherit;
+    transition:background .15s ease, color .15s ease, transform .12s ease;
+  }
+  .tab.on { background:var(--on); color:var(--text); }
+  .view { display:none; flex:1; min-height:0; flex-direction:column; overflow:hidden; }
+  .view.on { display:flex; }
+  .conv-list { flex:1; overflow:auto; padding:0 6px 110px; }
+  .card {
+    display:flex; gap:12px; align-items:center;
+    margin:6px; padding:8px; border-radius:16px; border:1px solid var(--line);
+    background:var(--card);
+    transition:transform .12s ease, background .12s ease;
+  }
+  .card:active { transform:scale(.985); }
+  .card .go { background:var(--pink); color:#fff; border:0; border-radius:10px; padding:8px 12px; font:600 13px inherit; }
+  .card .bad { color:var(--pink); }
+  .card .ok { color:var(--cyan); }
 </style>
 </head>
 <body>
@@ -157,6 +178,11 @@
   <button class="iconbtn" id="btn-tools">Утилиты</button>
   <button class="iconbtn" id="btn-settings">Настройки</button>
 </header>
+<div class="tabs">
+  <button class="tab on" id="tab-games">Игры</button>
+  <button class="tab" id="tab-conv">Конвертер</button>
+</div>
+<div class="view on" id="view-games">
 <div class="search">
   <span style="color:var(--cyan)">⌕</span>
   <input id="q" placeholder="Search games…" autocomplete="off">
@@ -171,6 +197,18 @@
   <button class="fab" id="fab">＋ Папка</button>
 </div>
 <div class="bar" id="bar">папка не выбрана</div>
+</div>
+
+<div class="view" id="view-conv">
+  <div class="status" style="margin-top:10px">
+    <div class="line">NSZ · XCZ · NCZ → NSP / NCA</div>
+    Сжатый файл не запускается. После конвертации — обложка и «Запустить» или «Удалить».
+  </div>
+  <div class="conv-list" id="conv-list"><div class="empty">добавьте файл</div></div>
+  <div class="fabs">
+    <button class="fab" id="fab-conv">＋ Файл</button>
+  </div>
+</div>
 
 <div class="sheet" id="sheet">
   <div class="box">
@@ -509,6 +547,75 @@ function openSettingsSheet() {
   $('a-close').onclick = closeSheet;
   openSheet();
 }
+
+function showTab(id) {
+  const games = id === 'games';
+  $('tab-games').classList.toggle('on', games);
+  $('tab-conv').classList.toggle('on', !games);
+  $('view-games').classList.toggle('on', games);
+  $('view-conv').classList.toggle('on', !games);
+  if (!games) loadConverter();
+}
+
+function loadConverter() {
+  const data = parse(call('converterItems'), { items: [] });
+  const items = data.items || [];
+  if (!items.length) {
+    $('conv-list').innerHTML = '<div class="empty">Нет файлов. «＋ Файл» — nsz, xcz, ncz или уже готовый nsp/xci.</div>';
+    return;
+  }
+  $('conv-list').innerHTML = items.map((it, i) => {
+    const can = !!it.canLaunch;
+    const btn = can
+      ? `<button class="go" data-act="play" data-i="${i}">Запустить</button>`
+      : `<button class="ghost" data-act="del" data-i="${i}">Удалить</button>`;
+    return `<div class="card">
+      <div class="thumb" id="cv-${i}">▶</div>
+      <div class="meta">
+        <div class="title">${esc(it.title || it.name || 'файл')}</div>
+        <div class="sub ${can ? 'ok' : 'bad'}">${can ? 'можно открыть' : esc(it.reason || 'не открывается')} · ${esc(it.size || '')}</div>
+      </div>
+      ${btn}
+    </div>`;
+  }).join('');
+  $('conv-list').querySelectorAll('button[data-act]').forEach(b => {
+    const it = items[+b.dataset.i];
+    b.onclick = ev => {
+      ev.stopPropagation();
+      if (b.dataset.act === 'play') {
+        if (it && it.path && N() && N().launch) N().launch(it.path, it.title || '');
+      } else {
+        parse(call('deleteConverted', it.path), null);
+        loadConverter();
+      }
+    };
+  });
+  items.forEach((it, i) => {
+    if (!it.canLaunch || !it.path) return;
+    setTimeout(() => {
+      const el = $('cv-' + i);
+      if (!el || !N() || typeof N().icon !== 'function') return;
+      const b64 = call('icon', it.path);
+      if (b64) el.innerHTML = '<img alt="" src="data:image/jpeg;base64,' + b64 + '">';
+    }, 40 * i);
+  });
+}
+
+function onConverted(info) {
+  showTab('conv');
+  loadConverter();
+  if (info && info.message) {
+    const note = document.createElement('div');
+    note.className = 'status';
+    note.innerHTML = '<div class="line">' + esc(info.message) + '</div>' +
+      (info.reason && !info.canLaunch ? esc(info.reason) : '');
+    $('conv-list').prepend(note);
+  }
+}
+
+$('tab-games').onclick = () => showTab('games');
+$('tab-conv').onclick = () => showTab('conv');
+$('fab-conv').onclick = () => { if (N() && N().pickConvert) N().pickConvert(); };
 
 $('q').addEventListener('input', render);
 $('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); };

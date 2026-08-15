@@ -5,6 +5,7 @@
 #include <array>
 #include <cstring>
 #include <filesystem>
+#include <chrono>
 #include <fstream>
 
 #include "common/logging.h"
@@ -67,6 +68,8 @@ const char* ToString(DumpFormat format) {
         return "NSZ";
     case DumpFormat::Xcz:
         return "XCZ";
+    case DumpFormat::Ncz:
+        return "NCZ";
     case DumpFormat::Unknown:
         break;
     }
@@ -105,6 +108,9 @@ DumpFormat RomTools::DetectFormat(const std::string& path) {
     }
     if (ext == "xcz") {
         return DumpFormat::Xcz;
+    }
+    if (ext == "ncz") {
+        return DumpFormat::Ncz;
     }
 
     u32 magic = 0;
@@ -228,10 +234,11 @@ DumpReport RomTools::Inspect(const std::string& path) {
 
     case DumpFormat::Nsz:
     case DumpFormat::Xcz:
+    case DumpFormat::Ncz:
         report.health = DumpHealth::Unknown;
         report.summary = "Community compressed format.";
-        report.advice = "Eden cannot load these directly. Decompress to NSP or XCI first "
-                        "with an external tool.";
+        report.advice = "Open the Converter tab and turn this into NSP/NCA. "
+                        "Eden cannot launch the compressed file as-is.";
         break;
 
     case DumpFormat::Nca:
@@ -442,18 +449,544 @@ std::string RomTools::Describe(const DumpReport& report) {
     return out;
 }
 
+
+#if defined(__has_include)
+#    if __has_include(<zstd.h>)
+#        define SYMBIOSIS_HAS_ZSTD 1
+#        include <zstd.h>
+#    endif
+#endif
+
+namespace {
+
+constexpr u64 kNcaHeaderSize = 0x4000;
+constexpr char kNczSectn[] = "NCZSECTN";
+constexpr char kNczBlock[] = "NCZBLOCK";
+constexpr u64 kMaxOutBytes = 34ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr u32 kMaxPfsFiles = 512;
+
+struct PackFile {
+    std::string name;
+    std::filesystem::path temp;
+    u64 size{0};
+};
+
+bool EndsWithInsensitive(const std::string& name, const char* ext) {
+    if (name.size() < 4) {
+        return false;
+    }
+    std::string tail = name.substr(name.size() - 4);
+    std::transform(tail.begin(), tail.end(), tail.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return tail == ext;
+}
+
+/// Uncompressed single-segment zstd frame (used by tests). Real NSZ uses
+/// compressed frames and goes through libzstd when the header is present.
+bool DecompressZstdRawFrame(const u8* src, std::size_t src_size, std::vector<u8>& out) {
+    if (src_size < 9) {
+        return false;
+    }
+    if (!(src[0] == 0x28 && src[1] == 0xB5 && src[2] == 0x2F && src[3] == 0xFD)) {
+        return false;
+    }
+    const u8 fhd = src[4];
+    const bool single = (fhd & 0x20) != 0;
+    const int fcs_flag = (fhd >> 6) & 0x3;
+    if (!single || fcs_flag != 0) {
+        return false;
+    }
+    const u8 fcs = src[5];
+    const u32 bh = static_cast<u32>(src[6]) | (static_cast<u32>(src[7]) << 8) |
+                   (static_cast<u32>(src[8]) << 16);
+    const bool last = (bh & 1u) != 0;
+    const u32 type = (bh >> 1) & 0x3u;
+    const u32 size = bh >> 3;
+    if (!last || type != 0 || size != fcs || src_size < 9 + size) {
+        return false;
+    }
+    out.assign(src + 9, src + 9 + size);
+    return true;
+}
+
+bool DecompressZstd(const u8* src, std::size_t src_size, std::vector<u8>& out,
+                    std::string& error) {
+    if (DecompressZstdRawFrame(src, src_size, out)) {
+        return true;
+    }
+#ifdef SYMBIOSIS_HAS_ZSTD
+    const unsigned long long bound = ZSTD_getFrameContentSize(src, src_size);
+    if (bound == ZSTD_CONTENTSIZE_ERROR) {
+        error = "zstd frame is not readable.";
+        return false;
+    }
+    const std::size_t cap = (bound == ZSTD_CONTENTSIZE_UNKNOWN)
+                                ? std::min<std::size_t>(src_size * 16 + 64, 64u << 20)
+                                : static_cast<std::size_t>(bound);
+    if (cap == 0 || cap > kMaxOutBytes) {
+        error = "zstd frame reports an implausible size.";
+        return false;
+    }
+    out.resize(cap);
+    const std::size_t got = ZSTD_decompress(out.data(), out.size(), src, src_size);
+    if (ZSTD_isError(got)) {
+        error = std::string("zstd: ") + ZSTD_getErrorName(got);
+        out.clear();
+        return false;
+    }
+    out.resize(got);
+    return true;
+#else
+    error = "this build has no zstd decoder for compressed NSZ blocks.";
+    return false;
+#endif
+}
+
+bool WriteAll(std::ofstream& out, const void* data, std::size_t size) {
+    out.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+    return out.good();
+}
+
+bool CopyStream(std::ifstream& in, std::ofstream& out, u64 bytes) {
+    std::vector<char> buf(1 << 20);
+    u64 left = bytes;
+    while (left > 0 && in) {
+        const auto n = static_cast<std::streamsize>(std::min<u64>(left, buf.size()));
+        in.read(buf.data(), n);
+        const auto got = in.gcount();
+        if (got <= 0) {
+            return false;
+        }
+        out.write(buf.data(), got);
+        left -= static_cast<u64>(got);
+    }
+    return left == 0 && out.good();
+}
+
+bool DecompressNczToFile(std::ifstream& in, u64 start, u64 size, const std::filesystem::path& dest,
+                         std::string& error) {
+    if (size < kNcaHeaderSize + 16) {
+        error = "NCZ is shorter than a header.";
+        return false;
+    }
+    std::ofstream out{dest, std::ios::binary | std::ios::trunc};
+    if (!out) {
+        error = "Could not create the decompressed NCA.";
+        return false;
+    }
+    std::vector<u8> header(kNcaHeaderSize);
+    if (!ReadAt(in, start, header.data(), header.size())) {
+        error = "Could not read the NCZ header.";
+        return false;
+    }
+    if (!WriteAll(out, header.data(), header.size())) {
+        return false;
+    }
+
+    u64 cursor = start + kNcaHeaderSize;
+    char magic[8]{};
+    if (!ReadAt(in, cursor, magic, 8) || std::memcmp(magic, kNczSectn, 8) != 0) {
+        // Not actually compressed — copy the rest as a plain NCA.
+        in.clear();
+        in.seekg(static_cast<std::streamoff>(start + kNcaHeaderSize), std::ios::beg);
+        return CopyStream(in, out, size - kNcaHeaderSize);
+    }
+    cursor += 8;
+    u64 section_count = 0;
+    if (!ReadAt(in, cursor, &section_count, 8) || section_count > 64) {
+        error = "NCZ section table is unreadable.";
+        return false;
+    }
+    cursor += 8 + section_count * 64; // skip section descriptors (64 bytes each)
+
+    if (!ReadAt(in, cursor, magic, 8)) {
+        error = "NCZ body is truncated.";
+        return false;
+    }
+
+    const u64 payload_off = cursor;
+    const u64 payload_size = (start + size > payload_off) ? (start + size - payload_off) : 0;
+    if (payload_size == 0 || payload_size > kMaxOutBytes) {
+        error = "NCZ payload size is implausible.";
+        return false;
+    }
+
+    // Block-compressed NCZ: each block is its own zstd frame.
+    if (std::memcmp(magic, kNczBlock, 8) == 0) {
+        u8 meta[16]{};
+        if (!ReadAt(in, cursor, meta, 16)) {
+            error = "NCZBLOCK header is truncated.";
+            return false;
+        }
+        const u32 block_count = static_cast<u32>(meta[12]) | (static_cast<u32>(meta[13]) << 8) |
+                                (static_cast<u32>(meta[14]) << 16) | (static_cast<u32>(meta[15]) << 24);
+        if (block_count == 0 || block_count > 1'000'000) {
+            error = "NCZBLOCK count is implausible.";
+            return false;
+        }
+        std::vector<u32> sizes(block_count);
+        if (!ReadAt(in, cursor + 24, sizes.data(), sizes.size() * 4)) {
+            error = "NCZBLOCK size table is truncated.";
+            return false;
+        }
+        u64 off = cursor + 24 + static_cast<u64>(block_count) * 4;
+        for (u32 i = 0; i < block_count; ++i) {
+            const u32 cs = sizes[i];
+            if (cs == 0 || off + cs > start + size) {
+                error = "NCZBLOCK extends past the file.";
+                return false;
+            }
+            std::vector<u8> comp(cs);
+            if (!ReadAt(in, off, comp.data(), cs)) {
+                error = "Could not read an NCZBLOCK.";
+                return false;
+            }
+            std::vector<u8> raw;
+            std::string zerr;
+            if (!DecompressZstd(comp.data(), comp.size(), raw, zerr)) {
+                error = zerr.empty() ? "NCZBLOCK failed to decompress." : zerr;
+                return false;
+            }
+            if (!WriteAll(out, raw.data(), raw.size())) {
+                return false;
+            }
+            off += cs;
+        }
+        return out.good();
+    }
+
+    // Solid zstd of the NCA body.
+    std::vector<u8> comp(static_cast<std::size_t>(payload_size));
+    if (!ReadAt(in, payload_off, comp.data(), comp.size())) {
+        error = "Could not read the NCZ payload.";
+        return false;
+    }
+    std::vector<u8> raw;
+    std::string zerr;
+    if (!DecompressZstd(comp.data(), comp.size(), raw, zerr)) {
+        error = zerr.empty() ? "NCZ payload failed to decompress." : zerr;
+        return false;
+    }
+    return WriteAll(out, raw.data(), raw.size());
+}
+
+std::string NcaNameFrom(const std::string& name) {
+    if (EndsWithInsensitive(name, ".ncz")) {
+        return name.substr(0, name.size() - 4) + ".nca";
+    }
+    return name;
+}
+
+bool WritePfs0(const std::vector<PackFile>& files, const std::string& dest, std::string& error) {
+    u32 string_bytes = 0;
+    for (const auto& f : files) {
+        string_bytes += static_cast<u32>(f.name.size() + 1);
+    }
+    const u64 header = 16ull + static_cast<u64>(files.size()) * 24ull + string_bytes;
+    std::ofstream out{dest, std::ios::binary | std::ios::trunc};
+    if (!out) {
+        error = "Could not create the output NSP.";
+        return false;
+    }
+    const u32 magic = kPfs0Magic;
+    const u32 count = static_cast<u32>(files.size());
+    const u32 reserved = 0;
+    WriteAll(out, &magic, 4);
+    WriteAll(out, &count, 4);
+    WriteAll(out, &string_bytes, 4);
+    WriteAll(out, &reserved, 4);
+    u64 rel = 0;
+    u32 name_off = 0;
+    for (const auto& f : files) {
+        WriteAll(out, &rel, 8);
+        WriteAll(out, &f.size, 8);
+        WriteAll(out, &name_off, 4);
+        WriteAll(out, &reserved, 4);
+        rel += f.size;
+        name_off += static_cast<u32>(f.name.size() + 1);
+    }
+    for (const auto& f : files) {
+        out.write(f.name.c_str(), static_cast<std::streamsize>(f.name.size() + 1));
+    }
+    for (const auto& f : files) {
+        std::ifstream in{f.temp, std::ios::binary};
+        if (!in || !CopyStream(in, out, f.size)) {
+            error = "Failed while assembling " + f.name;
+            return false;
+        }
+    }
+    return out.good();
+}
+
+bool UnpackPfs0(std::ifstream& in, u64 base, u64 span, const std::filesystem::path& work,
+                std::vector<PackFile>& out, std::string& error) {
+    u32 magic = 0, count = 0, str_size = 0;
+    if (!ReadAt(in, base, &magic, 4) || magic != kPfs0Magic ||
+        !ReadAt(in, base + 4, &count, 4) || !ReadAt(in, base + 8, &str_size, 4)) {
+        error = "PFS0 header is unreadable.";
+        return false;
+    }
+    if (count == 0 || count > kMaxPfsFiles || str_size > 1u << 20) {
+        error = "PFS0 file list is implausible.";
+        return false;
+    }
+    std::vector<char> names(str_size + 1, 0);
+    const u64 names_off = base + 16 + static_cast<u64>(count) * 24;
+    if (str_size > 0 && !ReadAt(in, names_off, names.data(), str_size)) {
+        error = "PFS0 name table is truncated.";
+        return false;
+    }
+    const u64 data_off = names_off + str_size;
+    for (u32 i = 0; i < count; ++i) {
+        const u64 e = base + 16 + static_cast<u64>(i) * 24;
+        u64 off = 0, size = 0;
+        u32 noff = 0;
+        if (!ReadAt(in, e, &off, 8) || !ReadAt(in, e + 8, &size, 8) ||
+            !ReadAt(in, e + 16, &noff, 4) || noff >= str_size) {
+            error = "PFS0 entry is truncated.";
+            return false;
+        }
+        if (data_off + off + size > base + span) {
+            error = "PFS0 file extends past the archive.";
+            return false;
+        }
+        PackFile pf;
+        pf.name = NcaNameFrom(std::string{names.data() + noff});
+        pf.temp = work / (std::to_string(i) + ".part");
+        const bool ncz = EndsWithInsensitive(std::string{names.data() + noff}, ".ncz");
+        if (ncz) {
+            if (!DecompressNczToFile(in, data_off + off, size, pf.temp, error)) {
+                return false;
+            }
+            std::error_code ec;
+            pf.size = static_cast<u64>(std::filesystem::file_size(pf.temp, ec));
+        } else {
+            std::ofstream part{pf.temp, std::ios::binary | std::ios::trunc};
+            in.clear();
+            in.seekg(static_cast<std::streamoff>(data_off + off), std::ios::beg);
+            if (!part || !CopyStream(in, part, size)) {
+                error = "Could not extract " + pf.name;
+                return false;
+            }
+            pf.size = size;
+        }
+        out.push_back(std::move(pf));
+    }
+    return true;
+}
+
+} // namespace
+
+u64 RomTools::Decompress(const std::string& source, const std::string& destination,
+                         std::string& error_out) {
+    error_out.clear();
+    const auto report = Inspect(source);
+    std::ifstream in{source, std::ios::binary};
+    if (!in) {
+        error_out = "Could not open the source file.";
+        return 0;
+    }
+
+    const auto cleanup = [&]() {
+        std::error_code ec;
+        std::filesystem::remove(destination, ec);
+    };
+
+    auto finish_ok = [&](u64 bytes) -> u64 {
+        LogInfo(LogArea::General, "decompressed " + report.filename + " -> " +
+                                      std::to_string(bytes / kMiB) + " MiB");
+        return bytes;
+    };
+
+    // Already launchable: byte copy, never re-encode.
+    if (report.format == DumpFormat::Nsp || report.format == DumpFormat::Xci ||
+        report.format == DumpFormat::Nca || report.format == DumpFormat::Nro) {
+        std::ofstream out{destination, std::ios::binary | std::ios::trunc};
+        if (!out || !CopyStream(in, out, report.file_size) || !out.good()) {
+            cleanup();
+            error_out = "Could not copy the already-openable file.";
+            return 0;
+        }
+        return finish_ok(report.file_size);
+    }
+
+    std::error_code ec;
+    const auto work = std::filesystem::temp_directory_path() /
+                      ("eden-nsz-" + std::to_string(report.file_size) + "-" +
+                       std::to_string(static_cast<unsigned long long>(
+                           std::chrono::steady_clock::now().time_since_epoch().count())));
+    std::filesystem::create_directories(work, ec);
+    const auto wipe_work = [&]() { std::filesystem::remove_all(work, ec); };
+
+    if (report.format == DumpFormat::Ncz) {
+        if (!DecompressNczToFile(in, 0, report.file_size, destination, error_out)) {
+            cleanup();
+            wipe_work();
+            return 0;
+        }
+        wipe_work();
+        std::error_code sz;
+        return finish_ok(static_cast<u64>(std::filesystem::file_size(destination, sz)));
+    }
+
+    if (report.format == DumpFormat::Nsz) {
+        std::vector<PackFile> files;
+        if (!UnpackPfs0(in, 0, report.file_size, work, files, error_out)) {
+            cleanup();
+            wipe_work();
+            return 0;
+        }
+        if (!WritePfs0(files, destination, error_out)) {
+            cleanup();
+            wipe_work();
+            return 0;
+        }
+        wipe_work();
+        std::error_code sz;
+        return finish_ok(static_cast<u64>(std::filesystem::file_size(destination, sz)));
+    }
+
+    if (report.format == DumpFormat::Xcz) {
+        // Same walk as XciToNsp, then treat the secure partition as HFS0/PFS0
+        // of NCZ files and emit a launchable NSP.
+        u64 units = 0;
+        if (!ReadAt(in, 0x130, &units, sizeof(units))) {
+            error_out = "Could not read the XCZ partition table.";
+            return 0;
+        }
+        const u64 hfs0_offset = units * kMediaUnit;
+        u32 magic = 0, partition_count = 0, string_table_size = 0;
+        if (!ReadAt(in, hfs0_offset, &magic, 4) || magic != kHfs0Magic ||
+            !ReadAt(in, hfs0_offset + 4, &partition_count, 4) ||
+            !ReadAt(in, hfs0_offset + 8, &string_table_size, 4) || partition_count == 0 ||
+            partition_count > 16) {
+            error_out = "XCZ partition table is unreadable.";
+            return 0;
+        }
+        const u64 entries_offset = hfs0_offset + 0x10;
+        const u64 strings_offset = entries_offset + partition_count * 0x40ull;
+        const u64 data_offset = strings_offset + string_table_size;
+        std::vector<char> strings(string_table_size + 1, 0);
+        if (string_table_size > 0 &&
+            !ReadAt(in, strings_offset, strings.data(), string_table_size)) {
+            error_out = "XCZ name table is truncated.";
+            return 0;
+        }
+        u64 secure_offset = 0, secure_size = 0;
+        for (u32 i = 0; i < partition_count; ++i) {
+            const u64 entry = entries_offset + i * 0x40ull;
+            u64 rel = 0, size = 0;
+            u32 name_off = 0;
+            if (!ReadAt(in, entry, &rel, 8) || !ReadAt(in, entry + 8, &size, 8) ||
+                !ReadAt(in, entry + 16, &name_off, 4) || name_off >= string_table_size) {
+                continue;
+            }
+            if (std::string{strings.data() + name_off} == "secure") {
+                secure_offset = data_offset + rel;
+                secure_size = size;
+                break;
+            }
+        }
+        if (secure_size == 0) {
+            error_out = "XCZ has no secure partition.";
+            return 0;
+        }
+        // Secure is HFS0 of NCAs; HFS0 starts with HFS0 magic. Some dumps store
+        // PFS0. Accept either.
+        u32 smagic = 0;
+        if (!ReadAt(in, secure_offset, &smagic, 4)) {
+            error_out = "XCZ secure partition is empty.";
+            return 0;
+        }
+        std::vector<PackFile> files;
+        if (smagic == kPfs0Magic) {
+            if (!UnpackPfs0(in, secure_offset, secure_size, work, files, error_out)) {
+                cleanup();
+                wipe_work();
+                return 0;
+            }
+        } else if (smagic == kHfs0Magic) {
+            u32 count = 0, str_size = 0;
+            if (!ReadAt(in, secure_offset + 4, &count, 4) ||
+                !ReadAt(in, secure_offset + 8, &str_size, 4) || count == 0 ||
+                count > kMaxPfsFiles) {
+                error_out = "XCZ secure HFS0 is unreadable.";
+                cleanup();
+                wipe_work();
+                return 0;
+            }
+            std::vector<char> names(str_size + 1, 0);
+            const u64 names_off = secure_offset + 0x10 + static_cast<u64>(count) * 0x40;
+            if (str_size && !ReadAt(in, names_off, names.data(), str_size)) {
+                error_out = "XCZ secure names are truncated.";
+                cleanup();
+                wipe_work();
+                return 0;
+            }
+            const u64 data = names_off + str_size;
+            for (u32 i = 0; i < count; ++i) {
+                const u64 e = secure_offset + 0x10 + static_cast<u64>(i) * 0x40;
+                u64 off = 0, size = 0;
+                u32 noff = 0;
+                if (!ReadAt(in, e, &off, 8) || !ReadAt(in, e + 8, &size, 8) ||
+                    !ReadAt(in, e + 16, &noff, 4) || noff >= str_size) {
+                    continue;
+                }
+                PackFile pf;
+                const std::string raw_name{names.data() + noff};
+                pf.name = NcaNameFrom(raw_name);
+                pf.temp = work / (std::to_string(i) + ".part");
+                if (EndsWithInsensitive(raw_name, ".ncz")) {
+                    if (!DecompressNczToFile(in, data + off, size, pf.temp, error_out)) {
+                        cleanup();
+                        wipe_work();
+                        return 0;
+                    }
+                    pf.size = static_cast<u64>(std::filesystem::file_size(pf.temp, ec));
+                } else {
+                    std::ofstream part{pf.temp, std::ios::binary | std::ios::trunc};
+                    in.clear();
+                    in.seekg(static_cast<std::streamoff>(data + off), std::ios::beg);
+                    if (!CopyStream(in, part, size)) {
+                        error_out = "Could not extract " + pf.name;
+                        cleanup();
+                        wipe_work();
+                        return 0;
+                    }
+                    pf.size = size;
+                }
+                files.push_back(std::move(pf));
+            }
+        } else {
+            error_out = "XCZ secure partition is not HFS0/PFS0.";
+            return 0;
+        }
+        if (files.empty()) {
+            error_out = "XCZ contained no files.";
+            wipe_work();
+            return 0;
+        }
+        if (!WritePfs0(files, destination, error_out)) {
+            cleanup();
+            wipe_work();
+            return 0;
+        }
+        wipe_work();
+        std::error_code sz;
+        return finish_ok(static_cast<u64>(std::filesystem::file_size(destination, sz)));
+    }
+
+    error_out = "Not an NSZ, XCZ or NCZ file.";
+    return 0;
+}
+
 std::string RomTools::CompressionNote() {
-    return "About NSZ and XCZ:\n\n"
-           "These community formats compress the *decrypted* contents, which means they "
-           "have to decrypt, recompress and then re-encrypt on the fly. Eden cannot load "
-           "them directly, and producing them here would mean reimplementing that pipeline "
-           "with a real risk of writing a corrupt file.\n\n"
-           "What this tool offers instead is the saving that needs no risk:\n"
-           "  - Trim: removes cartridge padding an XCI does not need. Often several GB.\n"
-           "  - Convert to NSP: keeps the game content and drops the padding and the "
-           "partitions the emulator never reads.\n\n"
-           "Both are byte-exact copies of the content that already exists. Nothing is "
-           "re-encoded, so nothing can be silently corrupted.\n";
+    return "NSZ / XCZ / NCZ:\\n\\n"
+           "The Converter tab decompresses these into NSP or NCA. The compressed "
+           "file is left untouched; a half-written output is deleted so it cannot "
+           "be launched.\\n\\n"
+           "XCI padding can still be trimmed, and an XCI can still be saved as NSP, "
+           "without re-encoding anything.\\n";
 }
 
 } // namespace Symbiosis

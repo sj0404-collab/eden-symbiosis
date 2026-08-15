@@ -202,6 +202,14 @@ object NativeSymbiosis {
         return Pair(parts.getOrElse(0) { "0" }.toLongOrNull() ?: 0L, parts.getOrElse(1) { "" })
     }
 
+    private external fun decompressDump(source: String, destination: String): String
+
+    fun decompress(source: String, destination: String): Pair<Long, String> {
+        val raw = runCatching { decompressDump(source, destination) }.getOrDefault("0|failed")
+        val parts = raw.split('|', limit = 2)
+        return Pair(parts.getOrElse(0) { "0" }.toLongOrNull() ?: 0L, parts.getOrElse(1) { "" })
+    }
+
     // --- Utilities: save vault -------------------------------------------
     external fun configureVault(dir: String, keep: Int)
     external fun backupSaves(saveDir: String, titleId: String, label: String): Long

@@ -59,6 +59,15 @@ int main(){
     printf("x.nsz -> %s, advice: %s\n",ToString(z.format),z.advice.substr(0,40).c_str());
     assert(z.format==DumpFormat::Nsz && !z.advice.empty());
 
+    // Already-openable NSP: decompress is a copy, never a re-encode.
+    {
+        std::string err;
+        u64 w = RomTools::Decompress("/tmp/romtest/game.nsp", "/tmp/romtest/out.nsp", err);
+        printf("\ndecompress nsp copy: %llu (%s)\n", (unsigned long long)w, err.c_str());
+        assert(w > 0);
+        assert(fs::file_size("/tmp/romtest/out.nsp") == fs::file_size("/tmp/romtest/game.nsp"));
+    }
+
     fs::remove_all("/tmp/romtest");
     printf("\nALL ROM TESTS PASSED\n");
 }
