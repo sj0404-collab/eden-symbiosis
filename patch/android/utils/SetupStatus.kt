@@ -62,7 +62,7 @@ object SetupStatus {
                 !loaded -> "prod.keys есть, но не читается"
                 else -> dir ?: ""
             },
-            bytes = if (onDisk) prod.length() else null
+            bytes = if (onDisk) prod?.length() else null
         )
     }
 
