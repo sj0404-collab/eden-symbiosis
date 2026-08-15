@@ -422,8 +422,10 @@ function pickSaves() {
 }
 
 function applyPlugins() {
-  const p = parse(call('pluginPayload'), null);
+  let p;
+  try { p = parse(call('pluginPayload'), null); } catch (e) { return; }
   if (!p) return;
+  try {
   const root = document.documentElement;
   Object.keys(p.theme || {}).forEach(k => {
     try { root.style.setProperty(k, p.theme[k]); } catch (e) {}
@@ -470,6 +472,7 @@ function applyPlugins() {
   });
   const strings = p.strings || {};
   if (strings['Search games…'] && $('q')) $('q').placeholder = strings['Search games…'];
+  } catch (e) {}
 }
 
 function openPluginsSheet() {

@@ -222,6 +222,11 @@ fi
 if [ -d "$P/android/model" ]; then
   cp "$P"/android/model/*.kt "$J/model/"
 fi
+if [ -d "$P/android/activities" ]; then
+  mkdir -p "$J/activities"
+  cp "$P"/android/activities/*.kt "$J/activities/"
+  echo "  replaced activities: $(ls "$P/android/activities" | tr '\n' ' ')"
+fi
 
 # Resources
 cp "$P"/android/layout/*.xml   "$A/res/layout/"
