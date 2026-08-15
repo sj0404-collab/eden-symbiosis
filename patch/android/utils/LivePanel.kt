@@ -192,17 +192,42 @@ object LivePanel {
             return obj.toString()
         }
         val items = JSONArray()
-        dir.listFiles()?.sortedBy { it.name }?.forEach { f ->
-            items.put(
-                JSONObject().apply {
-                    put("name", f.name)
-                    put("detail", if (f.isDirectory) "папка" else GameFolderScanner.humanSize(f.length()))
-                }
-            )
+        dir.listFiles()?.filter { it.isDirectory }?.forEach { user ->
+            if (user.name == "0000000000000000") return@forEach
+            user.listFiles()?.filter { it.isDirectory }?.forEach { title ->
+                if (!dirHasFiles(title)) return@forEach
+                items.put(
+                    JSONObject().apply {
+                        put("name", title.name)
+                        put("detail", "профиль ${user.name.take(8)}…")
+                    }
+                )
+            }
         }
         obj.put("items", items)
         return obj.toString()
     }
+
+    private fun looksLikeTitleId(name: String): Boolean =
+        name.length == 16 && name.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+
+    private fun dirHasFiles(dir: File): Boolean {
+        val q = ArrayDeque<File>()
+        q.add(dir)
+        var steps = 0
+        while (q.isNotEmpty() && steps < 40) {
+            steps++
+            val cur = q.removeFirst()
+            val kids = cur.listFiles() ?: continue
+            for (k in kids) {
+                if (k.isFile && k.length() > 0) return true
+                if (k.isDirectory) q.add(k)
+            }
+        }
+        return false
+    }
+
+    private fun hasModPayload(dir: File): Boolean = dirHasFiles(dir)
 
     /** Другие установки Eden на устройстве — чтобы не гадать, куда делись моды. */
     fun suggestRootsJson(context: Context): String {
