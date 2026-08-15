@@ -5,311 +5,198 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d0d12">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Eden — библиотека</title>
+<title>Eden</title>
 <style>
   :root {
-    --bg:#0d0d12; --panel:#16161f; --line:#262633; --text:#e8e8f0;
-    --dim:#8a8a9e; --pink:#ff2d78; --cyan:#22e0d6; --amber:#ffb020;
-    --red:#ff4d4d; --green:#3fd17a;
+    --bg:#101014; --card:#16161c; --line:#2a2a36; --text:#ececf4;
+    --dim:#8b8b9c; --pink:#ff2d78; --cyan:#3ee0d4; --on:#1c1c24;
   }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; }
   body {
     margin:0; background:var(--bg); color:var(--text);
-    font:15px/1.45 -apple-system,"Segoe UI",Roboto,sans-serif;
-    padding:12px; padding-bottom:88px;
+    font:15px/1.35 -apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex; flex-direction:column;
+    padding: env(safe-area-inset-top) 0 0;
   }
-  h1 { font-size:20px; margin:4px 0 2px; }
-  h1 span { color:var(--pink); }
-  .sub { color:var(--dim); font-size:12.5px; margin-bottom:10px; }
-  .card {
-    background:var(--panel); border:1px solid var(--line);
-    border-radius:14px; padding:12px; margin-bottom:10px;
+  header {
+    display:flex; align-items:center; gap:10px;
+    padding:10px 16px 0;
   }
-  .card h2 {
-    font-size:13px; margin:0 0 8px; color:var(--cyan);
-    text-transform:uppercase; letter-spacing:.7px;
+  header h1 { font-size:24px; font-weight:700; margin:0; letter-spacing:.3px; flex:1; }
+  .iconbtn {
+    width:40px; height:40px; border-radius:20px; border:1px solid var(--line);
+    background:transparent; color:var(--text); font-size:16px; padding:0;
   }
-  button {
-    font:inherit; font-weight:600; border:0; border-radius:10px;
-    padding:10px 12px; margin:4px 4px 4px 0; min-height:44px;
-    background:var(--pink); color:#fff;
+  .search {
+    margin:12px 14px 8px; display:flex; align-items:center; gap:10px;
+    border:1px solid var(--line); border-radius:24px; padding:0 14px; height:46px;
+    background:transparent;
   }
-  button.ghost { background:transparent; color:var(--cyan); border:1px solid var(--line); }
-  button.small { min-height:0; padding:6px 10px; font-size:12.5px; }
-  button:disabled { opacity:.45; }
-  .note { color:var(--dim); font-size:12.5px; }
-  .warn { border-left:3px solid var(--amber); padding-left:10px; color:#ffd79a; font-size:13px; }
-  .danger { border-left:3px solid var(--red); padding-left:10px; color:#ffb3b3; font-size:13px; }
-  .ok { color:var(--green); }
-  .bad { color:var(--red); }
-  .item {
-    display:flex; gap:10px; align-items:center; padding:10px 4px;
-    border-bottom:1px solid var(--line);
+  .search input {
+    flex:1; border:0; outline:0; background:transparent; color:var(--text);
+    font:inherit; min-width:0;
   }
-  .item:last-child { border-bottom:0; }
-  .grow { flex:1; min-width:0; }
-  .name { word-break:break-word; }
-  .meta { color:var(--dim); font-size:12px; }
-  .tabs {
-    position:fixed; left:0; right:0; bottom:0; display:flex;
-    background:#101018; border-top:1px solid var(--line);
-    padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+  .search input::placeholder { color:var(--dim); }
+  .status {
+    margin:0 14px 8px; border:1px solid var(--line); border-radius:12px;
+    padding:8px 12px; font-size:12.5px; color:var(--dim);
+    display:flex; justify-content:space-between; gap:8px; align-items:center;
   }
-  .tabs button {
-    flex:1; background:transparent; color:var(--dim); margin:0;
-    font-size:11px; min-height:48px; border-radius:8px;
+  .status b { color:var(--text); font-weight:600; }
+  .list { flex:1; overflow:auto; padding:0 8px 88px; -webkit-overflow-scrolling:touch; }
+  .game {
+    display:flex; align-items:center; gap:12px;
+    margin:8px; padding:8px; border-radius:16px; border:1px solid var(--line);
+    background:var(--card);
   }
-  .tabs button.on { color:var(--pink); background:#191922; }
-  .page { display:none; }
-  .page.on { display:block; }
-  code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; word-break:break-all; }
-  .pill { display:inline-block; padding:1px 8px; border-radius:99px; font-size:11.5px; font-weight:700; }
-  .pill.ok { background:rgba(63,209,122,.15); color:var(--green); }
-  .pill.bad { background:rgba(255,77,77,.15); color:var(--red); }
+  .game:active { background:var(--on); }
+  .thumb {
+    width:64px; height:64px; border-radius:12px; flex:0 0 64px;
+    background:linear-gradient(145deg,#2a1630,#16222a);
+    display:flex; align-items:center; justify-content:center;
+    font-size:22px; color:var(--pink);
+  }
+  .meta { flex:1; min-width:0; }
+  .title { font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sub { color:var(--dim); font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .empty { color:var(--dim); text-align:center; padding:48px 20px; }
+  .fab {
+    position:fixed; right:16px; bottom:calc(16px + env(safe-area-inset-bottom));
+    height:52px; padding:0 18px; border:0; border-radius:26px;
+    background:var(--pink); color:#fff; font:600 15px/52px inherit;
+    box-shadow:0 8px 24px rgba(255,45,120,.35);
+  }
+  .sheet {
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
+    z-index:5; align-items:flex-end;
+  }
+  .sheet.on { display:flex; }
+  .sheet .box {
+    width:100%; background:#14141a; border-radius:18px 18px 0 0;
+    padding:16px 16px calc(20px + env(safe-area-inset-bottom));
+  }
+  .sheet h2 { margin:0 0 10px; font-size:16px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  button.ghost {
+    background:transparent; color:var(--cyan); border:1px solid var(--line);
+    border-radius:10px; padding:10px 12px; font:600 13px inherit;
+  }
+  .note { color:var(--dim); font-size:12.5px; margin-top:8px; word-break:break-all; }
 </style>
 </head>
 <body>
-<h1>Eden <span>Symbiosis</span></h1>
-<div class="sub" id="sub">интерфейс — страница, запуск — APK</div>
-
-<div class="page on" id="p-games">
-  <div class="card">
-    <h2>Игры <button class="ghost small" style="float:right" onclick="reloadGames()">найти</button></h2>
-    <div class="note" id="games-hint">Список из кэша. «Найти» обходит папку один раз.</div>
-    <div id="games"><span class="note">загрузка…</span></div>
-  </div>
+<header>
+  <h1>Eden</h1>
+  <button class="iconbtn" id="btn-refresh" title="Найти игры">↻</button>
+  <button class="iconbtn" id="btn-more" title="Ещё">⚙</button>
+</header>
+<div class="search">
+  <span style="color:var(--cyan)">⌕</span>
+  <input id="q" placeholder="Search games…" autocomplete="off">
 </div>
+<div class="status" id="status">Ключи · Прошивка · Игры</div>
+<div class="list" id="list"><div class="empty">загрузка…</div></div>
+<button class="fab" id="fab">＋ Папка</button>
 
-<div class="page" id="p-files">
-  <div class="card">
-    <h2>Папки</h2>
-    <div class="row">
-      <button onclick="pickFolder()">Добавить папку игр</button>
-      <button class="ghost" onclick="pickDataRoot()">Папка данных</button>
+<div class="sheet" id="sheet">
+  <div class="box">
+    <h2>Папка данных</h2>
+    <div class="note" id="root"></div>
+    <div class="note" id="modsaves"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="ghost" id="btn-data">Сменить папку данных</button>
+      <button class="ghost" id="btn-settings">Настройки Eden</button>
+      <button class="ghost" id="btn-close">Закрыть</button>
     </div>
-    <div class="note" id="root-line" style="margin-top:8px"></div>
-    <div id="folders" style="margin-top:8px"></div>
+    <div class="note" id="hint"></div>
   </div>
-  <div class="card">
-    <h2>Моды <code>load/</code></h2>
-    <div id="mods"><span class="note">загрузка…</span></div>
-  </div>
-  <div class="card">
-    <h2>Сохранения</h2>
-    <div id="saves"><span class="note">загрузка…</span></div>
-  </div>
-</div>
-
-<div class="page" id="p-status">
-  <div class="card">
-    <h2>Состояние</h2>
-    <div id="status"><span class="note">загрузка…</span></div>
-  </div>
-  <div class="card" id="suggest-card" style="display:none">
-    <h2>Нашёл другую установку Eden</h2>
-    <div id="suggest"></div>
-    <div class="note">Моды и сейвы читаются из корня данных. Если выбрана пустая папка — их не будет, даже если в официальном Eden всё на месте.</div>
-  </div>
-</div>
-
-<div class="tabs">
-  <button class="on" id="t-games" onclick="go('games')">Игры</button>
-  <button id="t-files" onclick="go('files')">Папки</button>
-  <button id="t-status" onclick="go('status')">Статус</button>
 </div>
 
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
-const esc = s => String(s == null ? '' : s)
-  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const N = () => window.Symbiosis || null;
+function call(name, ...a) {
+  try { const n=N(); return n && n[name] ? n[name](...a) : null; } catch(e) { return null; }
+}
+function parse(s, fb) { try { return s ? JSON.parse(s) : fb; } catch(e) { return fb; } }
 
-function native() {
-  return window.Symbiosis || null;
-}
-function call(name, ...args) {
-  const n = native();
-  if (!n || typeof n[name] !== 'function') return null;
-  try { return n[name](...args); } catch (e) { return null; }
-}
-function parse(s, fallback) {
-  if (s == null || s === '') return fallback;
-  try { return JSON.parse(s); } catch (e) { return fallback; }
-}
-function has(name) {
-  const n = native();
-  return !!(n && typeof n[name] === 'function' && (n.bridgeVersion ? n.bridgeVersion() : 0) >= 2);
-}
+let GAMES = [];
 
-let page = 'games';
-function go(p) {
-  page = p;
-  for (const id of ['games','files','status']) {
-    $('p-' + id).classList.toggle('on', id === p);
-    $('t-' + id).classList.toggle('on', id === p);
+function render() {
+  const q = ($('q').value || '').trim().toLowerCase();
+  const list = q ? GAMES.filter(g => (g.title||'').toLowerCase().includes(q) || (g.developer||'').toLowerCase().includes(q)) : GAMES;
+  if (!N()) {
+    $('list').innerHTML = '<div class="empty">Откройте из APK Eden</div>';
+    return;
   }
-  if (p === 'games') loadGames();
-  if (p === 'files') { loadFolders(); loadMods(); loadSaves(); }
-  if (p === 'status') loadStatus();
+  if (!list.length) {
+    $('list').innerHTML = '<div class="empty">' + (GAMES.length ? 'ничего не найдено' : 'Нет игр. Нажмите «Папка» и укажите каталог с .nsp / .xci, затем ↻') + '</div>';
+    return;
+  }
+  $('list').innerHTML = list.map((g,i) => `
+    <div class="game" data-i="${GAMES.indexOf(g)}">
+      <div class="thumb">▶</div>
+      <div class="meta">
+        <div class="title">${esc(g.title || 'без имени')}</div>
+        <div class="sub">${esc(g.developer || g.programId || '')}</div>
+      </div>
+    </div>`).join('');
+  $('list').querySelectorAll('.game').forEach(el => {
+    el.addEventListener('click', () => play(GAMES[+el.dataset.i]));
+  });
+}
+
+function play(g) {
+  if (!g || !g.path) return;
+  if (!N() || typeof N().launch !== 'function') { alert('Нужен APK'); return; }
+  N().launch(g.path, g.title || '');
 }
 
 function loadGames() {
-  const box = $('games');
-  const data = parse(call('games'), null);
-  if (!native()) {
-    box.innerHTML = '<div class="warn">Откройте эту страницу из APK Eden. Здесь только оболочка; запуск игры — в приложении.</div>';
-    return;
-  }
-  if (!data || !data.games) {
-    box.innerHTML = '<div class="note">кэш пуст — нажмите «найти» или добавьте папку</div>';
-    return;
-  }
-  if (!data.games.length) {
-    box.innerHTML = '<div class="note">игр нет. Добавьте папку на вкладке «Папки», потом «найти».</div>';
-    return;
-  }
-  box.innerHTML = data.games.map(g => `
-    <div class="item">
-      <div class="grow">
-        <div class="name">${esc(g.title || g.name || 'без имени')}</div>
-        <div class="meta">${esc(g.programId || '')} · ${esc((g.path || '').split('/').pop() || '')}</div>
-      </div>
-      <button class="small" onclick="launch(${JSON.stringify(g.path)}, ${JSON.stringify(g.title || g.name || 'game')})">Играть</button>
-    </div>`).join('');
-}
-
-function reloadGames() {
-  if (!native()) { alert('Нужен APK.'); return; }
-  if (typeof native().rescan === 'function') native().rescan();
-  $('games').innerHTML = '<div class="note">ищу… потяните ещё раз через пару секунд, если список пуст</div>';
-  setTimeout(loadGames, 1500);
-}
-
-function launch(path, title) {
-  if (!native() || typeof native().launch !== 'function') {
-    alert('Запуск только из APK.');
-    return;
-  }
-  native().launch(path, title || '');
-}
-
-function pickFolder() {
-  if (!native() || typeof native().pickFolder !== 'function') { alert('Нужен APK.'); return; }
-  native().pickFolder();
-  setTimeout(() => { loadFolders(); loadGames(); }, 2500);
-}
-function pickDataRoot() {
-  if (!native() || typeof native().pickDataRoot !== 'function') { alert('Нужен APK.'); return; }
-  native().pickDataRoot();
-  setTimeout(() => { loadStatus(); loadMods(); loadSaves(); }, 2500);
-}
-
-function loadFolders() {
-  const box = $('folders');
-  const data = parse(call('folders'), { folders: [] });
-  const root = parse(call('dataRoot'), null);
-  $('root-line').innerHTML = root
-    ? 'корень данных: <code>' + esc(root.path || '—') + '</code>'
-    : '';
-  if (!data.folders.length) {
-    box.innerHTML = '<div class="note">папка игр не выбрана</div>';
-    return;
-  }
-  box.innerHTML = data.folders.map(f => `
-    <div class="item">
-      <div class="grow">
-        <div class="name">${esc(f.name)}</div>
-        <div class="meta">${f.games || 0} игр</div>
-      </div>
-    </div>`).join('');
-}
-
-function loadMods() {
-  const box = $('mods');
-  const data = parse(call('mods'), null);
-  if (!data) { box.innerHTML = '<div class="note">мост старый — обновите APK один раз</div>'; return; }
-  if (data.emptyReason) {
-    box.innerHTML = '<div class="warn">' + esc(data.emptyReason) + '</div>';
-    return;
-  }
-  if (!data.items || !data.items.length) {
-    box.innerHTML = '<div class="note">в <code>' + esc(data.path || 'load/') + '</code> пусто. Мод кладётся в load/&lt;TitleID&gt;/</div>';
-    return;
-  }
-  box.innerHTML = data.items.map(m => `
-    <div class="item">
-      <div class="grow">
-        <div class="name">${esc(m.titleId)}</div>
-        <div class="meta">${esc(m.contents || '')} · ${esc(m.path || '')}</div>
-      </div>
-    </div>`).join('');
-}
-
-function loadSaves() {
-  const box = $('saves');
-  const data = parse(call('saves'), null);
-  if (!data) { box.innerHTML = '<div class="note">мост старый — обновите APK один раз</div>'; return; }
-  if (data.emptyReason) {
-    box.innerHTML = '<div class="warn">' + esc(data.emptyReason) + '</div>';
-    return;
-  }
-  if (!data.items || !data.items.length) {
-    box.innerHTML = '<div class="note">сейвов нет в <code>' + esc(data.path || '') + '</code></div>';
-    return;
-  }
-  box.innerHTML = data.items.map(s => `
-    <div class="item">
-      <div class="grow">
-        <div class="name">${esc(s.name)}</div>
-        <div class="meta">${esc(s.detail || '')}</div>
-      </div>
-    </div>`).join('');
+  const data = parse(call('games'), { games: [] });
+  GAMES = data.games || [];
+  render();
 }
 
 function loadStatus() {
-  const box = $('status');
-  const data = parse(call('status'), null);
-  if (!data) {
-    box.innerHTML = '<div class="warn">Нет моста — страница открыта в браузере, не в APK.</div>';
-    return;
+  const st = parse(call('status'), null);
+  const mods = parse(call('mods'), null);
+  const saves = parse(call('saves'), null);
+  const root = parse(call('dataRoot'), null);
+  if (st && st.items) {
+    $('status').innerHTML = st.items.map(it =>
+      `<span><b>${esc(it.label)}</b> ${it.present ? '✓' : '✕'}</span>`
+    ).join(' · ');
   }
-  const items = (data.items || []).map(it => `
-    <div class="item">
-      <div class="grow">
-        <div class="name">${esc(it.label)}
-          <span class="pill ${it.present ? 'ok' : 'bad'}">${it.present ? 'есть' : 'нет'}</span>
-        </div>
-        <div class="meta">${esc(it.detail || '')} ${esc(it.size || '')}</div>
-      </div>
-    </div>`).join('');
-  box.innerHTML = items +
-    '<div class="note" style="margin-top:8px">корень: <code>' + esc(data.dataRoot || '—') + '</code></div>';
-
+  $('root').textContent = 'корень: ' + ((root && root.path) || (st && st.dataRoot) || '—');
+  const mc = mods && mods.items ? mods.items.length : 0;
+  const sc = saves && saves.items ? saves.items.length : 0;
+  $('modsaves').textContent = 'моды: ' + mc + '  ·  сейвы: ' + sc;
   const sug = parse(call('suggestRoots'), null);
-  const card = $('suggest-card');
-  if (sug && sug.roots && sug.roots.length) {
-    card.style.display = '';
-    $('suggest').innerHTML = sug.roots.map(r => `
-      <div class="item">
-        <div class="grow">
-          <div class="name">${esc(r.label)}</div>
-          <div class="meta">${esc(r.path)} · ключи ${r.keys ? '✓' : '✕'} · моды ${r.mods ? '✓' : '✕'} · сейвы ${r.saves ? '✓' : '✕'}</div>
-        </div>
-      </div>`).join('') +
-      '<div class="note">Нажмите «Папка данных» и укажите ту, где галочки.</div>';
-  } else {
-    card.style.display = 'none';
-  }
+  $('hint').textContent = (sug && sug.roots && sug.roots.length)
+    ? 'На устройстве есть другая установка Eden с данными. Смените папку данных на неё, если моды/сейвы пустые.'
+    : '';
 }
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
-}
+$('q').addEventListener('input', render);
+$('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); else alert('Нужен APK'); };
+$('btn-refresh').onclick = () => {
+  if (N() && N().rescan) N().rescan();
+  $('list').innerHTML = '<div class="empty">ищу…</div>';
+  setTimeout(loadGames, 1200);
+};
+$('btn-more').onclick = () => { loadStatus(); $('sheet').classList.add('on'); };
+$('btn-close').onclick = () => $('sheet').classList.remove('on');
+$('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') e.currentTarget.classList.remove('on'); });
+$('btn-data').onclick = () => { if (N() && N().pickDataRoot) N().pickDataRoot(); };
+$('btn-settings').onclick = () => { if (N() && N().openSettings) N().openSettings(); };
 
-$('sub').textContent = native()
-  ? 'APK ' + (call('bridgeVersion') || '?') + ' · страница обновляется сама'
-  : 'браузер: только просмотр. Запуск — из приложения.';
-go('games');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+loadGames();
+loadStatus();
 </script>
 </body>
 </html>

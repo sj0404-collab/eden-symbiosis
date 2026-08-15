@@ -50,6 +50,13 @@ class LivePanelFragment : Fragment() {
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri == null) return@registerForActivityResult
             val ctx = context ?: return@registerForActivityResult
+            runCatching {
+                ctx.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
             val path = SharedDataDirectory.resolveTreePath(uri)
                 ?.let { SharedDataDirectory.normaliseRoot(it) }
                 ?: return@registerForActivityResult
@@ -175,14 +182,48 @@ class LivePanelFragment : Fragment() {
         }
 
         @JavascriptInterface
+        fun openSettings() {
+            main.post {
+                runCatching {
+                    findNavController().navigate(
+                        HomeNavigationDirections.actionGlobalSettingsActivity(
+                            null,
+                            org.yuzu.yuzu_emu.features.settings.model.Settings.MenuTag.SECTION_ROOT
+                        )
+                    )
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun launch(path: String, title: String) {
             if (path.isBlank()) return
             main.post {
-                runCatching {
-                    val game = LivePanel.gameFrom(path, title)
-                    findNavController().navigate(
-                        HomeNavigationDirections.actionGlobalEmulationActivity(game)
-                    )
+                val act = activity ?: return@post
+                val cached = org.yuzu.yuzu_emu.utils.GameHelper.cachedGameList
+                    .firstOrNull { it.path == path }
+                val game = cached ?: LivePanel.gameFrom(path, title)
+                // Тот же путь, что у списка игр: отдельная Activity + extra.
+                // navigate() из WebView-фрагмента молча не открывал игру.
+                val launched = runCatching {
+                    val intent = android.content.Intent(
+                        act,
+                        org.yuzu.yuzu_emu.activities.EmulationActivity::class.java
+                    ).apply {
+                        action = android.content.Intent.ACTION_VIEW
+                        data = android.net.Uri.parse(game.path)
+                        putExtra("SelectedGame", game)
+                        putExtra("game", game)
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    act.startActivity(intent)
+                }.isSuccess
+                if (!launched) {
+                    runCatching {
+                        findNavController().navigate(
+                            HomeNavigationDirections.actionGlobalEmulationActivity(game)
+                        )
+                    }
                 }
             }
         }

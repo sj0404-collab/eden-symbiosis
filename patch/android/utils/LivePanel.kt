@@ -79,6 +79,7 @@ object LivePanel {
                     put("title", g.title)
                     put("path", g.path)
                     put("programId", g.programId)
+                    put("developer", g.developer)
                 }
             )
         }
