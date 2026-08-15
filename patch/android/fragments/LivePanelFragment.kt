@@ -45,7 +45,9 @@ class LivePanelFragment : Fragment() {
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri == null) return@registerForActivityResult
             (activity as? MainActivity)?.processGamesDir(uri, true)
-            main.postDelayed({ reloadPageData() }, 400)
+            main.postDelayed({
+                web?.evaluateJavascript("try{if(typeof onFolderAdded==='function')onFolderAdded()}catch(e){}", null)
+            }, 800)
         }
 
     private val pickDataFolder =
@@ -80,11 +82,9 @@ class LivePanelFragment : Fragment() {
         view.settings.allowFileAccess = true
         view.settings.allowContentAccess = false
         view.addJavascriptInterface(Bridge(), "Symbiosis")
-        ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            insets
-        }
+        // Отступы делает сама страница (padding-top 48px). Двойной inset
+        // прятал заголовок и кнопки под статус-бар на одних прошивках
+        // и оставлял дыру на других.
         view.webViewClient = object : WebViewClient() {
             override fun onReceivedError(
                 v: WebView?,
@@ -102,8 +102,8 @@ class LivePanelFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        // Вернулись из игры — страница уже на экране, скан не нужен.
-        reloadPageData()
+        // Не перерисовываем страницу: список уже на экране.
+        // Перезагрузка после выхода из игры как раз обнуляла кэш в UI.
     }
 
     override fun onDestroyView() {

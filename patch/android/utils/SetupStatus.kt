@@ -114,7 +114,7 @@ object SetupStatus {
         // Список, который уже показали один раз, живёт в
         // SharedPreferences и подхватывается при старте. Потянуть вниз
         // — единственный способ пройтись по диску снова.
-        val cached = runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList())
+        val cached = runCatching { LivePanel.rememberedGames() }.getOrDefault(emptyList())
         val name = GameFolderScanner.displayNameOf(dirs.first().uriString)
         val noAccess = SharedDataDirectory.needsAllFilesAccess() &&
             !SharedDataDirectory.hasAllFilesAccess()

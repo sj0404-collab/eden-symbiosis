@@ -18,15 +18,16 @@
     font:15px/1.35 -apple-system,"Segoe UI",Roboto,sans-serif;
     display:flex; flex-direction:column;
     overflow:hidden;
+    padding-top:48px;
   }
   header {
     display:flex; align-items:center; gap:8px;
-    padding:8px 12px 0;
+    padding:6px 12px 0;
   }
   header h1 { font-size:22px; font-weight:700; margin:0; flex:1; }
   .iconbtn {
-    width:38px; height:38px; border-radius:19px; border:1px solid var(--line);
-    background:transparent; color:var(--text); font-size:15px; padding:0;
+    min-width:38px; height:38px; border-radius:12px; border:1px solid var(--line);
+    background:#1c1c26; color:var(--text); font-size:14px; padding:0 10px;
   }
   .search {
     margin:10px 12px 6px; display:flex; align-items:center; gap:10px;
@@ -48,7 +49,7 @@
     padding:3px 10px; font-size:12px; color:var(--text);
   }
   .list {
-    flex:1; overflow:auto; padding:0 6px 96px;
+    flex:1; overflow:auto; padding:0 6px 110px;
     -webkit-overflow-scrolling:touch;
   }
   .game {
@@ -69,11 +70,18 @@
   .sub { color:var(--dim); font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .empty { color:var(--dim); text-align:center; padding:40px 20px; }
   .fab {
-    position:absolute; right:16px; bottom:20px;
+    position:absolute; right:16px; bottom:72px;
     height:48px; padding:0 16px; border:0; border-radius:24px;
     background:var(--pink); color:#fff; font:600 14px/48px inherit;
     z-index:4;
   }
+  .bar {
+    position:absolute; left:12px; right:12px; bottom:14px;
+    border:1px solid var(--line); border-radius:12px;
+    background:#16161c; padding:8px 12px; font-size:12.5px; color:var(--dim);
+    z-index:4;
+  }
+  .bar b { color:var(--text); }
   .sheet {
     display:none; position:absolute; inset:0; background:rgba(0,0,0,.55);
     z-index:6; align-items:flex-end;
@@ -95,9 +103,8 @@
 <body>
 <header>
   <h1>Eden</h1>
-  <button class="iconbtn" id="btn-refresh" title="Найти">↻</button>
-  <button class="iconbtn" id="btn-tools" title="Утилиты">🧰</button>
-  <button class="iconbtn" id="btn-more" title="Ещё">⚙</button>
+  <button class="iconbtn" id="btn-tools">Утилиты</button>
+  <button class="iconbtn" id="btn-settings">Настройки</button>
 </header>
 <div class="search">
   <span style="color:var(--cyan)">⌕</span>
@@ -109,19 +116,13 @@
 </div>
 <div class="list" id="list"><div class="empty">загрузка…</div></div>
 <button class="fab" id="fab">＋ Папка</button>
+<div class="bar" id="bar">папка не выбрана</div>
 
 <div class="sheet" id="sheet">
   <div class="box">
-    <h2>Данные и утилиты</h2>
-    <div class="note" id="root"></div>
-    <div class="note" id="modsaves"></div>
-    <div class="row" style="margin-top:12px">
-      <button class="ghost" id="btn-utils">Утилиты</button>
-      <button class="ghost" id="btn-data">Папка данных</button>
-      <button class="ghost" id="btn-settings">Настройки</button>
-      <button class="ghost" id="btn-close">Закрыть</button>
-    </div>
-    <div class="note" id="hint"></div>
+    <h2 id="sheet-title">Игра</h2>
+    <div class="note" id="sheet-note"></div>
+    <div class="row" style="margin-top:12px" id="sheet-actions"></div>
   </div>
 </div>
 
@@ -136,6 +137,7 @@ function call(name, ...a) {
 function parse(s, fb) { try { return s ? JSON.parse(s) : fb; } catch(e) { return fb; } }
 
 let GAMES = [];
+let HOLD = null;
 
 function render() {
   const q = ($('q').value || '').trim().toLowerCase();
@@ -145,7 +147,7 @@ function render() {
     return;
   }
   if (!list.length) {
-    $('list').innerHTML = '<div class="empty">' + (GAMES.length ? 'ничего не найдено' : 'Нет игр. Нажмите «Папка», затем ↻') + '</div>';
+    $('list').innerHTML = '<div class="empty">' + (GAMES.length ? 'ничего не найдено' : 'Нет игр в кэше. Добавьте папку снизу.') + '</div>';
     return;
   }
   $('list').innerHTML = list.map(g => {
@@ -162,11 +164,11 @@ function render() {
   $('list').querySelectorAll('.game').forEach(el => {
     const g = GAMES[+el.dataset.i];
     el.addEventListener('click', () => play(g));
-    el.addEventListener('contextmenu', ev => { ev.preventDefault(); menu(g); });
+    el.addEventListener('contextmenu', ev => { ev.preventDefault(); holdMenu(g); });
     let t = 0;
     el.addEventListener('touchstart', () => { t = Date.now(); }, {passive:true});
     el.addEventListener('touchend', ev => {
-      if (t && Date.now() - t > 480) { ev.preventDefault(); menu(g); }
+      if (t && Date.now() - t > 480) { ev.preventDefault(); holdMenu(g); }
       t = 0;
     });
   });
@@ -187,10 +189,27 @@ function play(g) {
   if (!g || !g.path || !N() || !N().launch) return;
   N().launch(g.path, g.title || '');
 }
-function menu(g) {
-  if (!g || !g.path || !N() || !N().openGameMenu) return;
-  N().openGameMenu(g.path);
+
+function holdMenu(g) {
+  HOLD = g;
+  $('sheet-title').textContent = g.title || 'Игра';
+  $('sheet-note').textContent = g.hasSave ? 'сейв найден' : '';
+  $('sheet-actions').innerHTML = `
+    <button class="ghost" id="a-props">Свойства</button>
+    <button class="ghost" id="a-sh">Кешировать шейдеры</button>
+    <button class="ghost" id="a-close">Закрыть</button>`;
+  $('a-props').onclick = () => { closeSheet(); if (N() && N().openGameMenu) N().openGameMenu(g.path); };
+  $('a-sh').onclick = () => cacheShaders();
+  $('a-close').onclick = closeSheet;
+  $('sheet').classList.add('on');
 }
+
+function cacheShaders() {
+  const r = parse(call('prepareShaders'), { note: 'нет моста' });
+  $('sheet-note').textContent = (r.note || '') + (r.size ? ' Сейчас на диске: ' + r.size : '');
+}
+
+function closeSheet() { $('sheet').classList.remove('on'); }
 
 function loadGames() {
   GAMES = (parse(call('games'), { games: [] }).games) || [];
@@ -200,10 +219,6 @@ function loadGames() {
 function loadStatus() {
   const st = parse(call('status'), null);
   const folders = parse(call('folders'), { folders: [] }).folders || [];
-  const mods = parse(call('mods'), null);
-  const saves = parse(call('saves'), null);
-  const root = parse(call('dataRoot'), null);
-
   const ticks = (st && st.items)
     ? st.items.map(it => `${esc(it.label)} ${it.present ? '✓' : '✕'}`).join(' · ')
     : '';
@@ -212,35 +227,40 @@ function loadStatus() {
   $('status-line').innerHTML = ticks +
     (totalGames ? ` · <b>${totalGames}</b> игр` : '') +
     (totalSize ? ` · ${esc(totalSize)}` : '');
-
   $('chips').innerHTML = folders.length
     ? folders.map(f => `<span class="chip">${esc(f.name)} · ${f.games || 0}${f.size ? ' · ' + esc(f.size) : ''}</span>`).join('')
     : '<span class="chip">папка не выбрана</span>';
+  $('bar').innerHTML = folders.length
+    ? folders.map(f => `<b>${esc(f.name)}</b> · ${f.games || 0} игр${f.size ? ' · ' + esc(f.size) : ''}`).join('  ·  ')
+    : 'папка не выбрана — нажмите «＋ Папка»';
+}
 
-  $('root').textContent = 'корень: ' + ((root && root.path) || (st && st.dataRoot) || '—');
-  const mc = mods && mods.items ? mods.items.length : 0;
-  const sc = saves && saves.items ? saves.items.length : 0;
-  $('modsaves').textContent = 'моды с файлами: ' + mc + '  ·  сейвы игр: ' + sc;
-  const sug = parse(call('suggestRoots'), null);
-  $('hint').textContent = (sug && sug.roots && sug.roots.length)
-    ? 'Есть другая установка Eden с данными. Если сейв не виден в игре — смените папку данных на неё.'
-    : '';
+function onFolderAdded() {
+  loadGames();
+  loadStatus();
+}
+
+function openSettingsSheet() {
+  HOLD = null;
+  $('sheet-title').textContent = 'Настройки';
+  $('sheet-note').textContent = '';
+  $('sheet-actions').innerHTML = `
+    <button class="ghost" id="a-set">Настройки Eden</button>
+    <button class="ghost" id="a-data">Папка данных</button>
+    <button class="ghost" id="a-utils">Утилиты</button>
+    <button class="ghost" id="a-close">Закрыть</button>`;
+  $('a-set').onclick = () => { closeSheet(); if (N() && N().openSettings) N().openSettings(); };
+  $('a-data').onclick = () => { if (N() && N().pickDataRoot) N().pickDataRoot(); };
+  $('a-utils').onclick = () => { closeSheet(); if (N() && N().openUtilities) N().openUtilities(); };
+  $('a-close').onclick = closeSheet;
+  $('sheet').classList.add('on');
 }
 
 $('q').addEventListener('input', render);
 $('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); };
-$('btn-refresh').onclick = () => {
-  if (N() && N().rescan) N().rescan();
-  $('list').innerHTML = '<div class="empty">ищу…</div>';
-  setTimeout(() => { loadGames(); loadStatus(); }, 1400);
-};
-$('btn-tools').onclick = () => { if (N() && N().openUtilities) N().openUtilities(); else if (N() && N().openTools) N().openTools(); };
-$('btn-more').onclick = () => { loadStatus(); $('sheet').classList.add('on'); };
-$('btn-close').onclick = () => $('sheet').classList.remove('on');
-$('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') e.currentTarget.classList.remove('on'); });
-$('btn-data').onclick = () => { if (N() && N().pickDataRoot) N().pickDataRoot(); };
-$('btn-settings').onclick = () => { if (N() && N().openSettings) N().openSettings(); };
-$('btn-utils').onclick = () => { if (N() && N().openUtilities) N().openUtilities(); };
+$('btn-tools').onclick = () => { if (N() && N().openUtilities) N().openUtilities(); };
+$('btn-settings').onclick = openSettingsSheet;
+$('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 loadGames();

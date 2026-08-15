@@ -16,13 +16,15 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 3
+    const val BRIDGE_VERSION = 4
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
     const val OFFLINE_URL = "file:///android_asset/library.html"
 
-    fun panelUrl(): String = "$PANEL_URL?bridge=$BRIDGE_VERSION&v=${System.currentTimeMillis() / 60_000}"
+    // Без метки времени: иначе WebView перезагружает страницу каждую минуту
+    // и список мигает пустым.
+    fun panelUrl(): String = "$PANEL_URL?bridge=$BRIDGE_VERSION"
 
     fun statusJson(context: Context): String {
         val items = JSONArray()
@@ -48,7 +50,7 @@ object LivePanel {
     fun foldersJson(context: Context): String {
         val arr = JSONArray()
         val dirs = runCatching { NativeConfig.getGameDirs().toList() }.getOrDefault(emptyList())
-        val cached = runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList())
+        val cached = rememberedGames()
         dirs.forEach { dir ->
             val name = GameFolderScanner.displayNameOf(dir.uriString)
             val prefix = GameFolderScanner.pathOf(dir.uriString)
