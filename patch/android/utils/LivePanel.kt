@@ -78,9 +78,30 @@ object LivePanel {
         return JSONObject().put("folders", arr).toString()
     }
 
+    fun rememberedGames(): List<Game> {
+        val live = runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList())
+        if (live.isNotEmpty()) return live
+        val fromPrefs = runCatching {
+            val ctx = org.yuzu.yuzu_emu.YuzuApplication.appContext
+            val stored = androidx.preference.PreferenceManager
+                .getDefaultSharedPreferences(ctx)
+                .getStringSet(GameHelper.KEY_GAMES, emptySet())
+                ?: emptySet()
+            stored.mapNotNull { raw ->
+                runCatching {
+                    kotlinx.serialization.json.Json.decodeFromString<Game>(raw)
+                }.getOrNull()
+            }
+        }.getOrDefault(emptyList())
+        if (fromPrefs.isNotEmpty()) {
+            GameHelper.cachedGameList = fromPrefs.toMutableList()
+        }
+        return fromPrefs
+    }
+
     fun gamesJson(): String {
         val arr = JSONArray()
-        runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList()).forEach { g ->
+        rememberedGames().forEach { g ->
             val saveDir = runCatching { g.saveDir }.getOrNull().orEmpty()
             val hasSave = saveDir.isNotEmpty() && runCatching {
                 val f = File(saveDir)
@@ -98,6 +119,37 @@ object LivePanel {
             )
         }
         return JSONObject().put("games", arr).toString()
+    }
+
+    fun prepareShaders(): String {
+        var flipped = 0
+        runCatching {
+            val cls = Class.forName("org.yuzu.yuzu_emu.features.settings.model.BooleanSetting")
+            val setBool = cls.methods.firstOrNull { it.name == "setBoolean" && it.parameterTypes.size == 1 }
+            for (v in (cls.enumConstants ?: emptyArray())) {
+                val n = (v as Enum<*>).name
+                if (n.contains("DISK_SHADER") || n.contains("ASYNCHRONOUS_SHADER")) {
+                    setBool?.invoke(v, true)
+                    flipped++
+                }
+            }
+            NativeConfig.saveGlobalConfig()
+        }
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+        val cache = root?.let { File(it, "shader") }
+        val size = cache?.let { GameFolderScanner.directoryBytes(it.absolutePath) } ?: 0L
+        return JSONObject().apply {
+            put("ok", true)
+            put("enabled", flipped)
+            put("path", cache?.absolutePath ?: "")
+            put("size", if (size > 0) GameFolderScanner.humanSize(size) else "пусто")
+            put(
+                "note",
+                "Диск-кэш включён. Полный прогрев бывает только в игре — " +
+                    "зайдите в меню и пробегитесь по локациям один раз. " +
+                    "Следующие запуски берут готовые шейдеры и не зависают."
+            )
+        }.toString()
     }
 
     /** Обложка JPEG 96px, base64. Пустая строка — нет иконки, не ошибка. */
