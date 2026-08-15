@@ -140,11 +140,20 @@ object SetupStatus {
     /** Save data. Grows quietly and is the thing worth backing up. */
     fun saves(): Item {
         val dir = savesPath().takeIf { it != "—" }?.let { File(it) }
-        val bytes = dir?.let { LivePanel.realSaveBytes(it) } ?: 0L
+        val nandBytes = dir?.let { LivePanel.realSaveBytes(it) } ?: 0L
+        val picked = runCatching { SaveSource.listHits() }.getOrDefault(emptyList())
+        val pickedBytes = picked.sumOf { it.bytes }
+        val bytes = maxOf(nandBytes, pickedBytes)
+        val detail = when {
+            picked.isNotEmpty() && nandBytes < 2048L ->
+                "папка · ${picked.size} · ${GameFolderScanner.humanSize(pickedBytes)}"
+            bytes >= 2048L -> GameFolderScanner.humanSize(bytes)
+            else -> "слоты пустые"
+        }
         return Item(
             labelRes = R.string.status_saves,
             present = bytes >= 2048L,
-            detail = if (bytes >= 2048L) GameFolderScanner.humanSize(bytes) else "слоты пустые",
+            detail = detail,
             bytes = if (bytes >= 2048L) bytes else null
         )
     }

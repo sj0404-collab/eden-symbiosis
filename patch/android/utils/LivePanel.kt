@@ -16,7 +16,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 5
+    const val BRIDGE_VERSION = 6
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
@@ -103,6 +103,7 @@ object LivePanel {
         val arr = JSONArray()
         rememberedGames().forEach { g ->
             val probe = saveProbe(g)
+            val addons = runCatching { GameAddons.visibleFor(g) }.getOrDefault(emptyList())
             arr.put(
                 JSONObject().apply {
                     put("title", g.title)
@@ -114,6 +115,7 @@ object LivePanel {
                     put("saveBytes", probe.bytes)
                     put("saveSize", if (probe.bytes >= MIN_SAVE_BYTES)
                         GameFolderScanner.humanSize(probe.bytes) else "")
+                    put("addons", GameAddons.toJson(addons))
                 }
             )
         }
@@ -235,12 +237,21 @@ object LivePanel {
     }
 
     fun savesJson(): String {
+        val picked = runCatching { SaveSource.statusJson() }.getOrNull()
+            ?.let { JSONObject(it) }
+        if (picked != null && picked.optInt("titles") > 0) {
+            return JSONObject().apply {
+                put("path", picked.optString("path"))
+                put("items", picked.optJSONArray("items") ?: JSONArray())
+                put("fromPicked", true)
+            }.toString()
+        }
         val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
         val dir = root?.let { File(it, "nand/user/save") }
         val obj = JSONObject()
         obj.put("path", dir?.absolutePath ?: "")
         if (dir == null || !dir.isDirectory) {
-            obj.put("emptyReason", "папки nand/user/save нет. Корень данных сейчас не тот, куда Eden писал сейвы.")
+            obj.put("emptyReason", "папки nand/user/save нет. Выберите папку сейвов один раз — как ключи.")
             obj.put("items", JSONArray())
             return obj.toString()
         }
@@ -248,7 +259,7 @@ object LivePanel {
         dir.listFiles()?.filter { it.isDirectory }?.forEach { user ->
             if (user.name == "0000000000000000") return@forEach
             user.listFiles()?.filter { it.isDirectory }?.forEach { title ->
-                if (!dirHasFiles(title)) return@forEach
+                if (fileBytes(title) < MIN_SAVE_BYTES) return@forEach
                 items.put(
                     JSONObject().apply {
                         put("name", title.name)

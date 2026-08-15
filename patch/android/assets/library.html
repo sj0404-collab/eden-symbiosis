@@ -48,12 +48,13 @@
     flex:0 0 auto; border:1px solid var(--line); border-radius:999px;
     padding:3px 10px; font-size:12px; color:var(--text);
   }
+  .chip.tap { color:var(--cyan); }
   .list {
     flex:1; overflow:auto; padding:0 6px 110px;
     -webkit-overflow-scrolling:touch;
   }
   .game {
-    display:flex; align-items:center; gap:12px;
+    display:flex; align-items:stretch; gap:12px;
     margin:6px; padding:8px; border-radius:16px; border:1px solid var(--line);
     background:var(--card);
   }
@@ -63,17 +64,34 @@
     background:linear-gradient(145deg,#2a1630,#16222a);
     overflow:hidden; display:flex; align-items:center; justify-content:center;
     color:var(--pink); font-size:20px;
+    align-self:center;
   }
   .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
-  .meta { flex:1; min-width:0; }
+  .meta { flex:1; min-width:0; align-self:center; }
   .title { font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .sub { color:var(--dim); font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .addons {
+    flex:0 1 42%; max-width:46%; min-width:0;
+    border-left:1px solid var(--line); padding:2px 0 2px 8px;
+  }
+  .addon-name { color:var(--cyan); font-size:11px; font-weight:600; }
+  .addon-file {
+    display:block; width:100%; text-align:left;
+    background:transparent; border:0; color:var(--dim);
+    font:11px/1.3 inherit; padding:3px 0;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
   .empty { color:var(--dim); text-align:center; padding:40px 20px; }
-  .fab {
+  .fabs {
     position:absolute; right:16px; bottom:72px;
+    display:flex; gap:8px; z-index:4;
+  }
+  .fab {
     height:48px; padding:0 16px; border:0; border-radius:24px;
     background:var(--pink); color:#fff; font:600 14px/48px inherit;
-    z-index:4;
+  }
+  .fab.ghost {
+    background:#1c1c26; color:var(--text); border:1px solid var(--line);
   }
   .bar {
     position:absolute; left:12px; right:12px; bottom:14px;
@@ -89,7 +107,7 @@
   .sheet.on { display:flex; }
   .sheet .box {
     width:100%; background:#14141a; border-radius:18px 18px 0 0;
-    padding:16px 16px 24px;
+    padding:16px 16px 24px; max-height:80%; overflow:auto;
   }
   .sheet h2 { margin:0 0 10px; font-size:16px; }
   .row { display:flex; gap:8px; flex-wrap:wrap; }
@@ -98,6 +116,10 @@
     border-radius:10px; padding:10px 12px; font:600 13px inherit;
   }
   .note { color:var(--dim); font-size:12.5px; margin-top:8px; word-break:break-all; }
+  .note pre {
+    white-space:pre-wrap; word-break:break-word;
+    margin:8px 0 0; font:12px/1.4 ui-monospace,monospace; color:var(--text);
+  }
 </style>
 </head>
 <body>
@@ -115,7 +137,10 @@
   <div class="chips" id="chips"></div>
 </div>
 <div class="list" id="list"><div class="empty">загрузка…</div></div>
-<button class="fab" id="fab">＋ Папка</button>
+<div class="fabs">
+  <button class="fab ghost" id="fab-saves">Сейвы</button>
+  <button class="fab" id="fab">＋ Папка</button>
+</div>
 <div class="bar" id="bar">папка не выбрана</div>
 
 <div class="sheet" id="sheet">
@@ -138,6 +163,7 @@ function parse(s, fb) { try { return s ? JSON.parse(s) : fb; } catch(e) { return
 
 let GAMES = [];
 let HOLD = null;
+let SAVES = { path:'', titles:0, name:'', size:'' };
 
 function render() {
   const q = ($('q').value || '').trim().toLowerCase();
@@ -153,23 +179,40 @@ function render() {
   $('list').innerHTML = list.map(g => {
     const i = GAMES.indexOf(g);
     const save = g.hasSave ? (' · сейв ' + (g.saveSize || 'есть')) : '';
+    const addons = (g.addons || []).filter(a => a && a.enabled !== false);
+    const side = addons.length ? `<div class="addons">${addons.map(a => {
+      const files = (a.files || []).map(f =>
+        `<button class="addon-file" data-path="${esc(f.path)}" data-name="${esc(f.name)}">${esc(f.name)}</button>`
+      ).join('');
+      return `<div class="addon-name">${esc(a.kind === 'cheat' ? 'чит' : 'мод')} · ${esc(a.name)}</div>${files}`;
+    }).join('')}</div>` : '';
     return `<div class="game" data-i="${i}">
       <div class="thumb" id="ic-${i}">▶</div>
       <div class="meta">
         <div class="title">${esc(g.title || 'без имени')}</div>
         <div class="sub">${esc(g.developer || g.programId || '')}${save}</div>
       </div>
+      ${side}
     </div>`;
   }).join('');
   $('list').querySelectorAll('.game').forEach(el => {
     const g = GAMES[+el.dataset.i];
-    el.addEventListener('click', () => play(g));
+    el.addEventListener('click', ev => {
+      if (ev.target.closest('.addon-file')) return;
+      play(g);
+    });
     el.addEventListener('contextmenu', ev => { ev.preventDefault(); holdMenu(g); });
     let t = 0;
     el.addEventListener('touchstart', () => { t = Date.now(); }, {passive:true});
     el.addEventListener('touchend', ev => {
       if (t && Date.now() - t > 480) { ev.preventDefault(); holdMenu(g); }
       t = 0;
+    });
+  });
+  $('list').querySelectorAll('.addon-file').forEach(btn => {
+    btn.addEventListener('click', ev => {
+      ev.stopPropagation();
+      openAddonFile(btn.dataset.path, btn.dataset.name);
     });
   });
   list.forEach(g => {
@@ -193,7 +236,11 @@ function play(g) {
 function holdMenu(g) {
   HOLD = g;
   $('sheet-title').textContent = g.title || 'Игра';
-  $('sheet-note').textContent = g.hasSave ? 'сейв найден' : '';
+  const bits = [];
+  if (g.hasSave) bits.push('сейв ' + (g.saveSize || 'найден'));
+  const addons = (g.addons || []).filter(a => a && a.enabled !== false);
+  if (addons.length) bits.push(addons.map(a => (a.kind === 'cheat' ? 'чит' : 'мод') + ' «' + a.name + '»').join(', '));
+  $('sheet-note').textContent = bits.join(' · ');
   $('sheet-actions').innerHTML = `
     <button class="ghost" id="a-props">Свойства</button>
     <button class="ghost" id="a-sh">Кешировать шейдеры</button>
@@ -209,6 +256,21 @@ function cacheShaders() {
   $('sheet-note').textContent = (r.note || '') + (r.size ? ' Сейчас на диске: ' + r.size : '');
 }
 
+function openAddonFile(path, name) {
+  if (!path) return;
+  const r = parse(call('readText', path), null);
+  $('sheet-title').textContent = name || 'файл';
+  if (!r || !r.ok) {
+    $('sheet-note').textContent = (r && r.reason) || 'не открылся';
+    $('sheet-actions').innerHTML = `<button class="ghost" id="a-close">Закрыть</button>`;
+  } else {
+    $('sheet-note').innerHTML = '<pre>' + esc(r.text || '') + '</pre>';
+    $('sheet-actions').innerHTML = `<button class="ghost" id="a-close">Закрыть</button>`;
+  }
+  $('a-close').onclick = closeSheet;
+  $('sheet').classList.add('on');
+}
+
 function closeSheet() { $('sheet').classList.remove('on'); }
 
 function loadGames() {
@@ -219,6 +281,7 @@ function loadGames() {
 function loadStatus() {
   const st = parse(call('status'), null);
   const folders = parse(call('folders'), { folders: [] }).folders || [];
+  SAVES = parse(call('saveSource'), { path:'', titles:0 }) || SAVES;
   const ticks = (st && st.items)
     ? st.items.map(it => `${esc(it.label)} ${it.present ? '✓' : '✕'}`).join(' · ')
     : '';
@@ -227,12 +290,22 @@ function loadStatus() {
   $('status-line').innerHTML = ticks +
     (totalGames ? ` · <b>${totalGames}</b> игр` : '') +
     (totalSize ? ` · ${esc(totalSize)}` : '');
-  $('chips').innerHTML = folders.length
+  const folderChips = folders.length
     ? folders.map(f => `<span class="chip">${esc(f.name)} · ${f.games || 0}${f.size ? ' · ' + esc(f.size) : ''}</span>`).join('')
     : '<span class="chip">папка не выбрана</span>';
-  $('bar').innerHTML = folders.length
+  const saveChip = SAVES.path
+    ? `<span class="chip tap" id="chip-saves">сейвы · ${esc(SAVES.name || 'папка')} · ${SAVES.titles || 0}${SAVES.size ? ' · ' + esc(SAVES.size) : ''}</span>`
+    : `<span class="chip tap" id="chip-saves">сейвы · выбрать папку</span>`;
+  $('chips').innerHTML = folderChips + saveChip;
+  const chip = $('chip-saves');
+  if (chip) chip.onclick = pickSaves;
+  const folderBar = folders.length
     ? folders.map(f => `<b>${esc(f.name)}</b> · ${f.games || 0} игр${f.size ? ' · ' + esc(f.size) : ''}`).join('  ·  ')
-    : 'папка не выбрана — нажмите «＋ Папка»';
+    : 'папка игр не выбрана — «＋ Папка»';
+  const saveBar = SAVES.path
+    ? `сейвы: <b>${esc(SAVES.name || SAVES.path)}</b> · ${SAVES.titles || 0}`
+    : 'сейвы: не выбраны — «Сейвы» один раз';
+  $('bar').innerHTML = folderBar + '<br>' + saveBar;
 }
 
 function onFolderAdded() {
@@ -240,17 +313,39 @@ function onFolderAdded() {
   loadStatus();
 }
 
+function onSavesPicked(info) {
+  if (info && typeof info === 'object') SAVES = info;
+  loadGames();
+  loadStatus();
+}
+
+function pickSaves() {
+  if (N() && N().pickSavesFolder) N().pickSavesFolder();
+}
+
 function openSettingsSheet() {
   HOLD = null;
   $('sheet-title').textContent = 'Настройки';
-  $('sheet-note').textContent = '';
+  const saveLine = SAVES.path
+    ? ('сейвы: ' + (SAVES.name || SAVES.path) + ' · ' + (SAVES.titles || 0) + ' игр')
+    : 'папка сейвов не выбрана — укажите один раз, игры заберут свои сами';
+  $('sheet-note').textContent = saveLine;
   $('sheet-actions').innerHTML = `
     <button class="ghost" id="a-set">Настройки Eden</button>
     <button class="ghost" id="a-data">Папка данных</button>
+    <button class="ghost" id="a-saves">Папка сейвов</button>
+    <button class="ghost" id="a-saves-off">Сбросить сейвы</button>
     <button class="ghost" id="a-utils">Утилиты</button>
     <button class="ghost" id="a-close">Закрыть</button>`;
   $('a-set').onclick = () => { closeSheet(); if (N() && N().openSettings) N().openSettings(); };
   $('a-data').onclick = () => { if (N() && N().pickDataRoot) N().pickDataRoot(); };
+  $('a-saves').onclick = () => { pickSaves(); };
+  $('a-saves-off').onclick = () => {
+    if (N() && N().clearSavesFolder) N().clearSavesFolder();
+    SAVES = { path:'', titles:0 };
+    loadGames(); loadStatus();
+    $('sheet-note').textContent = 'папка сейвов сброшена';
+  };
   $('a-utils').onclick = () => { closeSheet(); if (N() && N().openUtilities) N().openUtilities(); };
   $('a-close').onclick = closeSheet;
   $('sheet').classList.add('on');
@@ -258,6 +353,7 @@ function openSettingsSheet() {
 
 $('q').addEventListener('input', render);
 $('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); };
+$('fab-saves').onclick = pickSaves;
 $('btn-tools').onclick = () => { if (N() && N().openUtilities) N().openUtilities(); };
 $('btn-settings').onclick = openSettingsSheet;
 $('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });

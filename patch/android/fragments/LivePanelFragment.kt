@@ -17,15 +17,16 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
+import org.json.JSONObject
 import org.yuzu.yuzu_emu.HomeNavigationDirections
 import org.yuzu.yuzu_emu.model.GamesViewModel
 import org.yuzu.yuzu_emu.ui.main.MainActivity
+import org.yuzu.yuzu_emu.utils.GameAddons
 import org.yuzu.yuzu_emu.utils.LivePanel
+import org.yuzu.yuzu_emu.utils.SaveSource
 import org.yuzu.yuzu_emu.utils.SharedDataDirectory
 
 /**
@@ -67,6 +68,44 @@ class LivePanelFragment : Fragment() {
             SharedDataDirectory.configuredPath = path
             SharedDataDirectory.redirectNow(path)
             main.postDelayed({ reloadPageData() }, 400)
+        }
+
+    private val pickSavesFolderLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            val ctx = context ?: return@registerForActivityResult
+            runCatching {
+                ctx.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            val path = SharedDataDirectory.resolveTreePath(uri)
+                ?.let { SaveSource.normalise(it) }
+            if (path.isNullOrBlank()) {
+                main.post {
+                    web?.evaluateJavascript(
+                        "try{if(typeof onSavesPicked==='function')onSavesPicked(" +
+                            JSONObject().put("ok", false)
+                                .put("reason", "не удалось прочитать путь к папке")
+                                .toString() +
+                            ")}catch(e){}",
+                        null
+                    )
+                }
+                return@registerForActivityResult
+            }
+            SaveSource.configuredPath = path
+            main.postDelayed({
+                web?.evaluateJavascript(
+                    "try{if(typeof onSavesPicked==='function')onSavesPicked(" +
+                        SaveSource.statusJson() +
+                        ")}catch(e){}",
+                    null
+                )
+                reloadPageData()
+            }, 200)
         }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -185,6 +224,42 @@ class LivePanelFragment : Fragment() {
         }
 
         @JavascriptInterface
+        fun pickSavesFolder() {
+            main.post {
+                runCatching {
+                    pickSavesFolderLauncher.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).data)
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun saveSource(): String = runCatching { SaveSource.statusJson() }
+            .getOrDefault("""{"path":"","titles":0}""")
+
+        @JavascriptInterface
+        fun clearSavesFolder() {
+            SaveSource.configuredPath = null
+        }
+
+        @JavascriptInterface
+        fun adoptSave(path: String, title: String): String = runCatching {
+            val cached = org.yuzu.yuzu_emu.utils.GameHelper.cachedGameList
+                .firstOrNull { it.path == path }
+                ?: LivePanel.gameFrom(path, title)
+            SaveSource.adoptFor(cached)
+        }.getOrDefault("""{"ok":false}""")
+
+        @JavascriptInterface
+        fun readText(path: String): String = runCatching {
+            GameAddons.readText(path)
+        }.getOrDefault("""{"ok":false,"reason":"ошибка чтения"}""")
+
+        @JavascriptInterface
+        fun prepareShaders(): String = runCatching {
+            LivePanel.prepareShaders()
+        }.getOrDefault("""{"ok":false,"note":"недоступно"}""")
+
+        @JavascriptInterface
         fun rescan() {
             main.post {
                 runCatching { gamesViewModel.reloadGames(false) }
@@ -251,6 +326,9 @@ class LivePanelFragment : Fragment() {
                 val cached = org.yuzu.yuzu_emu.utils.GameHelper.cachedGameList
                     .firstOrNull { it.path == path }
                 val game = cached ?: LivePanel.gameFrom(path, title)
+                // Сейв из выбранной папки кладём в NAND до запуска,
+                // иначе игра рисует NEW GAME.
+                runCatching { SaveSource.adoptFor(game) }
                 // Тот же путь, что у списка игр: отдельная Activity + extra.
                 // navigate() из WebView-фрагмента молча не открывал игру.
                 val launched = runCatching {
