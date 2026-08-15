@@ -49,6 +49,7 @@ import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.adapters.GameFolderAdapter
 import org.yuzu.yuzu_emu.adapters.MyGamesAdapter
 import org.yuzu.yuzu_emu.utils.GameFolderScanner
+import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.SetupStatus
 import org.yuzu.yuzu_emu.features.settings.ui.SettingsSubscreen
 import org.yuzu.yuzu_emu.utils.SharedDataDirectory
@@ -312,13 +313,31 @@ class GamesFragment : Fragment() {
                     .append(SetupStatus.dataRoot())
             }
 
-            val folders = withContext(Dispatchers.IO) {
-                runCatching { GameFolderScanner.scan(ctx) }.getOrDefault(emptyList())
+            // Карточки из конфига и кэша, без обхода дерева. Скан на
+            // старте — это вылет при перезапуске.
+            val dirs = withContext(Dispatchers.IO) {
+                runCatching { NativeConfig.getGameDirs().toList() }.getOrDefault(emptyList())
             }
             if (_binding == null) return@launch
+            val cached = org.yuzu.yuzu_emu.utils.GameHelper.cachedGameList
+            val folders = dirs.map { dir ->
+                val name = GameFolderScanner.displayNameOf(dir.uriString)
+                val prefix = GameFolderScanner.pathOf(dir.uriString)
+                val inThis = cached.count {
+                    val p = GameFolderScanner.pathOf(it.path)
+                    p == prefix || p.startsWith("$prefix/")
+                }
+                GameFolderScanner.Folder(
+                    uriString = dir.uriString,
+                    displayName = name,
+                    gameCount = inThis,
+                    totalBytes = 0L,
+                    depth = GameFolderScanner.depthFor(dir.deepScan)
+                )
+            }
             binding.folderCards?.isVisible = folders.isNotEmpty()
 
-            // Панель "Мои игры": сами файлы в папках, без обхода вглубь.
+            // Панель "Мои игры": без обхода вглубь.
             binding.myGamesTitle?.isVisible = folders.isNotEmpty()
             binding.myGamesList?.isVisible = folders.isNotEmpty()
             binding.myGamesList?.adapter = MyGamesAdapter(requireContext(), folders) { }

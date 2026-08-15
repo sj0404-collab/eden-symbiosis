@@ -27,6 +27,17 @@ object GameHelper {
 
     var cachedGameList = mutableListOf<Game>()
 
+    /**
+     * Прошёл ли хоть один обход за этот запуск.
+     *
+     * Пустой cachedGameList не отличить от «ещё не смотрели»: и то и
+     * другое даёт размер 0. Панель состояния принимала второе за первое
+     * и шла сканировать диск, чтобы «проверить».
+     */
+    @Volatile
+    var hasScanned = false
+        private set
+
     private lateinit var preferences: SharedPreferences
 
     fun getGames(): List<Game> {
@@ -53,6 +64,17 @@ object GameHelper {
             preferences.edit() { remove(KEY_OLD_GAME_PATH) }
         }
         gameDirs.addAll(NativeConfig.getGameDirs())
+
+        // Слои: родитель + его ребёнок в одном списке. Оставляем только
+        // более узкую папку, иначе обход идёт по одному дереву дважды и
+        // заходит в nand/load/cache корня данных.
+        val collapsed = GameFolderScanner.collapseLayers(gameDirs.map { it.uriString }).toSet()
+        if (collapsed.size != gameDirs.size) {
+            val kept = gameDirs.filter { it.uriString in collapsed }
+            gameDirs.clear()
+            gameDirs.addAll(kept)
+            runCatching { NativeConfig.setGameDirs(gameDirs.toTypedArray()) }
+        }
 
         // Ensure keys are loaded so that ROM metadata can be decrypted.
         NativeLibrary.reloadKeys()
@@ -110,6 +132,7 @@ object GameHelper {
         }
 
         cachedGameList = games.toMutableList()
+        hasScanned = true
         return games.toList()
     }
 

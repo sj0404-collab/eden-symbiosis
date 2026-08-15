@@ -175,6 +175,39 @@ Layout order is firmware, ROM, saves, shared folder, crash analysis; the labels 
 
 ---
 
+## v19 — crash on restart while searching for games
+
+**Reported:** вылет при перезапуске APK, когда он ищет игры. Папки по
+умолчанию ложились слоями и мешали запуску.
+
+The previous fix stopped `GamesViewModel.init` from calling `getGames()`,
+but two other walks still ran on every `onResume` and every cold start:
+
+- `refreshStatusStrip()` → `SetupStatus.games()` → `scanOneFolder` plus
+  `whyNotGames()` → `diagnoseRom` (a full header parse per file)
+- `refreshFolderCards()` → `GameFolderScanner.scan()` (ContentResolver
+  walk of every configured folder)
+
+And a leftover default `game_path` (or a parent stacked on its child)
+sent those walks through `nand` / `load` / `cache` / `sdmc` — the tree
+`ensureLayout()` itself creates. That is the hang that looked like
+"infinite search" and the crash that killed the process before the UI
+was up.
+
+**Fix**
+
+- Startup shows the cached list only. A walk happens on pull-to-refresh
+  or when the user adds a folder.
+- The status strip and folder cards read the cache. They do not touch
+  the document provider.
+- No default game folder. `game_path` is deleted, never re-added.
+- Parent+child in the same list collapses to the child.
+- Layout directory names are never descended into.
+
+**Proof** — `tests/LazyScanTest.kt`.
+
+---
+
 ## Open / unproven
 
 - **Crash a few seconds into Blade Chimera (NSP).** Not reproduced; no device logs. The

@@ -50,12 +50,21 @@ object GameHelper {
         preferences = PreferenceManager.getDefaultSharedPreferences(context)
 
         val gameDirs = mutableListOf<GameDir>()
-        val oldGamesDir = preferences.getString(KEY_OLD_GAME_PATH, "") ?: ""
-        if (oldGamesDir.isNotEmpty()) {
-            gameDirs.add(GameDir(oldGamesDir, true))
+        // Папка «по умолчанию» больше не появляется. Старый ключ game_path
+        // молча добавлялся с deepScan = true и укладывал корень данных
+        // слоем поверх выбранной папки: обход шёл по nand/load/cache и
+        // валил запуск.
+        if (!preferences.getString(KEY_OLD_GAME_PATH, "").isNullOrEmpty()) {
             preferences.edit() { remove(KEY_OLD_GAME_PATH) }
         }
         gameDirs.addAll(NativeConfig.getGameDirs())
+        val collapsed = GameFolderScanner.collapseLayers(gameDirs.map { it.uriString }).toSet()
+        if (collapsed.size != gameDirs.size) {
+            val kept = gameDirs.filter { it.uriString in collapsed }
+            gameDirs.clear()
+            gameDirs.addAll(kept)
+            runCatching { NativeConfig.setGameDirs(gameDirs.toTypedArray()) }
+        }
 
         // Ensure keys are loaded so that ROM metadata can be decrypted.
         NativeLibrary.reloadKeys()
@@ -169,6 +178,7 @@ object GameHelper {
 
         files.forEach {
             if (it.isDirectory) {
+                if (GameFolderScanner.isLayoutName(it.filename)) return@forEach
                 val childFolder = if (folder.isEmpty()) {
                     it.filename
                 } else {

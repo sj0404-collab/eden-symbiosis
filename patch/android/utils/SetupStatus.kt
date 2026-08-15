@@ -62,7 +62,7 @@ object SetupStatus {
                 !loaded -> "prod.keys есть, но не читается"
                 else -> dir ?: ""
             },
-            bytes = if (onDisk) GameFolderScanner.directoryBytes(dir) else null
+            bytes = if (onDisk) prod.length() else null
         )
     }
 
@@ -74,7 +74,7 @@ object SetupStatus {
             labelRes = R.string.status_firmware,
             present = available && count > 0,
             detail = if (count > 0) "$count файлов · ${dir ?: ""}" else "не установлена",
-            bytes = if (count > 0) GameFolderScanner.directoryBytes(dir) else null
+            bytes = null
         )
     }
 
@@ -103,140 +103,52 @@ object SetupStatus {
         if (dirs.isEmpty()) {
             return Item(R.string.status_games, false, "папка не выбрана")
         }
-        // Count what is really on disk now rather than trusting the library
-        // cache, which is what made a deleted game keep appearing. One scan
-        // yields both the count and the bytes, so the strip and the folder
-        // screen cannot report different numbers.
-        // Один обход на папку, не два.
+        // Только кэш. Никакого обхода папки.
         //
-        // Раньше здесь звались и listGames, и scanOneFolder - два полных
-        // обхода одного дерева ради чисел, которые первый же обход и
-        // считает. На папке с играми это удвоенное время и удвоенное
-        // число курсоров, а строка состояния обновляется на каждом
-        // onResume. scanOneFolder возвращает и количество, и байты, и
-        // число пропущенных файлов сразу.
-        var games = 0
-        var bytes = 0L
-        var skipped = 0
-        for (dir in dirs) {
-            val folder = runCatching {
-                // Same depth the library importer uses for this folder, so the
-                // strip cannot claim a game the game list will not show.
-                GameFolderScanner.scanOneFolder(context, dir.uriString, dir.deepScan)
-            }.getOrNull() ?: continue
-            games += folder.gameCount
-            bytes += folder.totalBytes
-            skipped += folder.skipped
-        }
+        // Раньше отсюда звались scanOneFolder и whyNotGames → diagnoseRom:
+        // полный разбор заголовка каждого ROM. Строка состояния
+        // обновлялась на каждом onResume, то есть при каждом возврате
+        // из игры и при каждом перезапуске. Это и есть вылет «когда
+        // ищет игры».
+        //
+        // Список, который уже показали один раз, живёт в
+        // SharedPreferences и подхватывается при старте. Потянуть вниз
+        // — единственный способ пройтись по диску снова.
+        val cached = runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList())
         val name = GameFolderScanner.displayNameOf(dirs.first().uriString)
-
-        // A count of files is not a count of games. The library also refuses a
-        // ROM whose header will not parse - no keys, wrong firmware, truncated
-        // download - and the emulator's own list is the authority on that.
-        // Comparing against it turns "I see a file but no game" from a mystery
-        // into a sentence.
-        val imported = runCatching { GameHelper.cachedGameList.size }.getOrDefault(-1)
-
-        // Storage access is checked before anything else is blamed. The
-        // document provider happily lists and counts a folder without it,
-        // while the emulator - which opens the file directly - sees nothing.
-        // That combination produced a game with a name and no image behind it,
-        // and pointed the user at keys and firmware, which were fine.
         val noAccess = SharedDataDirectory.needsAllFilesAccess() &&
             !SharedDataDirectory.hasAllFilesAccess()
 
         val detail = when {
             noAccess ->
                 "нет доступа к файлам — нажми сюда, чтобы выдать «Все файлы»"
-            games == 0 && skipped > 0 ->
-                "файлы есть ($skipped), но это не игры — нужны .xci .nsp .nca .nro"
-            games == 0 ->
-                "в «$name» нет файлов игр"
-            // Назвать файлы поимённо и сказать про каждый, почему он не
-            // подошёл. "Проверь ключи и прошивку" при зелёных галочках на
-            // ключах и прошивке - это тупик: человек идёт перепроверять
-            // заведомо исправное. Имя файла и его размер говорят больше.
-            imported in 0 until games ->
-                "$games файлов, распознано $imported. " + whyNotGames(context)
-            dirs.size == 1 -> "$games в «$name»"
-            else -> "$games в ${dirs.size} папках"
+            cached.isNotEmpty() && dirs.size == 1 ->
+                "${cached.size} в «$name»"
+            cached.isNotEmpty() ->
+                "${cached.size} в ${dirs.size} папках"
+            else ->
+                "потяни вниз, чтобы найти игры"
         }
         return Item(
             labelRes = R.string.status_games,
-            // Green only when the emulator agrees it has something to launch,
-            // and only when it is actually allowed to read the files.
-            present = games > 0 && imported != 0 && !noAccess,
+            present = cached.isNotEmpty() && !noAccess,
             detail = detail,
-            bytes = bytes
+            bytes = null
         )
     }
 
     /** Save data. Grows quietly and is the thing worth backing up. */
-    /**
-     * Почему найденные файлы не стали играми.
-     *
-     * Смотрит на сами файлы, а не на настройки: расширение и размер. Это
-     * ровно те две вещи, по которым видно самые частые случаи - сжатый
-     * образ, который Eden не открывает, и обновление или DLC, положенное
-     * вместо игры.
-     */
-    private fun whyNotGames(context: Context): String {
-        val dirs = runCatching { NativeConfig.getGameDirs() }.getOrNull() ?: return ""
-        val out = mutableListOf<String>()
-        var rest = 0
-
-        for (dir in dirs) {
-            val files = runCatching { GameFolderScanner.listFilesFlat(context, dir.uriString) }
-                .getOrDefault(emptyList())
-
-            // Не больше нескольких файлов за раз.
-            //
-            // diagnoseRom() открывает файл, расшифровывает заголовок и
-            // строит загрузчик - это полноценная попытка загрузки, от
-            // десятков миллисекунд до секунды на файл, и каждая держит свой
-            // кусок памяти. На папке с сотней образов строка состояния
-            // уходила в это на минуты, а зовут её из onResume. Восьми имён
-            // хватает, чтобы понять картину; остальные считаются скопом.
-            if (files.size > MAX_DIAGNOSED) {
-                rest += files.size - MAX_DIAGNOSED
-            }
-
-            for (e in files.take(MAX_DIAGNOSED)) {
-                // Спросить у самого эмулятора, а не гадать.
-                //
-                // diagnoseRom() проходит ровно тот же путь, что и запуск
-                // игры, и возвращает НАСТОЯЩУЮ причину отказа: нет title
-                // key, повреждён файл, внутри только обновление, не тот
-                // prod.keys. Догадки по размеру уже привели к ошибке -
-                // 283 МБ настоящей игры были объявлены "мало для игры,
-                // похоже на DLC".
-                val uri = GameFolderScanner.childUri(dir.uriString, e)
-                val fromCore = uri?.let {
-                    runCatching { NativeSymbiosis.romProblem(it.toString()) }.getOrNull()
-                }
-                if (fromCore != null) {
-                    out.add("«${e.name}» — $fromCore")
-                }
-            }
-        }
-
-        if (out.isEmpty()) return "все файлы читаются — открой список игр"
-        val tail = if (rest > 0) " (и ещё $rest файлов)" else ""
-        return out.joinToString("; ") + tail
-    }
-
-    /** Сколько файлов разбирать поимённо, прежде чем считать остальные скопом. */
-    private const val MAX_DIAGNOSED = 8
-
     fun saves(): Item {
         val dir = savesPath().takeIf { it != "—" }
-        val bytes = GameFolderScanner.directoryBytes(dir)
+        // Один listFiles, без рекурсии по профилям. Обход сейвов на
+        // каждом onResume — лишняя работа, от которой строка состояния
+        // не становится честнее.
         val profiles = dir?.let { File(it).listFiles()?.size } ?: 0
         return Item(
             labelRes = R.string.status_saves,
-            present = bytes > 0,
-            detail = if (bytes > 0) (dir ?: "") else "пусто",
-            bytes = bytes
+            present = profiles > 0,
+            detail = if (profiles > 0) (dir ?: "") else "пусто",
+            bytes = null
         )
     }
 
@@ -249,12 +161,12 @@ object SetupStatus {
      */
     fun shaderCache(): Item {
         val dir = root()?.let { "$it/shader" }
-        val bytes = GameFolderScanner.directoryBytes(dir)
+        val present = dir?.let { File(it).isDirectory && (File(it).list()?.isNotEmpty() == true) } == true
         return Item(
             labelRes = R.string.status_shaders,
             present = true,
-            detail = if (bytes > 0) "можно удалить · ${dir ?: ""}" else "пуст",
-            bytes = bytes
+            detail = if (present) "можно удалить · ${dir ?: ""}" else "пуст",
+            bytes = null
         )
     }
 

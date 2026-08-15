@@ -159,6 +159,63 @@ object GameFolderScanner {
      */
     fun depthFor(deepScan: Boolean): Int = if (deepScan) 3 else 1
 
+    /**
+     * Subdirectories [SharedDataDirectory.ensureLayout] creates under the
+     * data root. They are not a game library. Walking them on a 8 GB Mali
+     * phone is what turned "search for games" into a crash: nand alone is
+     * hundreds of NCAs, cache/shader grows without bound, and a parent
+     * folder stacked on its child sent the walker through the same tree
+     * twice.
+     */
+    private val LAYOUT_NAMES = setOf(
+        "nand", "load", "cache", "sdmc", "keys", "config",
+        "dump", "screenshots", "amiibo", "tas", "icons", "log",
+        "play_time", "crash_dumps", "shader", "system", "contents",
+        "registered", "user", "save"
+    )
+
+    fun isLayoutName(name: String): Boolean =
+        name.lowercase(Locale.ROOT) in LAYOUT_NAMES
+
+    /**
+     * The comparable path of a SAF URI or a file path.
+     * `content://…/tree/primary:Download/ed` and the same URI percent-encoded
+     * both become `download/ed`, so a parent/child check does not depend on
+     * how Android handed the string over.
+     */
+    fun pathOf(uri: String): String {
+        val decoded = runCatching { Uri.decode(uri) }.getOrDefault(uri)
+        val afterScheme = decoded.substringAfter("://", decoded)
+        val tail = if (':' in afterScheme) decoded.substringAfterLast(':') else decoded
+        return tail.trim('/').lowercase(Locale.ROOT)
+    }
+
+    /**
+     * Drop a folder that is a parent of another selected folder, and drop
+     * exact duplicates keeping the first. Nothing is invented: an empty
+     * list stays empty, a single chosen folder stays that folder.
+     *
+     * This is the "folders in layers" report. A default `game_path` plus
+     * the folder the user actually picked meant walking the parent (often
+     * the data root) and the child, so nand/load/cache got scanned on top
+     * of the real library and the launch died in the walker.
+     */
+    fun collapseLayers(uris: List<String>): List<String> {
+        val paths = uris.map { pathOf(it) }
+        val keep = BooleanArray(uris.size) { true }
+        for (i in uris.indices) {
+            for (j in uris.indices) {
+                if (i == j || !keep[i]) continue
+                val a = paths[i]
+                val b = paths[j]
+                if (a.isEmpty()) continue
+                if (b.startsWith("$a/")) keep[i] = false
+                if (a == b && j < i) keep[i] = false
+            }
+        }
+        return uris.filterIndexed { i, _ -> keep[i] }
+    }
+
     /** Scan one folder, for callers that have a uri rather than the config. */
     fun scanOneFolder(
         context: Context,
@@ -352,7 +409,11 @@ object GameFolderScanner {
                     val size = if (it.isNull(3)) 0L else it.getLong(3)
 
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        if (depth > 1 && documentId != null && seen.add(documentId)) {
+                        if (depth > 1 &&
+                            documentId != null &&
+                            seen.add(documentId) &&
+                            !isLayoutName(name)
+                        ) {
                             runCatching {
                                 queue.add(
                                     Triple(

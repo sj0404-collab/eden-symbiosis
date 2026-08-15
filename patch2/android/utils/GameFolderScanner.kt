@@ -155,6 +155,39 @@ object GameFolderScanner {
      */
     fun depthFor(deepScan: Boolean): Int = if (deepScan) 3 else 1
 
+    private val LAYOUT_NAMES = setOf(
+        "nand", "load", "cache", "sdmc", "keys", "config",
+        "dump", "screenshots", "amiibo", "tas", "icons", "log",
+        "play_time", "crash_dumps", "shader", "system", "contents",
+        "registered", "user", "save"
+    )
+
+    fun isLayoutName(name: String): Boolean =
+        name.lowercase(Locale.ROOT) in LAYOUT_NAMES
+
+    fun pathOf(uri: String): String {
+        val decoded = runCatching { Uri.decode(uri) }.getOrDefault(uri)
+        val afterScheme = decoded.substringAfter("://", decoded)
+        val tail = if (':' in afterScheme) decoded.substringAfterLast(':') else decoded
+        return tail.trim('/').lowercase(Locale.ROOT)
+    }
+
+    fun collapseLayers(uris: List<String>): List<String> {
+        val paths = uris.map { pathOf(it) }
+        val keep = BooleanArray(uris.size) { true }
+        for (i in uris.indices) {
+            for (j in uris.indices) {
+                if (i == j || !keep[i]) continue
+                val a = paths[i]
+                val b = paths[j]
+                if (a.isEmpty()) continue
+                if (b.startsWith("$a/")) keep[i] = false
+                if (a == b && j < i) keep[i] = false
+            }
+        }
+        return uris.filterIndexed { i, _ -> keep[i] }
+    }
+
     /** Scan one folder, for callers that have a uri rather than the config. */
     fun scanOneFolder(context: Context, uriString: String, deepScan: Boolean): Folder =
         scanOne(context, uriString, depthFor(deepScan))
@@ -201,7 +234,7 @@ object GameFolderScanner {
                     val size = if (it.isNull(3)) 0L else it.getLong(3)
 
                     if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        if (depth > 1) {
+                        if (depth > 1 && !isLayoutName(displayName)) {
                             runCatching {
                                 queue.add(
                                     DocumentsContract.buildChildDocumentsUriUsingTree(

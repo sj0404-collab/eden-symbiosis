@@ -62,7 +62,7 @@ object SetupStatus {
                 !loaded -> "prod.keys есть, но не читается"
                 else -> dir ?: ""
             },
-            bytes = if (onDisk) GameFolderScanner.directoryBytes(dir) else null
+            bytes = if (onDisk) prod.length() else null
         )
     }
 
@@ -101,7 +101,7 @@ object SetupStatus {
             // лежат распакованные .nca.
             present = available && nca > 0,
             detail = detail,
-            bytes = if (count > 0) GameFolderScanner.directoryBytes(dir) else null
+            bytes = null
         )
     }
 
@@ -130,98 +130,38 @@ object SetupStatus {
         if (dirs.isEmpty()) {
             return Item(R.string.status_games, false, "папка не выбрана")
         }
-        // Count what is really on disk now rather than trusting the library
-        // cache, which is what made a deleted game keep appearing. One scan
-        // yields both the count and the bytes, so the strip and the folder
-        // screen cannot report different numbers.
-        var games = 0
-        var bytes = 0L
-        var skipped = 0
-        for (dir in dirs) {
-            val entries = runCatching {
-                // Same depth the library importer uses for this folder, so the
-                // strip cannot claim a game the game list will not show.
-                GameFolderScanner.listGames(
-                    context, dir.uriString, GameFolderScanner.depthFor(dir.deepScan)
-                )
-            }.getOrDefault(emptyList())
-            games += entries.size
-            bytes += entries.sumOf { it.bytes }
-            skipped += runCatching {
-                GameFolderScanner.scanOneFolder(context, dir.uriString, dir.deepScan).skipped
-            }.getOrDefault(0)
-        }
+        // Только кэш. Никакого обхода папки на старте.
+        val cached = runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList())
         val name = GameFolderScanner.displayNameOf(dirs.first().uriString)
-
-        // A count of files is not a count of games. The library also refuses a
-        // ROM whose header will not parse - no keys, wrong firmware, truncated
-        // download - and the emulator's own list is the authority on that.
-        // Comparing against it turns "I see a file but no game" from a mystery
-        // into a sentence.
-        // -1 означает "эмулятор ещё не сканировал", а НЕ "распознал ноль".
-        //
-        // cachedGameList заполняется только в самом конце GameHelper.getGames().
-        // Панель же читается при открытии экрана, и до первого прохода список
-        // пуст - размер 0. Старый код принимал этот ноль за приговор и писал
-        // "распознано 0 - проверь ключи и прошивку" при отмеченных галочкой
-        // ключах и прошивке, то есть обвинял заведомо исправное.
-        //
-        // Отличить одно от другого можно только по факту прохода скана, а не
-        // по размеру списка: пустой список после скана и пустой список до
-        // скана выглядят одинаково.
-        val scanned = runCatching { GameHelper.hasScanned }.getOrDefault(false)
-        val imported = if (scanned) {
-            runCatching { GameHelper.cachedGameList.size }.getOrDefault(-1)
-        } else {
-            -1
-        }
-
-        // Storage access is checked before anything else is blamed. The
-        // document provider happily lists and counts a folder without it,
-        // while the emulator - which opens the file directly - sees nothing.
-        // That combination produced a game with a name and no image behind it,
-        // and pointed the user at keys and firmware, which were fine.
         val noAccess = SharedDataDirectory.needsAllFilesAccess() &&
             !SharedDataDirectory.hasAllFilesAccess()
-
         val detail = when {
             noAccess ->
                 "нет доступа к файлам — нажми сюда, чтобы выдать «Все файлы»"
-            games == 0 && skipped > 0 ->
-                "файлы есть ($skipped), но это не игры — нужны .xci .nsp .nca .nro"
-            games == 0 ->
-                "в «$name» нет файлов игр"
-            // Только когда скан действительно прошёл и часть файлов отпала.
-            imported in 0 until games ->
-                "$games файлов, распознано $imported — остальные не читаются: " +
-                "проверь ключи и прошивку"
-            // Скана ещё не было: сказать нечего, кроме того, что нашлось.
-            imported < 0 && dirs.size == 1 -> "$games в «$name» · открой список"
-            dirs.size == 1 -> "$games в «$name»"
-            else -> "$games в ${dirs.size} папках"
+            cached.isNotEmpty() && dirs.size == 1 ->
+                "${cached.size} в «$name»"
+            cached.isNotEmpty() ->
+                "${cached.size} в ${dirs.size} папках"
+            else ->
+                "потяни вниз, чтобы найти игры"
         }
         return Item(
             labelRes = R.string.status_games,
-            // Green only when the emulator agrees it has something to launch,
-            // and only when it is actually allowed to read the files.
-            // Галочка, когда файлы есть и доступ есть. imported == 0 валит
-            // её только если скан РЕАЛЬНО прошёл и ничего не принял.
-            present = games > 0 && !(scanned && imported == 0) && !noAccess,
+            present = cached.isNotEmpty() && !noAccess,
             detail = detail,
-            bytes = bytes
+            bytes = null
         )
     }
 
     /** Save data. Grows quietly and is the thing worth backing up. */
     fun saves(): Item {
         val dir = savesPath().takeIf { it != "—" }
-        val bytes = GameFolderScanner.directoryBytes(dir)
         val profiles = dir?.let { File(it).listFiles()?.size } ?: 0
         return Item(
             labelRes = R.string.status_saves,
-            present = bytes > 0,
-            detail = if (bytes > 0) (dir ?: "") else "пусто",
-            bytes = bytes
+            present = profiles > 0,
+            detail = if (profiles > 0) (dir ?: "") else "пусто",
+            bytes = null
         )
     }
 

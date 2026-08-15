@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.yuzu.yuzu_emu.fragments.MessageDialogFragment
 import org.yuzu.yuzu_emu.utils.GameFolderScanner
+import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.SetupStatus
 import org.yuzu.yuzu_emu.utils.SharedDataDirectory
@@ -193,6 +194,9 @@ class GamesFragment : Fragment() {
 
         binding.swipeRefresh.apply {
             (binding.swipeRefresh as? SwipeRefreshLayout)?.setOnRefreshListener {
+                // Единственный автоматический обход, который остался:
+                // человек сам потянул список. После него карточки
+                // перечитываются из уже готового кэша, без второго прохода.
                 gamesViewModel.reloadGames(false)
             }
             (binding.swipeRefresh as? SwipeRefreshLayout)?.setProgressBackgroundColorSchemeColor(
@@ -378,27 +382,15 @@ class GamesFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        if (_binding != null) {
-            refreshStatusStrip()
-            refreshFolderCards()
-        }
-        // Автоматический обход при возврате на экран УБРАН.
+        // Никакого обхода при возврате на экран.
         //
-        // Здесь было два условия: «выдали доступ к файлам» и «изменилось
-        // число папок». Оба звали reloadGames(), то есть полный обход с
-        // разбором каждого ROM. Возврат из системных настроек, из игры,
-        // из любого другого экрана - и снова обход.
+        // Раньше отсюда звались refreshStatusStrip() и refreshFolderCards(),
+        // а те шли в GameFolderScanner.scan / diagnoseRom. Возврат из
+        // игры, из настроек, перезапуск APK — и снова полное дерево.
+        // На 8 ГБ это вылет «когда ищет игры».
         //
-        // Обход теперь только по явной команде пользователя: потянуть
-        // список вниз или добавить папку. Список берётся из кэша и живёт
-        // между запусками.
-        //
-        // Число папок всё же отслеживается - но лишь чтобы обновить
-        // карточки папок и строку состояния, без чтения самих файлов.
-        val folderCount = runCatching { NativeConfig.getGameDirs().size }.getOrDefault(-1)
-        if (folderCount >= 0 && folderCount != lastFolderCount) {
-            lastFolderCount = folderCount
-        }
+        // Строка состояния и карточки уже построены из кэша в
+        // onViewCreated. Обновить их можно потянув список вниз.
         if (getCurrentViewType() == GameAdapter.VIEW_TYPE_CAROUSEL) {
             (binding.gridGames as? CarouselRecyclerView)?.setupCarousel(true)
             (binding.gridGames as? CarouselRecyclerView)?.restoreScrollState(gamesViewModel.lastScrollPosition)
@@ -685,8 +677,7 @@ class GamesFragment : Fragment() {
     private var folderScanJob: kotlinx.coroutines.Job? = null
     private var statusJob: kotlinx.coroutines.Job? = null
 
-    /** Сколько папок было настроено при прошлом показе экрана. -1 = ещё не знаем. */
-    private var lastFolderCount: Int = -1
+
 
 
 
@@ -731,30 +722,41 @@ class GamesFragment : Fragment() {
      */
     private fun refreshFolderCards() {
         val list = binding.folderCards ?: return
-        // Один обход за раз.
+        // Карточки из конфига и кэша. Диск не читается.
         //
-        // Обход запускается из onViewCreated, из onResume и по нажатию на
-        // строку состояния. Возврат из системных настроек даёт onResume
-        // сразу после onViewCreated - два полных обхода дерева навстречу
-        // друг другу, каждый со своим набором курсоров. Отменить прежний
-        // дешевле, чем ждать оба: свежий ответ всё равно перезапишет
-        // старый.
+        // Раньше здесь был GameFolderScanner.scan — полный обход каждой
+        // папки через ContentResolver. На старте и на каждом onResume.
+        // Теперь имя папки берётся из URI, число игр — из списка, который
+        // уже лежит в памяти. Потянуть вниз обновит и тот список, и эти
+        // цифры.
         folderScanJob?.cancel()
         folderScanJob = viewLifecycleOwner.lifecycleScope.launch {
-            // Контекст приложения: обход переживает фрагмент, а ссылка на
-            // фрагментный контекст удержала бы всю активность в памяти.
             val ctx = requireContext().applicationContext
-            val folders = withContext(Dispatchers.IO) {
-                // isActive читается изнутри обхода: отменённая корутина
-                // сама цикл не остановит, ей нужно об этом сказать.
-                runCatching { GameFolderScanner.scan(ctx) { isActive } }
-                    .getOrDefault(emptyList())
+            val dirs = withContext(Dispatchers.IO) {
+                runCatching { NativeConfig.getGameDirs().toList() }.getOrDefault(emptyList())
             }
             if (_binding == null) return@launch
-
-            list.isVisible = folders.isNotEmpty()
-            if (folders.isEmpty()) return@launch
-
+            if (dirs.isEmpty()) {
+                list.isVisible = false
+                return@launch
+            }
+            val cached = GameHelper.cachedGameList
+            val folders = dirs.map { dir ->
+                val name = GameFolderScanner.displayNameOf(dir.uriString)
+                val prefix = GameFolderScanner.pathOf(dir.uriString)
+                val inThis = cached.count {
+                    val p = GameFolderScanner.pathOf(it.path)
+                    p == prefix || p.startsWith("$prefix/")
+                }
+                GameFolderScanner.Folder(
+                    uriString = dir.uriString,
+                    displayName = name,
+                    gameCount = inThis,
+                    totalBytes = 0L,
+                    depth = GameFolderScanner.depthFor(dir.deepScan)
+                )
+            }
+            list.isVisible = true
             if (list.layoutManager == null) {
                 list.layoutManager = LinearLayoutManager(ctx, LinearLayoutManager.HORIZONTAL, false)
             }
@@ -762,8 +764,6 @@ class GamesFragment : Fragment() {
                 requireActivity() as androidx.appcompat.app.AppCompatActivity,
                 folders
             ) {
-                // Tapping a card opens the full screen, where the file list
-                // lives - the same destination as the button.
                 findNavController().navigate(R.id.action_global_symbiosisGameFoldersFragment)
             }
         }
