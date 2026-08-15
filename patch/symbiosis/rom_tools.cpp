@@ -684,7 +684,6 @@ bool WritePfs0(const std::vector<PackFile>& files, const std::string& dest, std:
     for (const auto& f : files) {
         string_bytes += static_cast<u32>(f.name.size() + 1);
     }
-    const u64 header = 16ull + static_cast<u64>(files.size()) * 24ull + string_bytes;
     std::ofstream out{dest, std::ios::binary | std::ios::trunc};
     if (!out) {
         error = "Could not create the output NSP.";
