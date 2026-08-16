@@ -173,6 +173,38 @@ open(path, 'w', encoding='utf-8').write(text)
 print('  declared KenjiProbeService in :kenji')
 PYEOF
 
+# Android 11+ hides other packages unless we declare them. Without this
+# Spaces.official() always looks empty even when Kenji is installed.
+python3 - "$MANIFEST" <<'PYQ'
+import sys
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+if 'org.kenjinx.android' in text and '<queries>' in text:
+    print('  queries already list Kenji')
+    raise SystemExit(0)
+block = '''
+    <queries>
+        <package android:name="org.kenjinx.android" />
+        <package android:name="org.ryujinx.android" />
+        <package android:name="org.ryujinx.kenjinx" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="*/*" />
+        </intent>
+    </queries>
+'''
+if '</manifest>' not in text:
+    print('  ::warning:: no </manifest>; queries not added')
+    raise SystemExit(0)
+text = text.replace('</manifest>', block + '</manifest>', 1)
+open(path, 'w', encoding='utf-8').write(text)
+print('  declared package queries for official Kenji')
+PYQ
+
 python3 - "$MANIFEST" <<'PYKENJI'
 import sys
 path = sys.argv[1]

@@ -1,0 +1,16 @@
+{
+  "id": "kenji-space",
+  "name": "Оболочка Kenji-NX",
+  "version": "1",
+  "enabled": true,
+  "theme": {
+    "--bg": "#121214",
+    "--card": "#1c1c20",
+    "--line": "#2a2a32",
+    "--text": "#ececf4",
+    "--dim": "#8b8b9c",
+    "--pink": "#c45cff",
+    "--cyan": "#9aa0ff",
+    "--on": "#24242c"
+  }
+}

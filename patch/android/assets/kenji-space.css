@@ -1,0 +1,13 @@
+/* Kenji space shell — same library, their colours. */
+body.space-kenji {
+  --bg: #121214;
+  --card: #1c1c20;
+  --line: #2a2a32;
+  --pink: #c45cff;
+  --cyan: #9aa0ff;
+  --on: #24242c;
+}
+body.space-kenji .fab { background: #7b3fe4; }
+body.space-kenji .dock .go,
+body.space-kenji .card .go,
+body.space-kenji #k-go { background: #7b3fe4; }

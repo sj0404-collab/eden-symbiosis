@@ -96,7 +96,14 @@ class KenjiProbeService : Service() {
                 // This is the whole point. The isolated process crashing lands
                 // here instead of taking the app with it.
                 override fun onServiceDisconnected(name: ComponentName?) {
-                    finish(false, "процесс ядра завершился аварийно — ядро не запускается на этом устройстве")
+                    // Official Kenji already runs on this phone. A crash here
+                    // is our bridge dying, not a hardware incompatibility.
+                    finish(
+                        false,
+                        "наш мост упал в :kenji — это не «телефон не тянет». " +
+                            "Официальный Kenji на этом устройстве уже играет. " +
+                            "Откройте пространство Kenji и отдайте игру их APK, либо смотрите logcat."
+                    )
                 }
             }
 

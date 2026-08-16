@@ -45,6 +45,7 @@
 -keep class org.yuzu.yuzu_emu.utils.EngineLoader$State$* { *; }
 -keep class org.yuzu.yuzu_emu.utils.EngineDownloader { *; }
 -keep class org.yuzu.yuzu_emu.utils.EnginePreference { *; }
+-keep class org.yuzu.yuzu_emu.utils.Spaces { *; }
 
 # NativeSymbiosis is the other JNI surface - 54 entry points resolved by name
 # from libyuzu-android.so.

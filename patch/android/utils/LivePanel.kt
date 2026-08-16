@@ -17,7 +17,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 15
+    const val BRIDGE_VERSION = 16
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
@@ -515,10 +515,7 @@ object LivePanel {
             .toString()
     }
 
-    fun shouldLaunchKenji(context: Context): Boolean {
-        if (EnginePreference.selectedRaw(context) != EngineLoader.Engine.KENJI) return false
-        return EngineLoader.state(context, EngineLoader.Engine.KENJI) is EngineLoader.State.Ready
-    }
+    fun shouldLaunchKenji(context: Context): Boolean = Spaces.shouldUseKenjiPlayer(context)
 
     fun shotsJson(path: String, title: String): String {
         val g = org.yuzu.yuzu_emu.utils.GameHelper.cachedGameList.firstOrNull { it.path == path }

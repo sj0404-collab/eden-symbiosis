@@ -33,6 +33,7 @@ import org.yuzu.yuzu_emu.utils.LivePanel
 import org.yuzu.yuzu_emu.utils.PluginPack
 import org.yuzu.yuzu_emu.utils.SaveSource
 import org.yuzu.yuzu_emu.utils.SharedDataDirectory
+import org.yuzu.yuzu_emu.utils.Spaces
 
 /**
  * Весь интерфейс — страница. APK запускает игру.
@@ -528,6 +529,35 @@ class LivePanelFragment : Fragment() {
         }.getOrDefault("""{"items":[]}""")
 
         @JavascriptInterface
+        fun spaces(): String = runCatching {
+            Spaces.json(requireContext().applicationContext)
+        }.getOrDefault("""{"current":"symbiosis","items":[]}""")
+
+        @JavascriptInterface
+        fun selectSpace(id: String): String = runCatching {
+            Spaces.select(requireContext().applicationContext, id)
+        }.getOrDefault("""{"ok":false,"message":"пространство не переключилось"}""")
+
+        @JavascriptInterface
+        fun installKenjiShell(): String = runCatching {
+            Spaces.ensureKenjiPlugin(requireContext().applicationContext)
+        }.getOrDefault("""{"ok":false,"message":"оболочка не встроилась"}""")
+
+        @JavascriptInterface
+        fun setPreferExternal(on: Boolean): String = runCatching {
+            val ctx = requireContext().applicationContext
+            Spaces.setPreferExternal(ctx, on)
+            JSONObject().put("ok", true).put("preferExternal", on)
+                .put("message", if (on) "игры Kenji уходят в их APK, если он стоит" else "игры Kenji идут в наш плеер")
+                .toString()
+        }.getOrDefault("""{"ok":false}""")
+
+        @JavascriptInterface
+        fun openOfficialKenji(path: String): String = runCatching {
+            Spaces.openOfficial(requireContext().applicationContext, path)
+        }.getOrDefault("""{"ok":false,"message":"их APK не открылся"}""")
+
+        @JavascriptInterface
         fun engines(): String = runCatching {
             LivePanel.enginesJson(requireContext().applicationContext)
         }.getOrDefault("""{"current":"eden","launch":"eden","items":[]}""")
@@ -646,6 +676,16 @@ class LivePanelFragment : Fragment() {
                 // иначе игра рисует NEW GAME.
                 runCatching { SaveSource.adoptFor(game) }
                 runCatching { LivePanel.markPlayed(game.path) }
+                if (Spaces.shouldHandOff(act)) {
+                    val handed = Spaces.openOfficial(act, game.path)
+                    val ok = runCatching { JSONObject(handed).optBoolean("ok") }.getOrDefault(false)
+                    if (ok) return@post
+                    android.widget.Toast.makeText(
+                        act,
+                        runCatching { JSONObject(handed).optString("message") }.getOrDefault("их APK не открылся"),
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
                 val useKenji = LivePanel.shouldLaunchKenji(act)
                 if (useKenji) {
                     runCatching {
