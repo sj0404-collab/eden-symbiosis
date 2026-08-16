@@ -87,6 +87,7 @@ import org.yuzu.yuzu_emu.overlay.model.OverlayControl
 import org.yuzu.yuzu_emu.overlay.model.OverlayLayout
 import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.FileUtil
+import org.yuzu.yuzu_emu.utils.GameCardMeta
 import org.yuzu.yuzu_emu.utils.GameHelper
 import org.yuzu.yuzu_emu.utils.GameIconUtils
 import org.yuzu.yuzu_emu.utils.GpuDriverHelper
@@ -2560,6 +2561,12 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             return
         }
 
+        if (overlayHiddenByPhysicalController) {
+            overlayHiddenByPhysicalController = false
+            toggleOverlay(true)
+        }
+    }
+}
         if (overlayHiddenByPhysicalController) {
             overlayHiddenByPhysicalController = false
             toggleOverlay(true)

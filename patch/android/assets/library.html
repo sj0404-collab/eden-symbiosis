@@ -74,6 +74,13 @@
   .meta { flex:1; min-width:0; align-self:center; }
   .title { font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .sub { color:var(--dim); font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stats { margin-top:3px; font-size:12px; color:var(--cyan); }
+  .play { margin-right:8px; }
+  .shot {
+    width:72px; height:40px; border-radius:8px; flex:0 0 72px;
+    background:#111; overflow:hidden; align-self:center;
+  }
+  .shot img { width:100%; height:100%; object-fit:cover; display:block; }
   .addons {
     flex:0 1 42%; max-width:46%; min-width:0;
     border-left:1px solid var(--line); padding:2px 0 2px 8px;
@@ -268,12 +275,18 @@ function render() {
       ).join('');
       return `<div class="addon-name">${esc(a.kind === 'cheat' ? 'чит' : 'мод')} · ${esc(a.name)}</div>${files}`;
     }).join('')}</div>` : '';
+    const stats = (g.play || g.shots)
+      ? `<div class="stats">${g.play ? `<span class="play">${esc(g.play)}</span>` : ''}${g.shots ? `<span class="play">фото ${g.shots}</span>` : ''}</div>`
+      : '';
+    const shot = g.lastShot ? `<div class="shot" id="sh-${i}"></div>` : '';
     return `<div class="game" data-i="${i}">
       <div class="thumb" id="ic-${i}">▶</div>
       <div class="meta">
         <div class="title">${esc(g.title || 'без имени')}</div>
-        <div class="sub">${esc(g.developer || g.programId || '')}${save}${g.play ? ' · ' + esc(g.play) : ''}${g.shots ? ' · фото ' + g.shots : ''}</div>
+        <div class="sub">${esc(g.developer || g.programId || '')}${save}</div>
+        ${stats}
       </div>
+      ${shot}
       ${side}
     </div>`;
   }).join('');
@@ -300,6 +313,7 @@ function render() {
   list.forEach(g => {
     const i = GAMES.indexOf(g);
     setTimeout(() => fillIcon(i, g.path), 30 * i);
+    if (g.lastShot) setTimeout(() => fillShot(i, g.lastShot), 40 * i);
   });
 }
 
@@ -308,6 +322,14 @@ function fillIcon(i, path) {
   if (!el || !N() || typeof N().icon !== 'function') return;
   const b64 = call('icon', path);
   if (b64) el.innerHTML = '<img alt="" src="data:image/jpeg;base64,' + b64 + '">';
+}
+
+function fillShot(i, path) {
+  const el = $('sh-' + i);
+  if (!el || !path || !N() || typeof N().shot !== 'function') return;
+  const b64 = call('shot', path);
+  if (b64) el.innerHTML = '<img alt="" src="data:image/jpeg;base64,' + b64 + '">';
+  else el.remove();
 }
 
 function play(g) {
@@ -330,6 +352,8 @@ function holdMenu(g) {
   HOLD = g;
   $('sheet-title').textContent = g.title || 'Игра';
   const bits = [];
+  if (g.play) bits.push('время ' + g.play);
+  if (g.shots) bits.push('фото ' + g.shots);
   if (g.hasSave) bits.push('сейв ' + (g.saveSize || 'найден'));
   const addons = (g.addons || []).filter(a => a && a.enabled !== false);
   if (addons.length) bits.push(addons.map(a => (a.kind === 'cheat' ? 'чит' : 'мод') + ' «' + a.name + '»').join(', '));

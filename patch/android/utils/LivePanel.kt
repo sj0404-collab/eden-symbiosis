@@ -17,7 +17,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 10
+    const val BRIDGE_VERSION = 11
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
@@ -127,6 +127,7 @@ object LivePanel {
                         put("play", meta.playLabel)
                         put("playSeconds", meta.playSeconds)
                         put("shots", meta.shots)
+                        put("lastShot", meta.lastShot)
                     }
                 }
             )
@@ -188,6 +189,9 @@ object LivePanel {
         bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 72, out)
         android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
     }.getOrDefault("")
+
+    /** Последний скриншот с диска. Пустая строка — файла нет, не заглушка. */
+    fun shotJpeg(path: String): String = GameCardMeta.shotJpeg(path)
 
     fun filesJson(context: Context, uriString: String): String {
         val arr = JSONArray()

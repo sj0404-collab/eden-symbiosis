@@ -416,6 +416,11 @@ class LivePanelFragment : Fragment() {
         }.getOrDefault("")
 
         @JavascriptInterface
+        fun shot(path: String): String = runCatching {
+            LivePanel.shotJpeg(path)
+        }.getOrDefault("")
+
+        @JavascriptInterface
         fun openTools() {
             main.post {
                 runCatching {

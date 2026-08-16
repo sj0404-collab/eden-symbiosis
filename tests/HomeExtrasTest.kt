@@ -42,8 +42,18 @@ fun main() {
     check("play time ascii", parsePlay("3661".toByteArray()) == 3661L)
     check("play label hours", formatPlay(3661) == "1 ч 1 мин")
     check("no play if zero", formatPlay(0) == "")
+    val blade = 0x01007FC01CF4E000L
+    val bin = recordBytes(blade, 3661) + recordBytes(0x0100AABBCCDDE000L, 99)
+    check("play time from uuid.bin record", secondsFromRecords(bin, setOf(blade)) == 3661L)
+    check("other title in same bin is ignored", secondsFromRecords(bin, setOf(0x0100000000010000L)) == 0L)
+    check("short bin is not a fake play time", secondsFromRecords(ByteArray(8), setOf(blade)) == 0L)
     check("no keys → empty list", listWithoutKeys(false, listOf("a.nsp")).isEmpty())
     check("keys → keep disk", listWithoutKeys(true, listOf("a.nsp")) == listOf("a.nsp"))
+    check("700 mb is the warn line", warnRam(500) && !warnRam(900))
+    println("\n$pass passed, $fail failed")
+    if (fail > 0) kotlin.system.exitProcess(1)
+}
+, listWithoutKeys(true, listOf("a.nsp")) == listOf("a.nsp"))
     check("700 mb is the warn line", warnRam(500) && !warnRam(900))
     println("\n$pass passed, $fail failed")
     if (fail > 0) kotlin.system.exitProcess(1)
