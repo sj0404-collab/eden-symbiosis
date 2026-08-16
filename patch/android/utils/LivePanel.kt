@@ -17,7 +17,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 13
+    const val BRIDGE_VERSION = 14
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
@@ -519,5 +519,76 @@ object LivePanel {
         val g = org.yuzu.yuzu_emu.utils.GameHelper.cachedGameList.firstOrNull { it.path == path }
             ?: gameFrom(path, title)
         return GameCardMeta.listShotsJson(g)
+    }
+
+    /**
+     * Eden is compiled in and is the only core that can launch a game here.
+     * Kenji can be downloaded and probed; it does not start titles in this APK.
+     */
+    fun enginesJson(context: Context): String {
+        val raw = EnginePreference.selectedRaw(context)
+        val launch = EngineLoader.Engine.EDEN
+        val arr = JSONArray()
+        EngineLoader.Engine.values().forEach { e ->
+            val st = EngineLoader.state(context, e)
+            val usable = st is EngineLoader.State.Builtin || st is EngineLoader.State.Ready
+            val state = when (st) {
+                is EngineLoader.State.Builtin -> "builtin"
+                is EngineLoader.State.Ready -> "ready"
+                is EngineLoader.State.Missing -> "missing"
+                is EngineLoader.State.Broken -> "broken"
+            }
+            val note = when (st) {
+                is EngineLoader.State.Missing ->
+                    "нет файла · ${(EngineLoader.KNOWN_SIZE[e] ?: 0L) / 1048576} МБ"
+                is EngineLoader.State.Broken -> st.reason
+                is EngineLoader.State.Ready -> "скачан, запуск игр — только Eden"
+                is EngineLoader.State.Builtin -> "встроено, запускает игры"
+            }
+            arr.put(
+                JSONObject()
+                    .put("id", e.id)
+                    .put("label", e.label)
+                    .put("state", state)
+                    .put("usable", usable)
+                    .put("selected", raw == e)
+                    .put("launches", e == launch)
+                    .put("note", note)
+            )
+        }
+        return JSONObject()
+            .put("current", raw.id)
+            .put("currentLabel", raw.label)
+            .put("launch", launch.id)
+            .put("launchLabel", launch.label)
+            .put("items", arr)
+            .put("note", "игры запускает только Eden. Kenji — другое ядро, не этот экран запуска.")
+            .toString()
+    }
+
+    fun selectEngine(context: Context, id: String): String {
+        val engine = EngineLoader.Engine.values().firstOrNull { it.id == id }
+            ?: return JSONObject().put("ok", false).put("message", "нет ядра «$id»").toString()
+        val st = EngineLoader.state(context, engine)
+        val usable = st is EngineLoader.State.Builtin || st is EngineLoader.State.Ready
+        if (!usable) {
+            val why = when (st) {
+                is EngineLoader.State.Missing -> "сначала скачайте Kenji (~${(EngineLoader.KNOWN_SIZE[engine] ?: 0L) / 1048576} МБ) в Утилиты → Ядра"
+                is EngineLoader.State.Broken -> (st as EngineLoader.State.Broken).reason
+                else -> "ядро недоступно"
+            }
+            return JSONObject().put("ok", false).put("needDownload", st is EngineLoader.State.Missing)
+                .put("message", why).toString()
+        }
+        EnginePreference.select(context, engine)
+        val launches = engine == EngineLoader.Engine.EDEN
+        return JSONObject().put("ok", true).put("id", engine.id).put("label", engine.label)
+            .put("launches", launches)
+            .put(
+                "message",
+                if (launches) "ядро Eden — игры стартуют здесь"
+                else "выбран ${engine.label}. Игры всё равно запустит Eden — Kenji в этот APK не встроен как плеер."
+            )
+            .toString()
     }
 }

@@ -31,6 +31,16 @@ fun progressOf(hasSave: Boolean, playSeconds: Long, saveSize: String): String = 
     else -> "не начато"
 }
 
+fun cpuLabel(index: Int): String = when (index) {
+    1 -> "NCE"
+    0 -> "Dynarmic"
+    else -> "CPU $index"
+}
+
+fun cycleCpu(cur: Int): Int = if (cur == 1) 0 else 1
+
+fun engineLaunches(id: String): Boolean = id == "eden"
+
 fun wrapIndex(i: Int, n: Int): Int {
     if (n <= 0) return 0
     return ((i % n) + n) % n
@@ -72,6 +82,10 @@ fun main() {
     check("progress unplayed", progressOf(false, 0, "") == "не начато")
     check("wrap left from 0", wrapIndex(-1, 3) == 2)
     check("wrap right from last", wrapIndex(3, 3) == 0)
+    check("cpu 0 is Dynarmic", cpuLabel(0) == "Dynarmic")
+    check("cpu 1 is NCE", cpuLabel(1) == "NCE")
+    check("cycle dynarmic to nce", cycleCpu(0) == 1)
+    check("only Eden launches games", engineLaunches("eden") && !engineLaunches("kenji"))
     println("\n$pass passed, $fail failed")
     if (fail > 0) kotlin.system.exitProcess(1)
 }

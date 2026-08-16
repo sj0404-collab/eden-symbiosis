@@ -50,11 +50,14 @@ object LauncherSettings {
             )
         }
         val res = readInt("RENDERER_RESOLUTION")
+        val cpu = readInt("CPU_BACKEND")
         return JSONObject()
             .put("toggles", toggles)
             .put("resolution", res)
             .put("resolutionLabel", resLabel(res))
             .put("resolutionNote", resNote(res))
+            .put("cpu", cpu)
+            .put("cpuLabel", cpuLabel(cpu))
             .put("ok", toggles.length() > 0)
             .toString()
     }
@@ -132,6 +135,29 @@ object LauncherSettings {
         set.invoke(v, value)
         true
     }.getOrDefault(false)
+
+    fun cpuBackend(): Int = readInt("CPU_BACKEND")
+
+    fun cpuLabel(index: Int): String = when (index) {
+        1 -> "NCE"
+        0 -> "Dynarmic"
+        else -> "CPU $index"
+    }
+
+    fun cycleCpuBackend(): String {
+        val cur = readInt("CPU_BACKEND")
+        if (cur < 0) return fail("CPU_BACKEND не прочитался")
+        val next = if (cur == 1) 0 else 1
+        if (!writeInt("CPU_BACKEND", next)) return fail("CPU-ядро не записалось")
+        runCatching { NativeConfig.saveGlobalConfig() }
+        return JSONObject().put("ok", true).put("cpu", next).put("cpuLabel", cpuLabel(next))
+            .put(
+                "message",
+                if (next == 1) "NCE — нативный код, быстрее, на Mali чаще падает"
+                else "Dynarmic — JIT, стабильнее на этом чипе"
+            )
+            .toString()
+    }
 
     private fun fail(m: String) = JSONObject().put("ok", false).put("message", m).toString()
 }

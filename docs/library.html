@@ -494,6 +494,19 @@ function fillShot(i, path) {
 
 function play(g) {
   if (!g || !g.path || !N() || !N().launch) return;
+  const eng = parse(call('engines'), null);
+  if (eng && eng.current && eng.current !== eng.launch) {
+    HOLD = g;
+    $('sheet-title').textContent = g.title || 'Игра';
+    $('sheet-note').textContent = 'Выбрано ядро ' + (eng.currentLabel || eng.current) +
+      ', но игры запускает только Eden. Kenji — другой эмулятор, в этот APK как плеер не встроен.';
+    $('sheet-actions').innerHTML = '<button class="go" id="a-go">Запустить на Eden</button><button class="ghost" id="a-eng">Ядра</button><button class="ghost" id="a-close">Отмена</button>';
+    $('a-go').onclick = () => { closeSheet(); N().launch(g.path, g.title || ''); };
+    $('a-eng').onclick = () => { closeSheet(); if (N().openEngines) N().openEngines(); };
+    $('a-close').onclick = closeSheet;
+    openSheet();
+    return;
+  }
   const mem = parse(call('memory'), null);
   if (mem && mem.warn) {
     HOLD = g;
@@ -718,6 +731,8 @@ function paintDock() {
       <div class="fact" style="width:100%"><b>моды / читы</b><span>${mods}</span></div>
       <div class="dock-shots" id="dock-shots"></div>
       <div class="row" style="margin-top:8px">
+        <button class="ghost" id="dock-core">Ядро: Eden</button>
+        <button class="ghost" id="dock-cpu">CPU: —</button>
         <button class="ghost" id="dock-shots-btn">Все фото</button>
         <button class="ghost" id="dock-props">Свойства</button>
         <button class="ghost" id="dock-aaa">AAA минимум</button>
@@ -731,7 +746,50 @@ function paintDock() {
     const f = dock.querySelector('.who');
     if (f) f.textContent = r.message || '';
   };
+  paintCores();
+  if ($('dock-core')) $('dock-core').onclick = ev => { ev.stopPropagation(); cycleEngine(); };
+  if ($('dock-cpu')) $('dock-cpu').onclick = ev => { ev.stopPropagation(); cycleCpu(); };
   fillDockShots(g);
+}
+
+function paintCores() {
+  const eng = parse(call('engines'), { currentLabel: 'Eden', launchLabel: 'Eden' });
+  const set = parse(call('settings'), { cpuLabel: '' });
+  const core = $('dock-core');
+  if (core) {
+    const same = (eng.current || 'eden') === (eng.launch || 'eden');
+    core.textContent = same
+      ? ('Ядро: ' + (eng.currentLabel || 'Eden'))
+      : ('Ядро: ' + (eng.currentLabel || '?') + ' · игры: ' + (eng.launchLabel || 'Eden'));
+  }
+  const cpu = $('dock-cpu');
+  if (cpu) cpu.textContent = 'CPU: ' + (set.cpuLabel || '—');
+}
+
+function cycleEngine() {
+  const eng = parse(call('engines'), { items: [], current: 'eden' });
+  const items = eng.items || [];
+  if (!items.length) {
+    if (N() && N().openEngines) N().openEngines();
+    return;
+  }
+  const ids = items.map(it => it.id);
+  const i = Math.max(0, ids.indexOf(eng.current || 'eden'));
+  const next = items[(i + 1) % items.length];
+  const r = parse(call('selectEngine', next.id), { message: 'нет моста' });
+  const dock = $('dock');
+  const who = dock && dock.querySelector('.who');
+  if (who) who.textContent = r.message || '';
+  if (!r.ok && r.needDownload && N() && N().openEngines) N().openEngines();
+  paintCores();
+}
+
+function cycleCpu() {
+  const r = parse(call('cycleCpu'), { message: 'нет моста' });
+  const dock = $('dock');
+  const who = dock && dock.querySelector('.who');
+  if (who) who.textContent = r.message || '';
+  paintCores();
 }
 
 function fillDockShots(g) {

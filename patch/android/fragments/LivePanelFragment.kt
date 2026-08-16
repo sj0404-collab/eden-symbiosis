@@ -528,6 +528,30 @@ class LivePanelFragment : Fragment() {
         }.getOrDefault("""{"items":[]}""")
 
         @JavascriptInterface
+        fun engines(): String = runCatching {
+            LivePanel.enginesJson(requireContext().applicationContext)
+        }.getOrDefault("""{"current":"eden","launch":"eden","items":[]}""")
+
+        @JavascriptInterface
+        fun selectEngine(id: String): String = runCatching {
+            LivePanel.selectEngine(requireContext().applicationContext, id)
+        }.getOrDefault("""{"ok":false,"message":"ядро не переключилось"}""")
+
+        @JavascriptInterface
+        fun cycleCpu(): String = runCatching {
+            LauncherSettings.cycleCpuBackend()
+        }.getOrDefault("""{"ok":false,"message":"CPU не переключился"}""")
+
+        @JavascriptInterface
+        fun openEngines() {
+            main.post {
+                runCatching {
+                    findNavController().navigate(org.yuzu.yuzu_emu.R.id.action_global_enginesFragment)
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun launch(path: String, title: String) {
             if (path.isBlank()) return
             main.post {
