@@ -54,3 +54,6 @@
 # Costs a few kilobytes and saves an afternoon.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+-keep class org.kenjinx.android.KenjinxNative { *;
+}

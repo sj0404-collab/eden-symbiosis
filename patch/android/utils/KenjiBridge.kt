@@ -66,12 +66,39 @@ object KenjiBridge {
     private external fun nativeIsLoaded(): Boolean
     private external fun nativeLastError(): String
     private external fun nativeUnload()
-    private external fun nativeDeviceInit(): String
-    private external fun nativeGraphicsInit(): String
+    private external fun nativeDeviceInit(
+        memoryManagerMode: Int,
+        useNce: Boolean,
+        memoryConfiguration: Int,
+        systemLanguage: Int,
+        regionCode: Int,
+        vSyncMode: Int,
+        enableDockedMode: Boolean,
+        enablePtc: Boolean,
+        enableLowPowerPtc: Boolean,
+        enableJitCacheEviction: Boolean,
+        enableInternetAccess: Boolean,
+        enableFsIntegrityChecks: Boolean,
+        fsGlobalAccessLogMode: Int,
+        timeZone: String,
+        ignoreMissingServices: Boolean
+    ): String
+    private external fun nativeGraphicsInit(
+        resScale: Float,
+        maxAnisotropy: Float,
+        fastGpuTime: Boolean,
+        fast2DCopy: Boolean,
+        enableMacroJit: Boolean,
+        enableMacroHLE: Boolean,
+        enableShaderCache: Boolean,
+        enableTextureRecompression: Boolean,
+        backendThreading: Int
+    ): String
     private external fun nativeAttachSurface(surface: android.view.Surface, width: Int, height: Int): String
-    private external fun nativeLoadGame(fd: Int, ext: String): String
+    private external fun nativeLoadGame(fd: Int, type: Int): String
     private external fun nativeRunLoop(): String
     private external fun nativePlayStop()
+    private external fun nativeWindowOf(surface: android.view.Surface): Long
 
     data class Status(
         val ok: Boolean,
@@ -173,8 +200,36 @@ object KenjiBridge {
         seedKeys(context)
         val started = start(context)
         if (!started.ok) return started
-        nativeDeviceInit().takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
-        nativeGraphicsInit().takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
+        // Same knobs as official Kenji on this phone: 4 GiB, Host Unchecked,
+        // NCE off, PPTC on, integrity off.
+        nativeDeviceInit(
+            memoryManagerMode = 2,
+            useNce = false,
+            memoryConfiguration = 0,
+            systemLanguage = 1,
+            regionCode = 1,
+            vSyncMode = 0,
+            enableDockedMode = false,
+            enablePtc = true,
+            enableLowPowerPtc = false,
+            enableJitCacheEviction = false,
+            enableInternetAccess = false,
+            enableFsIntegrityChecks = false,
+            fsGlobalAccessLogMode = 0,
+            timeZone = "UTC",
+            ignoreMissingServices = false
+        ).takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
+        nativeGraphicsInit(
+            resScale = 1f,
+            maxAnisotropy = 0f,
+            fastGpuTime = true,
+            fast2DCopy = true,
+            enableMacroJit = false,
+            enableMacroHLE = true,
+            enableShaderCache = true,
+            enableTextureRecompression = false,
+            backendThreading = 1
+        ).takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
         return Status(true, "плеер второго ядра готов", started.symbols)
     }
 
@@ -185,12 +240,25 @@ object KenjiBridge {
         return if (err.isEmpty()) Status(true, "поверхность есть") else Status(false, err)
     }
 
-    fun loadGame(fd: Int, ext: String): Status {
+    fun fileTypeOf(path: String): Int {
+        val ext = path.substringAfterLast('.', "").lowercase().substringBefore('?')
+        return when (ext) {
+            "nsp", "nsz" -> 1
+            "xci", "xcz" -> 2
+            "nro" -> 3
+            else -> 1
+        }
+    }
+
+    fun loadGame(fd: Int, type: Int): Status {
         ensureBridge()?.let { return Status(false, it) }
-        val err = runCatching { nativeLoadGame(fd, ext.ifBlank { "nsp" }) }
+        val err = runCatching { nativeLoadGame(fd, type) }
             .getOrElse { return Status(false, it.message ?: "load") }
         return if (err.isEmpty()) Status(true, "игра передана ядру") else Status(false, err)
     }
+
+    fun nativeWindow(surface: android.view.Surface): Long =
+        runCatching { nativeWindowOf(surface) }.getOrDefault(-1L)
 
     /** Blocks until the core leaves the run loop. Call from a worker thread. */
     fun runLoop(): Status {

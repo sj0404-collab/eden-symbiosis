@@ -246,17 +246,10 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeInitialize(JNIEnv* env, jobject,
         return env->NewStringUTF("путь к данным пуст");
     }
 
-    JavaVM* vm = nullptr;
-    env->GetJavaVM(&vm);
-
+    // Official Kenji: javaInitialize(path, JNIEnv*). Passing JavaVM* here
+    // made Interop.GetVirtualMachine dereference garbage and killed :kenji.
     g_inCore = 1;
-    bool ok = false;
-    // No setjmp/longjmp around this. Jumping out of a signal handler across a
-    // frame that holds .NET runtime state leaves the core in a condition where
-    // the next call fails differently every time - which is worse to debug
-    // than a clean stop. Containment is the separate process; this call either
-    // returns or the emulation process dies alone.
-    ok = fn(const_cast<char*>(dataPath), reinterpret_cast<void*>(vm));
+    bool ok = fn(const_cast<char*>(dataPath), env);
     g_inCore = 0;
 
     env->ReleaseStringUTFChars(jdataPath, dataPath);
@@ -283,15 +276,30 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUnload(JNIEnv*, jobject) {
 
 
 JNIEXPORT jstring JNICALL
-Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeDeviceInit(JNIEnv* env, jobject) {
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeDeviceInit(
+        JNIEnv* env, jobject, jint memoryManagerMode, jboolean useNce,
+        jint memoryConfiguration, jint systemLanguage, jint regionCode,
+        jint vSyncMode, jboolean enableDockedMode, jboolean enablePtc,
+        jboolean enableLowPowerPtc, jboolean enableJitCacheEviction,
+        jboolean enableInternetAccess, jboolean enableFsIntegrityChecks,
+        jint fsGlobalAccessLogMode, jstring jtimeZone,
+        jboolean ignoreMissingServices) {
     std::lock_guard<std::mutex> guard(g_lock);
     if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
-    using Fn = bool (*)();
+    using Fn = bool (*)(int, bool, int, int, int, int,
+                        bool, bool, bool, bool, bool, bool,
+                        int, const char*, bool);
     auto fn = reinterpret_cast<Fn>(dlsym(g_core, "deviceInitialize"));
     if (fn == nullptr) return env->NewStringUTF("нет deviceInitialize");
+    const char* tz = jtimeZone ? env->GetStringUTFChars(jtimeZone, nullptr) : "UTC";
     g_inCore = 1;
-    bool ok = fn();
+    bool ok = fn(memoryManagerMode, useNce, memoryConfiguration, systemLanguage,
+                 regionCode, vSyncMode, enableDockedMode, enablePtc,
+                 enableLowPowerPtc, enableJitCacheEviction, enableInternetAccess,
+                 enableFsIntegrityChecks, fsGlobalAccessLogMode,
+                 tz ? tz : "UTC", ignoreMissingServices);
     g_inCore = 0;
+    if (jtimeZone && tz) env->ReleaseStringUTFChars(jtimeZone, tz);
     if (!ok) {
         g_lastError = "deviceInitialize отказал";
         return env->NewStringUTF(g_lastError.c_str());
@@ -300,14 +308,20 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeDeviceInit(JNIEnv* env, jobject)
 }
 
 JNIEXPORT jstring JNICALL
-Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeGraphicsInit(JNIEnv* env, jobject) {
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeGraphicsInit(
+        JNIEnv* env, jobject, jfloat resScale, jfloat maxAnisotropy,
+        jboolean fastGpuTime, jboolean fast2DCopy, jboolean enableMacroJit,
+        jboolean enableMacroHLE, jboolean enableShaderCache,
+        jboolean enableTextureRecompression, jint backendThreading) {
     std::lock_guard<std::mutex> guard(g_lock);
     if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
-    using Fn = bool (*)();
+    using Fn = bool (*)(float, float, bool, bool, bool, bool, bool, bool, int);
     auto fn = reinterpret_cast<Fn>(dlsym(g_core, "graphicsInitialize"));
     if (fn == nullptr) return env->NewStringUTF("нет graphicsInitialize");
     g_inCore = 1;
-    bool ok = fn();
+    bool ok = fn(resScale, maxAnisotropy, fastGpuTime, fast2DCopy, enableMacroJit,
+                 enableMacroHLE, enableShaderCache, enableTextureRecompression,
+                 backendThreading);
     g_inCore = 0;
     if (!ok) {
         g_lastError = "graphicsInitialize отказал";
@@ -321,48 +335,51 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeAttachSurface(JNIEnv* env, jobje
                                                              jint width, jint height) {
     std::lock_guard<std::mutex> guard(g_lock);
     if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
-    if (surface == nullptr) return env->NewStringUTF("нет поверхности");
-    ANativeWindow* win = ANativeWindow_fromSurface(env, surface);
-    if (win == nullptr) return env->NewStringUTF("ANativeWindow не создался");
-    using InputFn = void (*)(int, int);
-    if (auto infn = reinterpret_cast<InputFn>(dlsym(g_core, "inputInitialize"))) {
+    if (auto infn = reinterpret_cast<void (*)(int, int)>(dlsym(g_core, "inputInitialize"))) {
         g_inCore = 1;
         infn(width > 0 ? width : 1280, height > 0 ? height : 720);
         g_inCore = 0;
     }
-    using RendFn = void (*)(void*, int, long);
+    using RendFn = bool (*)(const char**, int, long);
     auto rfn = reinterpret_cast<RendFn>(dlsym(g_core, "graphicsInitializeRenderer"));
-    if (rfn == nullptr) {
-        ANativeWindow_release(win);
-        return env->NewStringUTF("нет graphicsInitializeRenderer");
-    }
+    if (rfn == nullptr) return env->NewStringUTF("нет graphicsInitializeRenderer");
+    const char* exts[2] = { "VK_KHR_surface", "VK_KHR_android_surface" };
     g_inCore = 1;
-    rfn(nullptr, 0, reinterpret_cast<long>(win));
+    bool ok = rfn(exts, 2, 0);
     g_inCore = 0;
-    using SizeFn = void (*)(int, int);
-    if (auto sfn = reinterpret_cast<SizeFn>(dlsym(g_core, "graphicsRendererSetSize"))) {
+    if (!ok) {
+        g_lastError = "graphicsInitializeRenderer отказал";
+        return env->NewStringUTF(g_lastError.c_str());
+    }
+    if (auto sfn = reinterpret_cast<void (*)(int, int)>(dlsym(g_core, "graphicsRendererSetSize"))) {
+        int w = width, h = height;
+        if (surface != nullptr) {
+            ANativeWindow* win = ANativeWindow_fromSurface(env, surface);
+            if (win) {
+                if (w <= 0) w = ANativeWindow_getWidth(win);
+                if (h <= 0) h = ANativeWindow_getHeight(win);
+                ANativeWindow_release(win);
+            }
+        }
         g_inCore = 1;
-        sfn(width > 0 ? width : ANativeWindow_getWidth(win),
-            height > 0 ? height : ANativeWindow_getHeight(win));
+        sfn(w > 0 ? w : 1280, h > 0 ? h : 720);
         g_inCore = 0;
     }
-    ANativeWindow_release(win);
+    (void)surface;
     return env->NewStringUTF("");
 }
 
 JNIEXPORT jstring JNICALL
-Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoadGame(JNIEnv* env, jobject, jint fd, jstring jext) {
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoadGame(JNIEnv* env, jobject, jint fd, jint type) {
     std::lock_guard<std::mutex> guard(g_lock);
     if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
     if (fd < 0) return env->NewStringUTF("нет дескриптора файла");
-    using LoadFn = bool (*)(int, const char*, int);
+    using LoadFn = bool (*)(int, int, int);
     auto fn = reinterpret_cast<LoadFn>(dlsym(g_core, "deviceLoadDescriptor"));
     if (fn == nullptr) return env->NewStringUTF("нет deviceLoadDescriptor");
-    const char* ext = jext ? env->GetStringUTFChars(jext, nullptr) : nullptr;
     g_inCore = 1;
-    bool ok = fn(fd, ext ? ext : "nsp", 0);
+    bool ok = fn(fd, type, -1);
     g_inCore = 0;
-    if (ext) env->ReleaseStringUTFChars(jext, ext);
     if (!ok) {
         g_lastError = "ядро не открыло игру";
         return env->NewStringUTF(g_lastError.c_str());
@@ -406,6 +423,15 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativePlayStop(JNIEnv*, jobject) {
         c();
         g_inCore = 0;
     }
+}
+
+
+JNIEXPORT jlong JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeWindowOf(JNIEnv* env, jobject, jobject surface) {
+    if (surface == nullptr) return -1;
+    ANativeWindow* win = ANativeWindow_fromSurface(env, surface);
+    if (win == nullptr) return -1;
+    return reinterpret_cast<jlong>(win);
 }
 
 } // extern "C"

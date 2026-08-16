@@ -294,6 +294,11 @@ fi
 if [ -d "$P/android/activities" ]; then
   mkdir -p "$J/activities"
   cp "$P"/android/activities/*.kt "$J/activities/"
+  mkdir -p "$A/java/org/kenjinx/android"
+  if [ -d "$P/android/kenjinx" ]; then
+    cp "$P"/android/kenjinx/*.kt "$A/java/org/kenjinx/android/"
+    echo "  KenjinxNative shim installed"
+  fi
   echo "  replaced activities: $(ls "$P/android/activities" | tr '\n' ' ')"
 fi
 

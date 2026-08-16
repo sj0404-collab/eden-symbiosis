@@ -106,11 +106,13 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         if (started) return
         val fd = pfd?.fd ?: return fail("нет дескриптора")
         val path = intent.getStringExtra(EXTRA_PATH).orEmpty()
-        val ext = path.substringAfterLast('.', "nsp").lowercase().substringBefore('?')
         val w = holder.surfaceFrame.width().coerceAtLeast(128)
         val h = holder.surfaceFrame.height().coerceAtLeast(128)
         started = true
         loopThread = Thread({
+            val nw = KenjiBridge.nativeWindow(holder.surface)
+            org.kenjinx.android.KenjinxNative.surfacePtr = nw
+            org.kenjinx.android.KenjinxNative.windowHandle = nw
             val prep = KenjiBridge.preparePlay(this)
             if (!prep.ok) {
                 runOnUiThread { fail(prep.message) }
@@ -121,7 +123,7 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
                 runOnUiThread { fail(surf.message) }
                 return@Thread
             }
-            val load = KenjiBridge.loadGame(fd, ext)
+            val load = KenjiBridge.loadGame(fd, KenjiBridge.fileTypeOf(path))
             if (!load.ok) {
                 runOnUiThread { fail(load.message) }
                 return@Thread
