@@ -156,6 +156,10 @@ class LivePanelFragment : Fragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
+        web?.let { existing ->
+            (existing.parent as? ViewGroup)?.removeView(existing)
+            return existing
+        }
         val view = WebView(requireContext())
         web = view
         view.settings.javaScriptEnabled = true
@@ -182,20 +186,36 @@ class LivePanelFragment : Fragment() {
         return view
     }
 
+    override fun onPause() {
+        web?.onPause()
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        web?.onResume()
         // Не перерисовываем страницу: список уже на экране.
         // Перезагрузка после выхода из игры как раз обнуляла кэш в UI.
     }
 
     override fun onDestroyView() {
-        web?.apply {
-            removeJavascriptInterface("Symbiosis")
-            loadUrl("about:blank")
-            destroy()
-        }
-        web = null
+        // Keep the WebView. destroy() here raced the properties transition
+        // and killed the process on Mali-G57 when coming back.
+        (web?.parent as? ViewGroup)?.removeView(web)
         super.onDestroyView()
+    }
+
+    override fun onDestroy() {
+        if (activity?.isChangingConfigurations != true) {
+            web?.apply {
+                stopLoading()
+                removeJavascriptInterface("Symbiosis")
+                loadUrl("about:blank")
+                destroy()
+            }
+            web = null
+        }
+        super.onDestroy()
     }
 
     private fun reloadPageData() {

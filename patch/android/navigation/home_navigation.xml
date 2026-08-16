@@ -228,7 +228,9 @@
     </fragment>
     <action
         android:id="@+id/action_global_perGamePropertiesFragment"
-        app:destination="@id/perGamePropertiesFragment" />
+        app:destination="@id/perGamePropertiesFragment"
+        app:popUpTo="@id/livePanelFragment"
+        app:popUpToInclusive="false" />
     <fragment
         android:id="@+id/gameInfoFragment"
         android:name="org.yuzu.yuzu_emu.fragments.GameInfoFragment"
