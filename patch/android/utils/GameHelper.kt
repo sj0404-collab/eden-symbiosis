@@ -76,8 +76,17 @@ object GameHelper {
             runCatching { NativeConfig.setGameDirs(gameDirs.toTypedArray()) }
         }
 
-        // Ensure keys are loaded so that ROM metadata can be decrypted.
+        // Без ключей заголовок ROM не расшифруется: getIsValid врёт или
+        // пустой title, список выглядит «найденным» без обложек. Не кладём
+        // такие записи и не затираем прошлый кэш пустотой.
         NativeLibrary.reloadKeys()
+        val keysOk = runCatching { NativeLibrary.areKeysPresent() }.getOrDefault(false)
+        if (!keysOk) {
+            hasScanned = true
+            cachedGameList = emptyList()
+            return emptyList()
+        }
+
 
         // Reset metadata so we don't use stale information
         GameMetadata.resetMetadata()

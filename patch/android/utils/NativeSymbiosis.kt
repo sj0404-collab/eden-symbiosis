@@ -17,6 +17,8 @@ object NativeSymbiosis {
     // --- Diagnostics -----------------------------------------------------
     external fun getDriverTopology(): String
     external fun getMemoryState(): String
+    external fun getMemoryJson(): String
+    external fun previousSessionCrashed(): Boolean
     external fun getShimReport(): String
     external fun runSelfTest(): String
     private external fun runSelfTestCounts(): String

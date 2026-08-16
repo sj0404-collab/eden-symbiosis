@@ -407,6 +407,25 @@ std::vector<CrashFinding> CrashAnalyst::Analyse() {
         });
     }
 
+    bool shader_fail = false;
+    for (const auto& entry : entries) {
+        const auto& message = entry.message;
+        if ((message.find("shader") != std::string::npos ||
+             message.find("pipeline") != std::string::npos) &&
+            (message.find("fail") != std::string::npos ||
+             message.find("error") != std::string::npos)) {
+            shader_fail = true;
+        }
+    }
+    if (shader_fail) {
+        findings.push_back(CrashFinding{
+            .confidence = 65,
+            .cause = "A shader or pipeline failed to compile",
+            .evidence = "The layer log mentions a shader/pipeline error.",
+            .action = "Enable the disk shader cache and walk the same menus once so it rebuilds.",
+        });
+    }
+
     if (emulated_fallbacks && findings.empty()) {
         findings.push_back(CrashFinding{
             .confidence = 30,

@@ -106,6 +106,18 @@ Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getMemoryState(JNIEnv* env, jobjec
 }
 
 JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getMemoryJson(JNIEnv* env, jobject) {
+    auto& governor = Symbiosis::GetMemoryGovernor();
+    governor.Initialise();
+    return Common::Android::ToJString(env, governor.DescribeJson());
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_previousSessionCrashed(JNIEnv*, jobject) {
+    return Symbiosis::CrashAnalyst::PreviousSessionCrashed() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
 Java_org_yuzu_yuzu_1emu_utils_NativeSymbiosis_getShimReport(JNIEnv* env, jobject) {
     return Common::Android::ToJString(env, Symbiosis::GetAbiShim().DescribeResolutions());
 }

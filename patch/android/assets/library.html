@@ -190,6 +190,7 @@
 <div class="status" id="status">
   <div class="line" id="status-line">Ключи · Прошивка · Игры</div>
   <div class="chips" id="chips"></div>
+  <div class="line" id="mem" style="margin-top:6px;font-weight:400"></div>
 </div>
 <div class="list" id="list"><div class="empty">загрузка…</div></div>
 <div class="fabs">
@@ -249,7 +250,7 @@ function render() {
     const hint = folders.length
       ? ('Папка «' + (folders[0].name || 'игры') + '» есть' +
          (folders[0].size ? ' · ' + folders[0].size : '') +
-         ', но в кэше 0 игр. Ключи должны быть зелёными — тогда «Найти игры».')
+         ', но игр нет. Если ключи ✕ — сначала ключи, не сканер.')
       : 'Нет игр в кэше. Добавьте папку снизу.';
     $('list').innerHTML = '<div class="empty">' + hint +
       '<div style="margin-top:14px"><button class="ghost" id="btn-find">Найти игры</button></div></div>';
@@ -271,7 +272,7 @@ function render() {
       <div class="thumb" id="ic-${i}">▶</div>
       <div class="meta">
         <div class="title">${esc(g.title || 'без имени')}</div>
-        <div class="sub">${esc(g.developer || g.programId || '')}${save}</div>
+        <div class="sub">${esc(g.developer || g.programId || '')}${save}${g.play ? ' · ' + esc(g.play) : ''}${g.shots ? ' · фото ' + g.shots : ''}</div>
       </div>
       ${side}
     </div>`;
@@ -311,6 +312,17 @@ function fillIcon(i, path) {
 
 function play(g) {
   if (!g || !g.path || !N() || !N().launch) return;
+  const mem = parse(call('memory'), null);
+  if (mem && mem.warn) {
+    HOLD = g;
+    $('sheet-title').textContent = g.title || 'Игра';
+    $('sheet-note').textContent = mem.note || ('осталось ' + mem.leftMb + ' МБ — лучше не запускать');
+    $('sheet-actions').innerHTML = '<button class="ghost" id="a-go">Всё равно запустить</button><button class="ghost" id="a-close">Отмена</button>';
+    $('a-go').onclick = () => { closeSheet(); N().launch(g.path, g.title || ''); };
+    $('a-close').onclick = closeSheet;
+    openSheet();
+    return;
+  }
   N().launch(g.path, g.title || '');
 }
 
@@ -361,6 +373,10 @@ function openSheet() { $('sheet').classList.add('on'); }
 function closeSheet() { $('sheet').classList.remove('on'); }
 
 function findGames() {
+  if (N() && N().keysOk && !N().keysOk()) {
+    if ($('btn-find')) $('btn-find').textContent = 'нет ключей';
+    return;
+  }
   if (N() && N().rescan) N().rescan();
   const btn = $('btn-find');
   if (btn) btn.textContent = 'ищу…';
@@ -409,6 +425,16 @@ function loadStatus() {
     ? `сейвы: <b>${esc(SAVES.name || SAVES.path)}</b> · ${SAVES.titles || 0}`
     : 'сейвы: не выбраны — «Сейвы» один раз';
   $('bar').innerHTML = folderBar + '<br>' + saveBar;
+  const mem = parse(call('memory'), null);
+  const mk = $('mem');
+  if (mk) {
+    if (mem && (mem.leftMb || mem.usedMb)) {
+      mk.textContent = mem.warn
+        ? ('память: осталось ' + mem.leftMb + ' МБ · лучше не запускать')
+        : ('память: свободно ' + mem.leftMb + ' МБ · занято ' + (mem.usedMb || 0) + ' / ' + (mem.budgetMb || 0));
+      mk.style.color = mem.warn ? 'var(--pink)' : 'var(--dim)';
+    } else mk.textContent = '';
+  }
 }
 
 function onFolderAdded() {
@@ -568,6 +594,8 @@ function openSettingsSheet() {
   $('sheet-actions').innerHTML = `
     <button class="ghost" id="a-set">Настройки Eden</button>
     <button class="ghost" id="a-aaa">AAA минимум</button>
+    <button class="ghost" id="a-crash">Отчёт о вылете</button>
+    <button class="ghost" id="a-pre">Сохранить пресет</button>
     <button class="ghost" id="a-data">Папка данных</button>
     <button class="ghost" id="a-saves">Папка сейвов</button>
     <button class="ghost" id="a-saves-off">Сбросить сейвы</button>
@@ -578,6 +606,20 @@ function openSettingsSheet() {
     const r = parse(call('applyAaaMode'), { message: 'нет моста — нужен новый APK' });
     $('sheet-note').textContent = (r.message || '') + (r.where ? ' · ' + r.where : '');
   };
+  $('a-crash').onclick = () => {
+    const r = parse(call('crashReport'), { title: 'нет моста' });
+    $('sheet-title').textContent = r.title || 'Отчёт';
+    $('sheet-note').innerHTML = '<div>' + esc(r.detail || r.message || '') + '</div><pre>' +
+      esc((r.excerpt || r.analyst || '').slice(0, 2500)) + '</pre>' +
+      (r.path ? '<div class="wh">файл ' + esc(r.path) + '</div>' : '');
+  };
+  $('a-pre').onclick = () => {
+    const name = 'пресет ' + new Date().toLocaleString('ru-RU');
+    const r = parse(call('savePreset', name), { message: 'нет моста' });
+    $('sheet-note').textContent = r.message || name;
+    drawPresets();
+  };
+  drawPresets();
   $('a-data').onclick = () => { if (N() && N().pickDataRoot) N().pickDataRoot(); };
   $('a-saves').onclick = () => { pickSaves(); };
   $('a-saves-off').onclick = () => {
@@ -589,6 +631,42 @@ function openSettingsSheet() {
   $('a-utils').onclick = () => { closeSheet(); if (N() && N().openUtilities) N().openUtilities(); };
   $('a-close').onclick = closeSheet;
   openSheet();
+}
+
+function drawPresets() {
+  const box = $('sheet-note');
+  if (!box) return;
+  const data = parse(call('presets'), { items: [] });
+  const items = data.items || [];
+  let html = box.innerHTML;
+  if (items.length) {
+    html += '<div style="margin-top:10px;font-weight:600">Пресеты</div>';
+    items.forEach(it => {
+      html += '<div class="plug"><div class="nm"><b>' + esc(it.name) + '</b> · ' + (it.keys || 0) +
+        '</div><button class="ghost p-ap">Вкл</button><button class="ghost p-rm">Снести</button></div>';
+    });
+    box.innerHTML = html;
+    box.querySelectorAll('.plug').forEach((el, i) => {
+      const it = items[i];
+      const ap = el.querySelector('.p-ap');
+      const rm = el.querySelector('.p-rm');
+      if (ap) ap.onclick = ev => { ev.stopPropagation(); const r = parse(call('applyPreset', it.name), {}); $('sheet-note').textContent = r.message || ''; };
+      if (rm) rm.onclick = ev => { ev.stopPropagation(); parse(call('removePreset', it.name), {}); openSettingsSheet(); };
+    });
+  }
+}
+
+function onConvertQueue(q) {
+  showTab('conv');
+  const note = (q && q.note) || '';
+  const busy = !!(q && q.busy);
+  let banner = '';
+  if (busy || note) {
+    banner = '<div class="status"><div class="line">' + esc(note || 'очередь') + '</div>' +
+      (busy ? 'не трогайте телефон' : '') + '</div>';
+  }
+  loadConverter();
+  if (banner) $('conv-list').insertAdjacentHTML('afterbegin', banner);
 }
 
 function showTab(id) {

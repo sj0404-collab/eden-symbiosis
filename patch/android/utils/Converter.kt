@@ -21,12 +21,63 @@ object Converter {
 
     fun dir(): File = File(YuzuApplication.appContext.filesDir, "converter").also { it.mkdirs() }
 
+    @Volatile var busy: Boolean = false
+        private set
+    @Volatile var queueNote: String = ""
+        private set
+    private val pending = java.util.ArrayDeque<Pair<android.net.Uri, String>>()
+    private val done = java.util.ArrayList<org.json.JSONObject>()
+
+    fun queueJson(): String = org.json.JSONObject().apply {
+        put("busy", busy)
+        put("note", queueNote)
+        put("pending", pending.size)
+        val arr = org.json.JSONArray()
+        done.takeLast(12).forEach { arr.put(it) }
+        put("done", arr)
+    }.toString()
+
     fun listJson(): String {
         val arr = JSONArray()
         dir().listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() }?.forEach { f ->
             arr.put(probeFile(f))
         }
         return JSONObject().put("items", arr).put("path", dir().absolutePath).toString()
+    }
+
+    fun enqueue(context: Context, uris: List<Uri>): String {
+        uris.forEach { uri ->
+            pending.addLast(uri to displayName(context, uri))
+        }
+        queueNote = "в очереди ${pending.size} · не трогайте телефон"
+        if (!busy) drain(context)
+        return queueJson()
+    }
+
+    private fun drain(context: Context) {
+        busy = true
+        Thread({
+            try {
+                var i = 0
+                val total = pending.size
+                while (true) {
+                    val item = synchronized(pending) {
+                        if (pending.isEmpty()) null else pending.removeFirst()
+                    } ?: break
+                    i++
+                    queueNote = "не трогайте телефон · $i/${i + pending.size} · ${item.second}"
+                    val raw = importAndConvert(context, item.first)
+                    val obj = runCatching { org.json.JSONObject(raw) }.getOrDefault(
+                        org.json.JSONObject().put("ok", false).put("message", raw)
+                    )
+                    obj.put("source", item.second)
+                    synchronized(done) { done.add(obj) }
+                }
+                queueNote = if (done.isEmpty()) "" else "готово · ${done.size}"
+            } finally {
+                busy = false
+            }
+        }, "convert-queue").start()
     }
 
     fun importAndConvert(context: Context, uri: Uri): String = runCatching {

@@ -232,6 +232,33 @@ object SaveSource {
         return sum
     }
 
+    /** Копия NAND-сейва в выбранную папку. Не затирает саму себя. */
+    fun backupCurrent(game: org.yuzu.yuzu_emu.model.Game): String {
+        val tid = LivePanel.titleIdHex(game.programId)
+        if (tid.isEmpty()) return org.json.JSONObject().put("ok", false).put("reason", "нет TitleID").toString()
+        val nand = nandSaveRoot() ?: return org.json.JSONObject().put("ok", false).put("reason", "нет NAND").toString()
+        val src = nandSlot(nand, tid)
+        val bytes = fileBytes(src)
+        if (bytes < MIN_SAVE_BYTES) {
+            return org.json.JSONObject().put("ok", false).put("reason", "в NAND пусто").put("bytes", bytes).toString()
+        }
+        val destRoot = configuredPath
+            ?: return org.json.JSONObject().put("ok", false).put("reason", "папка сейвов не выбрана").toString()
+        val dest = java.io.File(destRoot, tid)
+        val same = runCatching { dest.canonicalPath == src.canonicalPath }.getOrDefault(false)
+        if (same) {
+            return org.json.JSONObject().put("ok", true).put("copied", false).put("reason", "это и есть папка NAND").toString()
+        }
+        val stat = copyTree(src, dest)
+        runCatching {
+            val vault = java.io.File(org.yuzu.yuzu_emu.YuzuApplication.appContext.filesDir, "save_vault")
+            NativeSymbiosis.configureVault(vault.absolutePath, 5)
+            NativeSymbiosis.backupSaves(src.absolutePath, tid, "exit")
+        }
+        return org.json.JSONObject().put("ok", stat.files > 0).put("copied", stat.files > 0)
+            .put("files", stat.files).put("bytes", stat.bytes).put("path", dest.absolutePath).toString()
+    }
+
     fun statusJson(): String {
         val path = configuredPath
         val hits = if (path != null) listHits() else emptyList()

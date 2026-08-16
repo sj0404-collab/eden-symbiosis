@@ -336,6 +336,34 @@ std::string MemoryGovernor::DescribeState() const {
     return out;
 }
 
+std::string MemoryGovernor::DescribeJson() const {
+    const u64 budget = budget_bytes.load(std::memory_order_relaxed);
+    const u64 used = Used();
+    const u64 avail = QueryAvailableSystemMemory();
+    const u64 leftover = avail;
+    const bool warn = leftover < 700ull * kMiB ||
+                      Pressure() == MemoryPressure::Critical ||
+                      Pressure() == MemoryPressure::Emergency;
+    std::string out = "{";
+    out += "\"totalMb\":" + std::to_string(total_ram_bytes.load() / kMiB);
+    out += ",\"budgetMb\":" + std::to_string(budget / kMiB);
+    out += ",\"usedMb\":" + std::to_string(used / kMiB);
+    out += ",\"gpuMb\":" + std::to_string(gpu_bytes.load() / kMiB);
+    out += ",\"leftMb\":" + std::to_string(leftover / kMiB);
+    out += ",\"pressure\":\"";
+    out += ToString(Pressure());
+    out += "\",\"warn\":";
+    out += warn ? "true" : "false";
+    out += ",\"note\":\"";
+    if (warn) {
+        out += "осталось мало RAM — лучше не запускать тяжёлую игру";
+    } else {
+        out += "памяти пока хватает";
+    }
+    out += "\"}";
+    return out;
+}
+
 MemoryGovernor& GetMemoryGovernor() {
     static MemoryGovernor instance;
     return instance;

@@ -129,6 +129,7 @@ public:
     void NoteGpuAllocation(s64 delta_bytes);
 
     [[nodiscard]] std::string DescribeState() const;
+    [[nodiscard]] std::string DescribeJson() const;
 
     /// Recommended guest-visible heap trim, in bytes, given the budget. Used to
     /// decide whether the 6 GB "extended memory layout" is safe to enable.

@@ -25,6 +25,8 @@ import org.yuzu.yuzu_emu.HomeNavigationDirections
 import org.yuzu.yuzu_emu.model.GamesViewModel
 import org.yuzu.yuzu_emu.ui.main.MainActivity
 import org.yuzu.yuzu_emu.utils.Converter
+import org.yuzu.yuzu_emu.utils.UserPresets
+import org.yuzu.yuzu_emu.utils.CrashReport
 import org.yuzu.yuzu_emu.utils.GameAddons
 import org.yuzu.yuzu_emu.utils.LivePanel
 import org.yuzu.yuzu_emu.utils.PluginPack
@@ -135,18 +137,16 @@ class LivePanelFragment : Fragment() {
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (uris.isNullOrEmpty()) return@registerForActivityResult
             val ctx = context?.applicationContext ?: return@registerForActivityResult
-            Thread {
-                uris.forEach { uri ->
-                    val raw = runCatching { Converter.importAndConvert(ctx, uri) }
-                        .getOrDefault("""{"ok":false,"message":"сбой"}""")
-                    main.post {
-                        web?.evaluateJavascript(
-                            "try{if(typeof onConverted==='function')onConverted(" + raw + ")}catch(e){}",
-                            null
-                        )
-                    }
-                }
-            }.start()
+            Converter.enqueue(ctx, uris)
+            fun tick() {
+                web?.evaluateJavascript(
+                    "try{if(typeof onConvertQueue==='function')onConvertQueue(" +
+                        Converter.queueJson() + ")}catch(e){}",
+                    null
+                )
+                if (Converter.busy) main.postDelayed({ tick() }, 700)
+            }
+            main.post { tick() }
         }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -176,7 +176,8 @@ class LivePanelFragment : Fragment() {
                 }
             }
         }
-        view.loadUrl(LivePanel.panelUrl())
+        // Сразу assets: Pages без сети мигал пустым экраном.
+        view.loadUrl(LivePanel.OFFLINE_URL)
         return view
     }
 
@@ -363,9 +364,39 @@ class LivePanelFragment : Fragment() {
         }.getOrDefault("""{"ok":false,"message":"не применилось"}""")
 
         @JavascriptInterface
+        fun crashReport(): String = runCatching { CrashReport.buildJson() }
+            .getOrDefault("""{"ok":false,"title":"отчёт не собрался"}""")
+
+        @JavascriptInterface
+        fun memory(): String = runCatching { LivePanel.memoryJson() }
+            .getOrDefault("""{"leftMb":0,"warn":false}""")
+
+        @JavascriptInterface
+        fun keysOk(): Boolean = LivePanel.keysPresent()
+
+        @JavascriptInterface
+        fun presets(): String = runCatching { UserPresets.listJson() }
+            .getOrDefault("""{"items":[]}""")
+
+        @JavascriptInterface
+        fun savePreset(name: String): String = runCatching { UserPresets.snapshot(name) }
+            .getOrDefault("""{"ok":false}""")
+
+        @JavascriptInterface
+        fun applyPreset(name: String): String = runCatching { UserPresets.apply(name) }
+            .getOrDefault("""{"ok":false}""")
+
+        @JavascriptInterface
+        fun removePreset(name: String): String = runCatching { UserPresets.remove(name) }
+            .getOrDefault("""{"ok":false}""")
+
+        @JavascriptInterface
+        fun convertQueue(): String = runCatching { Converter.queueJson() }
+            .getOrDefault("""{"busy":false,"pending":0}""")
+
+        @JavascriptInterface
         fun reloadInterface() {
             main.post {
-                // Только по кнопке. Автоматический timestamp рвал список.
                 runCatching {
                     web?.loadUrl(LivePanel.panelUrl() + "&r=" + System.currentTimeMillis())
                 }

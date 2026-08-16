@@ -8,6 +8,7 @@ import android.os.Environment
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
+import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.model.Game
 
 /**
@@ -16,7 +17,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 9
+    const val BRIDGE_VERSION = 10
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
@@ -78,7 +79,12 @@ object LivePanel {
         return JSONObject().put("folders", arr).toString()
     }
 
+    fun keysPresent(): Boolean =
+        runCatching { NativeLibrary.areKeysPresent() }.getOrDefault(false)
+
     fun rememberedGames(): List<Game> {
+        if (!keysPresent()) return emptyList()
+
         val live = runCatching { GameHelper.cachedGameList }.getOrDefault(emptyList())
         if (live.isNotEmpty()) return live
         val fromPrefs = runCatching {
@@ -116,11 +122,21 @@ object LivePanel {
                     put("saveSize", if (probe.bytes >= MIN_SAVE_BYTES)
                         GameFolderScanner.humanSize(probe.bytes) else "")
                     put("addons", GameAddons.toJson(addons))
+                    val meta = runCatching { GameCardMeta.forGame(g) }.getOrNull()
+                    if (meta != null) {
+                        put("play", meta.playLabel)
+                        put("playSeconds", meta.playSeconds)
+                        put("shots", meta.shots)
+                    }
                 }
             )
         }
-        return JSONObject().put("games", arr).toString()
+        return JSONObject().put("games", arr).put("keys", keysPresent()).toString()
     }
+
+    fun memoryJson(): String = runCatching {
+        NativeSymbiosis.getMemoryJson()
+    }.getOrDefault("""{"leftMb":0,"warn":false,"note":"память недоступна"}""")
 
     fun prepareShaders(): String {
         var flipped = 0

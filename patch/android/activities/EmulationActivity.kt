@@ -816,10 +816,13 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
             Log.info("[EmulationActivity] ROM swap native stop acknowledged")
             launchPendingRomSwap(force = false)
         } else if (status == 0 && emulationViewModel.programChanged.value == -1) {
+            val leaving = processSessionGame
             processSessionGame = null
-            // Give the GPU a beat to drop the swapchain before the activity
-            // tears the window down. Immediate finish() crashed Mali-G57.
-            mainHandler.postDelayed({ finish() }, 250)
+            // Save first, then give the GPU a beat. Immediate finish() crashed Mali-G57.
+            Thread({
+                leaving?.let { runCatching { org.yuzu.yuzu_emu.utils.SaveSource.backupCurrent(it) } }
+                mainHandler.postDelayed({ finish() }, 250)
+            }, "save-on-exit").start()
         } else if (!isWaitingForRomSwapStop) {
             processSessionGame = null
         }
