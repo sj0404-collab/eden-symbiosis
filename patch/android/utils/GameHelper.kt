@@ -83,7 +83,7 @@ object GameHelper {
         val keysOk = runCatching { NativeLibrary.areKeysPresent() }.getOrDefault(false)
         if (!keysOk) {
             hasScanned = true
-            cachedGameList = emptyList()
+            cachedGameList = mutableListOf()
             return emptyList()
         }
 
