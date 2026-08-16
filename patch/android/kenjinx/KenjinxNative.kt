@@ -9,8 +9,8 @@ package org.kenjinx.android
  * This is a shim, not Kenji's UI.
  */
 object KenjinxNative {
-    @Volatile var surfacePtr: Long = -1
-    @Volatile var windowHandle: Long = -1
+    @Volatile var nativeSurface: Long = -1
+    @Volatile var nativeWindow: Long = -1
 
     @JvmStatic
     fun test() { /* official no-op */ }
@@ -22,10 +22,10 @@ object KenjinxNative {
     fun updateProgress(infoPtr: Long, progress: Float) { /* ignore */ }
 
     @JvmStatic
-    fun getSurfacePtr(): Long = surfacePtr
+    fun getSurfacePtr(): Long = nativeSurface
 
     @JvmStatic
-    fun getWindowHandle(): Long = windowHandle
+    fun getWindowHandle(): Long = nativeWindow
 
     @JvmStatic
     fun updateUiHandler(

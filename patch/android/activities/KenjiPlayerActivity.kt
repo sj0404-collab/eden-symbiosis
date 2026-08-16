@@ -111,8 +111,8 @@ class KenjiPlayerActivity : Activity(), SurfaceHolder.Callback {
         started = true
         loopThread = Thread({
             val nw = KenjiBridge.nativeWindow(holder.surface)
-            org.kenjinx.android.KenjinxNative.surfacePtr = nw
-            org.kenjinx.android.KenjinxNative.windowHandle = nw
+            org.kenjinx.android.KenjinxNative.nativeSurface = nw
+            org.kenjinx.android.KenjinxNative.nativeWindow = nw
             val prep = KenjiBridge.preparePlay(this)
             if (!prep.ok) {
                 runOnUiThread { fail(prep.message) }
