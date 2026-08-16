@@ -3,13 +3,9 @@
 SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
 SPDX-License-Identifier: GPL-3.0-or-later
 
-Adaptive-icon foreground. The safe zone for an adaptive icon is the middle
-66dp of the 108dp canvas, so the artwork is kept well inside that. Launchers
-mask this to circles, squircles and rounded squares, and anything near the edge
-would be clipped on some devices.
-
-The mark matches the splash: two interlocking rings whose overlap forms a
-single shared core: two incomplete components forming one working whole.
+Own mark, not Eden's leaf and not Kenji's. Pink blade over a cyan ring:
+one core that actually runs games, one orbit for the optional second core.
+Safe zone of the 108dp adaptive canvas.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -17,26 +13,18 @@ single shared core: two incomplete components forming one working whole.
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Left ring -->
     <path
-        android:pathData="M46,54m-19,0a19,19 0,1 1,38 0a19,19 0,1 1,-38 0"
-        android:strokeColor="#4DD8C0"
-        android:strokeWidth="5.5"
+        android:pathData="M54,54m-22,0a22,22 0,1 1,44 0a22,22 0,1 1,-44 0"
+        android:strokeColor="#3EE0D4"
+        android:strokeWidth="4.5"
         android:fillColor="#00000000"
         android:strokeLineCap="round" />
 
-    <!-- Right ring -->
     <path
-        android:pathData="M62,54m-19,0a19,19 0,1 1,38 0a19,19 0,1 1,-38 0"
-        android:strokeColor="#7C6CF0"
-        android:strokeWidth="5.5"
-        android:fillColor="#00000000"
-        android:strokeLineCap="round" />
+        android:pathData="M54,32 L66,70 L54,62 L42,70 Z"
+        android:fillColor="#FF2D78" />
 
-    <!-- Shared core -->
     <path
-        android:pathData="M54,38 C59,42 62,48 62,54 C62,60 59,66 54,70 C49,66 46,60 46,54 C46,48 49,42 54,38 Z"
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.95" />
-
+        android:pathData="M54,54m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0"
+        android:fillColor="#ECECF4" />
 </vector>

@@ -542,7 +542,7 @@ object LivePanel {
                 is EngineLoader.State.Missing ->
                     "нет файла · ${(EngineLoader.KNOWN_SIZE[e] ?: 0L) / 1048576} МБ"
                 is EngineLoader.State.Broken -> st.reason
-                is EngineLoader.State.Ready -> "скачан, запуск игр — только Eden"
+                is EngineLoader.State.Ready -> "скачан, запуск игр — только основное ядро"
                 is EngineLoader.State.Builtin -> "встроено, запускает игры"
             }
             arr.put(
@@ -562,7 +562,7 @@ object LivePanel {
             .put("launch", launch.id)
             .put("launchLabel", launch.label)
             .put("items", arr)
-            .put("note", "игры запускает только Eden. Kenji — другое ядро, не этот экран запуска.")
+            .put("note", "игры запускает только основное ядро (Symbiosis). Второе ядро — Kenji-NX под нашей маркой, не плеер этого APK.")
             .toString()
     }
 

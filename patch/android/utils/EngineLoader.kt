@@ -41,8 +41,8 @@ object EngineLoader {
 
     /** Engines this build knows about. Eden is always present. */
     enum class Engine(val id: String, val label: String) {
-        EDEN("eden", "Eden"),
-        KENJI("kenji", "Kenji-NX"),
+        EDEN("eden", "Symbiosis"),
+        KENJI("kenji", "Второе ядро"),
     }
 
     /** What has to be true before an engine can be selected. */

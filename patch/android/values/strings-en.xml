@@ -2,7 +2,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
     <!-- General application strings -->
-    <string name="app_name" translatable="false">Eden</string>
+    <string name="app_name" translatable="false">Symbiosis</string>
     <string name="app_disclaimer">Eden Symbiosis runs Nintendo Switch games and is tuned for devices that only have their system GPU driver.&lt;br /&gt;&lt;br /&gt;It composes a working graphics stack out of drivers that are individually incomplete, keeps memory inside what the OS actually grants the app, watches the temperature, and can render games with the colour depth and resolution of older machines.&lt;br /&gt;&lt;br /&gt;No game titles or keys are included. Locate your <![CDATA[<b> prod.keys </b>]]> file before you begin.</string>
     <string name="notice_notification_channel_name">Notices and errors</string>
     <string name="notice_notification_channel_id" translatable="false">noticesAndErrors</string>

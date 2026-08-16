@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d0d12">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Eden</title>
+<title>Symbiosis</title>
 <style>
   :root {
     --bg:#101014; --card:#16161c; --line:#2a2a36; --text:#ececf4;
@@ -25,7 +25,21 @@
     display:flex; align-items:center; gap:6px;
     padding:6px 12px 0;
   }
-  header h1 { font-size:22px; font-weight:700; margin:0; flex:1; }
+  header h1 { font-size:22px; font-weight:700; margin:0; flex:1; display:flex; align-items:center; gap:8px; }
+  header h1 svg { width:28px; height:28px; flex:0 0 28px; }
+  .boot {
+    position:absolute; inset:0; z-index:20; background:#101014;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    transition:opacity .45s ease;
+  }
+  .boot.go { opacity:0; pointer-events:none; }
+  .boot .mark { width:88px; height:88px; animation:spin-mark 1.1s ease-in-out infinite; }
+  .boot p { color:var(--dim); margin:14px 0 0; font-size:13px; }
+  @keyframes spin-mark {
+    0% { transform:rotate(-8deg) scale(.92); }
+    50% { transform:rotate(8deg) scale(1); }
+    100% { transform:rotate(-8deg) scale(.92); }
+  }
   .iconbtn {
     min-width:36px; height:36px; border-radius:12px; border:1px solid var(--line);
     background:#1c1c26; color:var(--text); font-size:13px; padding:0 9px;
@@ -281,8 +295,23 @@
 </style>
 </head>
 <body>
+<div class="boot" id="boot">
+  <svg class="mark" viewBox="0 0 108 108" aria-hidden="true">
+    <circle cx="54" cy="54" r="22" fill="none" stroke="#3EE0D4" stroke-width="4.5"/>
+    <path fill="#FF2D78" d="M54 32l12 38-12-8-12 8z"/>
+    <circle cx="54" cy="54" r="5" fill="#ececf4"/>
+  </svg>
+  <p>Symbiosis</p>
+</div>
 <header>
-  <h1>Eden</h1>
+  <h1>
+    <svg viewBox="0 0 108 108" aria-hidden="true">
+      <circle cx="54" cy="54" r="22" fill="none" stroke="#3EE0D4" stroke-width="4.5"/>
+      <path fill="#FF2D78" d="M54 32l12 38-12-8-12 8z"/>
+      <circle cx="54" cy="54" r="5" fill="#ececf4"/>
+    </svg>
+    Symbiosis
+  </h1>
   <button class="iconbtn" id="btn-plugins">Плагины</button>
   <button class="iconbtn" id="btn-reload" title="Обновить интерфейс">↻</button>
   <button class="iconbtn" id="btn-tools">Утилиты</button>
@@ -1268,6 +1297,8 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catc
 loadGames();
 loadStatus();
 applyPlugins();
+setTimeout(() => { const b = $('boot'); if (b) b.classList.add('go'); }, 700);
+setTimeout(() => { const b = $('boot'); if (b) b.remove(); }, 1200);
 try {
   const tab = localStorage.getItem('eden-tab') || 'launch';
   if (tab === 'games' || tab === 'conv' || tab === 'launch') showTab(tab);
