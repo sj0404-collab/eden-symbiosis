@@ -863,11 +863,15 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                     // dying and killed the process on Mali-G57.
                     clearPausedFrame()
                     runCatching { emulationState.pause() }
+                    val leaving = game
+                    Thread({
+                        runCatching { GameCardMeta.captureCurrentFrame(leaving) }
+                    }, "shot-on-exit").start()
                     emulationViewModel.setIsEmulationStopping(true)
                     binding.drawerLayout.close()
                     Handler(Looper.getMainLooper()).postDelayed({
                         runCatching { emulationState.stop() }
-                    }, 200)
+                    }, 280)
                     true
                 }
 
@@ -2561,12 +2565,6 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             return
         }
 
-        if (overlayHiddenByPhysicalController) {
-            overlayHiddenByPhysicalController = false
-            toggleOverlay(true)
-        }
-    }
-}
         if (overlayHiddenByPhysicalController) {
             overlayHiddenByPhysicalController = false
             toggleOverlay(true)
