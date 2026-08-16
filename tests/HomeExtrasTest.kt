@@ -15,6 +15,26 @@ fun parsePlay(raw: ByteArray): Long {
     return 0
 }
 
+fun secondsFromRecords(raw: ByteArray, wantIds: Set<Long>): Long {
+    if (raw.size < 16 || wantIds.isEmpty()) return 0
+    val bb = java.nio.ByteBuffer.wrap(raw).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    val n = raw.size / 16
+    var best = 0L
+    repeat(n) {
+        val id = bb.long
+        val sec = bb.long
+        if (id in wantIds && sec in 1..(3600L * 24 * 365 * 20) && sec > best) best = sec
+    }
+    return best
+}
+
+fun recordBytes(id: Long, seconds: Long): ByteArray {
+    val bb = java.nio.ByteBuffer.allocate(16).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    bb.putLong(id)
+    bb.putLong(seconds)
+    return bb.array()
+}
+
 fun formatPlay(seconds: Long): String {
     if (seconds <= 0) return ""
     val h = seconds / 3600
@@ -49,11 +69,6 @@ fun main() {
     check("short bin is not a fake play time", secondsFromRecords(ByteArray(8), setOf(blade)) == 0L)
     check("no keys → empty list", listWithoutKeys(false, listOf("a.nsp")).isEmpty())
     check("keys → keep disk", listWithoutKeys(true, listOf("a.nsp")) == listOf("a.nsp"))
-    check("700 mb is the warn line", warnRam(500) && !warnRam(900))
-    println("\n$pass passed, $fail failed")
-    if (fail > 0) kotlin.system.exitProcess(1)
-}
-, listWithoutKeys(true, listOf("a.nsp")) == listOf("a.nsp"))
     check("700 mb is the warn line", warnRam(500) && !warnRam(900))
     println("\n$pass passed, $fail failed")
     if (fail > 0) kotlin.system.exitProcess(1)
