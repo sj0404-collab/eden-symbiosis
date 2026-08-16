@@ -199,9 +199,18 @@ class LivePanelFragment : Fragment() {
     }
 
     override fun onDestroyView() {
-        // Keep the WebView. destroy() here raced the properties transition
-        // and killed the process on Mali-G57 when coming back.
         (web?.parent as? ViewGroup)?.removeView(web)
+        // A detached WebView still receives the configuration change when the
+        // user rotates on another screen and native-crashes on Mali-G57.
+        if (activity?.isChangingConfigurations != true) {
+            web?.apply {
+                stopLoading()
+                removeJavascriptInterface("Symbiosis")
+                loadUrl("about:blank")
+                destroy()
+            }
+            web = null
+        }
         super.onDestroyView()
     }
 

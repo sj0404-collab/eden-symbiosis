@@ -527,6 +527,12 @@ class GamePropertiesFragment : Fragment() {
         reloadList()
     }
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (_binding == null) return
+        reloadList()
+    }
+
     private fun setInsets() =
         ViewCompat.setOnApplyWindowInsetsListener(
             binding.root
@@ -537,18 +543,17 @@ class GamePropertiesFragment : Fragment() {
             val leftInsets = barInsets.left + cutoutInsets.left
             val rightInsets = barInsets.right + cutoutInsets.right
 
-            val smallLayout = resources.getBoolean(R.bool.small_layout)
-            if (smallLayout) {
-                binding.listAll.updateMargins(left = leftInsets, right = rightInsets)
-            } else {
+            // This layout has no iconLayout. After a rotate MainActivity keeps
+            // the same view tree (configChanges) while small_layout flips, and
+            // iconLayout!! killed the process.
+            binding.listAll.updateMargins(left = leftInsets, right = rightInsets)
+            binding.iconLayout?.let { icon ->
                 if (ViewCompat.getLayoutDirection(binding.root) ==
                     ViewCompat.LAYOUT_DIRECTION_LTR
                 ) {
-                    binding.listAll.updateMargins(right = rightInsets)
-                    binding.iconLayout!!.updateMargins(top = barInsets.top, left = leftInsets)
+                    icon.updateMargins(top = barInsets.top, left = leftInsets)
                 } else {
-                    binding.listAll.updateMargins(left = leftInsets)
-                    binding.iconLayout!!.updateMargins(top = barInsets.top, right = rightInsets)
+                    icon.updateMargins(top = barInsets.top, right = rightInsets)
                 }
             }
 
