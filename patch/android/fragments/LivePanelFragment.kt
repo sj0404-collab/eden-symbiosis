@@ -422,6 +422,11 @@ class LivePanelFragment : Fragment() {
         }.getOrDefault("")
 
         @JavascriptInterface
+        fun cover(path: String): String = runCatching {
+            LivePanel.coverJpeg(path)
+        }.getOrDefault("")
+
+        @JavascriptInterface
         fun openTools() {
             main.post {
                 runCatching {

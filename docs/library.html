@@ -197,6 +197,65 @@
   .res { display:flex; align-items:center; gap:8px; margin:8px 0; }
   .gallery { display:flex; gap:8px; overflow-x:auto; margin-top:8px; }
   .gallery img { height:72px; border-radius:8px; }
+
+  .rail-wrap {
+    position:relative; flex:1; min-height:0;
+    display:flex; align-items:center;
+  }
+  .rail {
+    flex:1; min-width:0; height:100%;
+    display:flex; align-items:center; gap:16px;
+    overflow-x:auto; overflow-y:hidden;
+    scroll-snap-type:x mandatory;
+    -webkit-overflow-scrolling:touch;
+    padding:12px 22vw 8px;
+    scrollbar-width:none;
+  }
+  .rail::-webkit-scrollbar { display:none; }
+  .slide {
+    flex:0 0 56vw; max-width:280px; height:56vw; max-height:280px;
+    scroll-snap-align:center;
+    border-radius:22px; overflow:hidden;
+    background:linear-gradient(160deg,#2a1630,#16222a);
+    border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center;
+    color:var(--pink); font-size:42px; font-weight:700;
+    transform:scale(.88); opacity:.55;
+    transition:transform .2s ease, opacity .2s ease, box-shadow .2s ease;
+  }
+  .slide.on { transform:scale(1); opacity:1; box-shadow:0 12px 40px rgba(0,0,0,.45); }
+  .slide img { width:100%; height:100%; object-fit:cover; display:block; }
+  .navb {
+    position:absolute; top:50%; transform:translateY(-50%);
+    z-index:3; width:40px; height:40px; border-radius:20px;
+    border:1px solid var(--line); background:#1c1c26cc; color:var(--text);
+    font:700 22px/40px inherit; padding:0;
+  }
+  .navb.l { left:8px; }
+  .navb.r { right:8px; }
+  .dock {
+    flex:0 0 auto; max-height:46%;
+    margin:0 10px 10px; padding:12px 14px 14px;
+    border:1px solid var(--line); border-radius:18px;
+    background:#14141c; overflow:auto;
+  }
+  .dock h2 { margin:0 0 4px; font-size:20px; }
+  .dock .who { color:var(--dim); font-size:12.5px; margin-bottom:8px; }
+  .facts { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+  .fact {
+    border:1px solid var(--line); border-radius:10px;
+    padding:6px 8px; min-width:28%;
+  }
+  .fact b { display:block; font-size:11px; color:var(--dim); font-weight:600; }
+  .fact span { font-size:13px; color:var(--text); }
+  .dock .go {
+    width:100%; height:46px; border:0; border-radius:14px;
+    background:var(--pink); color:#fff; font:700 15px inherit; margin-top:8px;
+  }
+  .dock .go:active { transform:scale(.98); }
+  .dock-shots { display:flex; gap:8px; overflow-x:auto; margin-top:8px; }
+  .dock-shots img { height:64px; border-radius:8px; flex:0 0 auto; }
+  .tabs { gap:4px; }
 </style>
 </head>
 <body>
@@ -208,10 +267,19 @@
   <button class="iconbtn" id="btn-settings">Настройки</button>
 </header>
 <div class="tabs">
-  <button class="tab on" id="tab-games">Игры</button>
+  <button class="tab on" id="tab-launch">Лаунчер</button>
+  <button class="tab" id="tab-games">Список</button>
   <button class="tab" id="tab-conv">Конвертер</button>
 </div>
-<div class="view on" id="view-games">
+<div class="view on" id="view-launch">
+  <div class="rail-wrap">
+    <button class="navb l" id="ln-prev" type="button">‹</button>
+    <div class="rail" id="rail"></div>
+    <button class="navb r" id="ln-next" type="button">›</button>
+  </div>
+  <div class="dock" id="dock"><div class="empty">нет игр</div></div>
+</div>
+<div class="view" id="view-games">
 <div class="search">
   <span style="color:var(--cyan)">⌕</span>
   <input id="q" placeholder="Найти игру…" autocomplete="off">
@@ -273,8 +341,12 @@ let SAVES = { path:'', titles:0, name:'', size:'' };
 let SORT = localStorage.getItem('eden-sort') || 'name';
 let FILTER = localStorage.getItem('eden-filter') || 'all';
 
-function render() {
-  const q = ($('q').value || '').trim().toLowerCase();
+let LAUNCH_I = 0;
+let RAIL_LIST = [];
+
+function visibleGames() {
+  const qEl = $('q');
+  const q = qEl ? (qEl.value || '').trim().toLowerCase() : '';
   let list = GAMES.slice();
   if (q) list = list.filter(g => (g.title||'').toLowerCase().includes(q) || (g.developer||'').toLowerCase().includes(q) || (g.titleId||'').toLowerCase().includes(q));
   if (FILTER === 'save') list = list.filter(g => g.hasSave);
@@ -285,6 +357,18 @@ function render() {
     if (SORT === 'play') return (b.playSeconds||0) - (a.playSeconds||0) || (a.title||'').localeCompare(b.title||'','ru');
     return (a.title||'').localeCompare(b.title||'','ru');
   });
+  return list;
+}
+
+function progressOf(g) {
+  if (!g) return 'нет данных';
+  if (g.hasSave) return 'есть сейв' + (g.saveSize ? ' · ' + g.saveSize : '');
+  if (g.playSeconds) return 'играли, сейва нет';
+  return 'не начато';
+}
+
+function render() {
+  const list = visibleGames();
   if (!N()) {
     $('list').innerHTML = '<div class="empty">Откройте из APK Eden</div>';
     return;
@@ -514,9 +598,147 @@ function openShots(g) {
   });
 }
 
+
+function renderLauncher() {
+  const rail = $('rail'), dock = $('dock');
+  if (!rail || !dock) return;
+  RAIL_LIST = visibleGames();
+  if (!RAIL_LIST.length) {
+    rail.innerHTML = '';
+    dock.innerHTML = '<div class="empty">нет игр — откройте Список и добавьте папку</div>';
+    return;
+  }
+  if (LAUNCH_I >= RAIL_LIST.length) LAUNCH_I = 0;
+  if (LAUNCH_I < 0) LAUNCH_I = RAIL_LIST.length - 1;
+  rail.innerHTML = RAIL_LIST.map((g, i) => {
+    const gi = GAMES.indexOf(g);
+    return `<div class="slide${i===LAUNCH_I?' on':''}" data-ri="${i}" id="cvl-${gi}">▶</div>`;
+  }).join('');
+  rail.querySelectorAll('.slide').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = +el.dataset.ri;
+      if (i === LAUNCH_I) play(RAIL_LIST[i]);
+      else snapTo(i);
+    });
+  });
+  paintDock();
+  RAIL_LIST.forEach((g, i) => {
+    const gi = GAMES.indexOf(g);
+    setTimeout(() => fillCover(gi, g.path), 40 * i);
+  });
+  requestAnimationFrame(() => {
+    const el = rail.querySelector('.slide.on');
+    if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
+  });
+}
+
+function fillCover(gi, path) {
+  const el = $('cvl-' + gi);
+  if (!el || !path) return;
+  const fn = (N() && typeof N().cover === 'function') ? 'cover' : 'icon';
+  const b64 = call(fn, path);
+  if (b64) el.innerHTML = '<img alt="" src="data:image/jpeg;base64,' + b64 + '">';
+}
+
+function snapTo(i) {
+  if (!RAIL_LIST.length) return;
+  const n = RAIL_LIST.length;
+  LAUNCH_I = ((i % n) + n) % n;
+  const rail = $('rail');
+  if (!rail) return;
+  rail.querySelectorAll('.slide').forEach(el => el.classList.toggle('on', +el.dataset.ri === LAUNCH_I));
+  const el = rail.querySelector('.slide.on');
+  if (el) el.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  paintDock();
+}
+
+function nearestSlide() {
+  const rail = $('rail');
+  if (!rail) return;
+  const mid = rail.scrollLeft + rail.clientWidth / 2;
+  let best = 0, dist = 1e9;
+  rail.querySelectorAll('.slide').forEach(el => {
+    const c = el.offsetLeft + el.offsetWidth / 2;
+    const d = Math.abs(c - mid);
+    if (d < dist) { dist = d; best = +el.dataset.ri; }
+  });
+  if (best !== LAUNCH_I) {
+    LAUNCH_I = best;
+    rail.querySelectorAll('.slide').forEach(el => el.classList.toggle('on', +el.dataset.ri === LAUNCH_I));
+    paintDock();
+  }
+}
+
+function paintDock() {
+  const dock = $('dock');
+  if (!dock) return;
+  const g = RAIL_LIST[LAUNCH_I];
+  if (!g) { dock.innerHTML = '<div class="empty">нет игр</div>'; return; }
+  const addons = (g.addons || []).filter(a => a && a.enabled !== false);
+  const mods = addons.length
+    ? addons.map(a => esc((a.kind === 'cheat' ? 'чит' : 'мод') + ' · ' + (a.name || ''))).join('<br>')
+    : 'нет включённых';
+  dock.innerHTML = `
+    <h2>${esc(g.title || 'без имени')}</h2>
+    <div class="who">${esc(g.developer || '')}${g.titleId ? ' · ' + esc(g.titleId) : ''}${g.fileSize ? ' · ' + esc(g.fileSize) : ''}${g.version ? ' · ' + esc(g.version) : ''}</div>
+    <div class="facts">
+      <div class="fact"><b>время</b><span>${esc(g.play || 'ещё не играли')}</span></div>
+      <div class="fact"><b>запуск</b><span>${esc(g.lastPlayedLabel || 'никогда')}</span></div>
+      <div class="fact"><b>прохождение</b><span>${esc(progressOf(g))}</span></div>
+      <div class="fact"><b>сейв</b><span>${g.hasSave ? esc(g.saveSize || 'есть') : 'нет (слоты NEW GAME)'}</span></div>
+      <div class="fact"><b>фото</b><span>${g.shots || 0}</span></div>
+      <div class="fact"><b>шейдеры</b><span>${esc(g.shaderSize || 'пусто')}</span></div>
+    </div>
+    <div class="fact" style="width:100%"><b>моды / читы</b><span>${mods}</span></div>
+    <div class="dock-shots" id="dock-shots"></div>
+    <button class="go" id="dock-go">Запустить</button>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost" id="dock-shots-btn">Все фото</button>
+      <button class="ghost" id="dock-props">Свойства</button>
+      <button class="ghost" id="dock-aaa">AAA минимум</button>
+    </div>`;
+  $('dock-go').onclick = () => play(g);
+  $('dock-shots-btn').onclick = () => openShots(g);
+  $('dock-props').onclick = () => { if (N() && N().openGameMenu) N().openGameMenu(g.path); };
+  $('dock-aaa').onclick = () => {
+    const r = parse(call('applyAaaMode'), { message: 'нет моста' });
+    const f = dock.querySelector('.who');
+    if (f) f.textContent = r.message || '';
+  };
+  fillDockShots(g);
+}
+
+function fillDockShots(g) {
+  const box = $('dock-shots');
+  if (!box || !g) return;
+  const data = parse(call('shots', g.path, g.title || ''), { items: [] });
+  const items = (data.items || []).slice(0, 8);
+  if (!items.length) {
+    box.innerHTML = g.lastShot ? '' : '<div class="note" style="margin:0">скринов нет — выйдите из игры один раз</div>';
+    if (g.lastShot) {
+      const img = document.createElement('img');
+      img.alt = '';
+      box.appendChild(img);
+      const b64 = call('shot', g.lastShot);
+      if (b64) img.src = 'data:image/jpeg;base64,' + b64;
+    }
+    return;
+  }
+  box.innerHTML = items.map((it, i) => `<img alt="" id="ds-${i}">`).join('');
+  items.forEach((it, i) => {
+    setTimeout(() => {
+      const el = $('ds-' + i);
+      if (!el) return;
+      const b64 = call('shot', it.path);
+      if (b64) el.src = 'data:image/jpeg;base64,' + b64;
+    }, 30 * i);
+  });
+}
+
 function loadGames() {
   GAMES = (parse(call('games'), { games: [] }).games) || [];
   render();
+  renderLauncher();
 }
 
 function loadStatus() {
@@ -822,12 +1044,14 @@ function onConvertQueue(q) {
 }
 
 function showTab(id) {
-  const games = id === 'games';
-  $('tab-games').classList.toggle('on', games);
-  $('tab-conv').classList.toggle('on', !games);
-  $('view-games').classList.toggle('on', games);
-  $('view-conv').classList.toggle('on', !games);
-  if (!games) loadConverter();
+  ['launch','games','conv'].forEach(k => {
+    const tab = $('tab-' + k), view = $('view-' + k);
+    if (tab) tab.classList.toggle('on', k === id);
+    if (view) view.classList.toggle('on', k === id);
+  });
+  if (id === 'conv') loadConverter();
+  if (id === 'launch') renderLauncher();
+  try { localStorage.setItem('eden-tab', id); } catch (e) {}
 }
 
 function loadConverter() {
@@ -886,6 +1110,7 @@ function onConverted(info) {
   }
 }
 
+$('tab-launch').onclick = () => showTab('launch');
 $('tab-games').onclick = () => showTab('games');
 $('tab-conv').onclick = () => showTab('conv');
 $('fab-conv').onclick = () => { if (N() && N().pickConvert) N().pickConvert(); };
@@ -906,9 +1131,22 @@ if (toolsEl) {
     if (b.dataset.filter) { FILTER = b.dataset.filter; localStorage.setItem('eden-filter', FILTER); }
     paintTools();
     render();
+    renderLauncher();
   });
   paintTools();
 }
+
+
+const railEl = $('rail');
+if (railEl) {
+  let st = 0;
+  railEl.addEventListener('scroll', () => {
+    clearTimeout(st);
+    st = setTimeout(nearestSlide, 80);
+  }, {passive:true});
+}
+if ($('ln-prev')) $('ln-prev').onclick = () => snapTo(LAUNCH_I - 1);
+if ($('ln-next')) $('ln-next').onclick = () => snapTo(LAUNCH_I + 1);
 
 $('q').addEventListener('input', render);
 $('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); };
@@ -923,6 +1161,11 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catc
 loadGames();
 loadStatus();
 applyPlugins();
+try {
+  const tab = localStorage.getItem('eden-tab') || 'launch';
+  if (tab === 'games' || tab === 'conv' || tab === 'launch') showTab(tab);
+} catch (e) {}
+
 </script>
 </body>
 </html>

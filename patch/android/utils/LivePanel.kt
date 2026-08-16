@@ -17,7 +17,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 12
+    const val BRIDGE_VERSION = 13
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
@@ -181,15 +181,20 @@ object LivePanel {
         }.toString()
     }
 
-    /** Обложка JPEG 96px, base64. Пустая строка — нет иконки, не ошибка. */
-    fun iconJpeg(path: String): String = runCatching {
+    /** Обложка JPEG, base64. Пустая строка — нет иконки, не ошибка. */
+    fun iconJpeg(path: String): String = encodeIcon(path, 128, 72)
+
+    /** Большая обложка для карусели лаунчера. */
+    fun coverJpeg(path: String): String = encodeIcon(path, 360, 78)
+
+    private fun encodeIcon(path: String, maxPx: Int, quality: Int): String = runCatching {
         val raw = GameMetadata.getIcon(path)
         if (raw == null || raw.isEmpty()) return@runCatching ""
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching ""
         var sample = 1
-        while (bounds.outWidth / sample > 128 || bounds.outHeight / sample > 128) sample *= 2
+        while (bounds.outWidth / sample > maxPx || bounds.outHeight / sample > maxPx) sample *= 2
         val opts = android.graphics.BitmapFactory.Options().apply {
             inSampleSize = sample
             inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
@@ -197,7 +202,7 @@ object LivePanel {
         val bmp = android.graphics.BitmapFactory.decodeByteArray(raw, 0, raw.size, opts)
             ?: return@runCatching ""
         val out = java.io.ByteArrayOutputStream()
-        bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 72, out)
+        bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, out)
         android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
     }.getOrDefault("")
 

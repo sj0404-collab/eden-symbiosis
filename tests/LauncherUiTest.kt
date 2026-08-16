@@ -25,6 +25,17 @@ fun filterCards(list: List<Card>, filter: String): List<Card> = when (filter) {
     else -> list
 }
 
+fun progressOf(hasSave: Boolean, playSeconds: Long, saveSize: String): String = when {
+    hasSave -> "есть сейв" + if (saveSize.isNotEmpty()) " · $saveSize" else ""
+    playSeconds > 0 -> "играли, сейва нет"
+    else -> "не начато"
+}
+
+fun wrapIndex(i: Int, n: Int): Int {
+    if (n <= 0) return 0
+    return ((i % n) + n) % n
+}
+
 fun sortCards(list: List<Card>, sort: String): List<Card> = when (sort) {
     "recent" -> list.sortedWith(compareByDescending<Card> { it.lastPlayed }.thenBy { it.title })
     "play" -> list.sortedWith(compareByDescending<Card> { it.playSeconds }.thenBy { it.title })
@@ -56,6 +67,11 @@ fun main() {
     check("filter save", filterCards(cards, "save").map { it.title } == listOf("Blade"))
     check("filter fresh", filterCards(cards, "fresh").map { it.title } == listOf("Fresh"))
     check("filter all keeps three", filterCards(cards, "all").size == 3)
+    check("progress with real save", progressOf(true, 10, "4.2 МБ") == "есть сейв · 4.2 МБ")
+    check("progress never invents percent", !progressOf(true, 10, "4.2 МБ").contains("%"))
+    check("progress unplayed", progressOf(false, 0, "") == "не начато")
+    check("wrap left from 0", wrapIndex(-1, 3) == 2)
+    check("wrap right from last", wrapIndex(3, 3) == 0)
     println("\n$pass passed, $fail failed")
     if (fail > 0) kotlin.system.exitProcess(1)
 }
