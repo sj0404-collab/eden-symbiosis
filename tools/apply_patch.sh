@@ -166,6 +166,35 @@ open(path, 'w', encoding='utf-8').write(text)
 print('  declared KenjiProbeService in :kenji')
 PYEOF
 
+# Keep the WebView across rotation. Without this MainActivity is destroyed,
+# library.html reloads and every cover is decoded again — that is the lag.
+python3 - "$MANIFEST" <<'PYROT'
+import sys
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+needle = 'android:name="org.yuzu.yuzu_emu.ui.main.MainActivity"'
+if needle not in text:
+    print('  ::warning:: MainActivity not in manifest; rotation keep not applied')
+    sys.exit(0)
+if 'orientation|screenSize' in text and needle in text:
+    # already has some configChanges near the file; still ensure MainActivity has it
+    pass
+cfg = 'android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"'
+old = '''            android:name="org.yuzu.yuzu_emu.ui.main.MainActivity"
+            android:exported="true"'''
+new = '''            android:name="org.yuzu.yuzu_emu.ui.main.MainActivity"
+            ''' + cfg + '''
+            android:exported="true"'''
+if cfg in text and old not in text:
+    print('  MainActivity already keeps the WebView on rotate')
+elif old in text:
+    text = text.replace(old, new, 1)
+    open(path, 'w', encoding='utf-8').write(text)
+    print('  MainActivity keeps WebView on rotate')
+else:
+    print('  ::warning:: MainActivity block shape changed; rotation keep not applied')
+PYROT
+
 # R8 rules for our own classes.
 #
 # A release build renames and deletes whatever R8 cannot see being used, and
