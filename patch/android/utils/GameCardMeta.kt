@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import org.json.JSONArray
 import org.json.JSONObject
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.model.Game
@@ -30,7 +31,13 @@ object GameCardMeta {
             0L
         }
         val seconds = maxOf(native, disk)
-        val shots = if (root != null) findShots(File(root), tid, game.title) else 0 to ""
+        val shots = if (root != null) {
+            val files = shotFiles(File(root), tid, game.title)
+            val last = files.maxByOrNull { it.lastModified() }?.absolutePath ?: ""
+            files.size to last
+        } else {
+            0 to ""
+        }
         return Meta(seconds, formatPlay(seconds), shots.first, shots.second)
     }
 
@@ -39,6 +46,33 @@ object GameCardMeta {
         .put("play", m.playLabel)
         .put("shots", m.shots)
         .put("lastShot", m.lastShot)
+
+    fun listShotsJson(game: Game): String {
+        val tid = LivePanel.titleIdHex(game.programId)
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull()
+        val files = if (root != null) shotFiles(File(root), tid, game.title) else emptyList()
+        val arr = JSONArray()
+        files.sortedByDescending { it.lastModified() }.forEach { f ->
+            arr.put(
+                JSONObject()
+                    .put("path", f.absolutePath)
+                    .put("name", f.name)
+                    .put("bytes", f.length())
+                    .put("size", GameFolderScanner.humanSize(f.length()))
+            )
+        }
+        return JSONObject().put("items", arr).toString()
+    }
+
+    fun shaderBytes(tid: String): Long {
+        if (tid.isEmpty()) return 0
+        val root = runCatching { DirectoryInitialization.userDirectory }.getOrNull() ?: return 0
+        val dirs = listOf(
+            File(File(root, "shader"), tid),
+            File(File(File(root, "cache"), "shader"), tid)
+        )
+        return dirs.filter { it.isDirectory }.sumOf { GameFolderScanner.directoryBytes(it.absolutePath) }
+    }
 
     /** Native ждёт десятичный programId (как в Game.programId), не hex. */
     internal fun nativePlaySeconds(programId: String): Long {
@@ -178,16 +212,16 @@ object GameCardMeta {
         return best
     }
 
-    private fun findShots(root: File, tid: String, title: String): Pair<Int, String> {
+    private fun shotFiles(root: File, tid: String, title: String): List<File> {
         val dirs = listOf(File(root, "screenshots"), File(root, "dump/screenshots"))
             .filter { it.isDirectory }
-        if (dirs.isEmpty()) return 0 to ""
+        if (dirs.isEmpty()) return emptyList()
         val want = buildList {
             add(tid.lowercase())
             addAll(SaveSource.titleAliases(tid).map { it.lowercase() })
             title.lowercase().trim().takeIf { it.length >= 4 }?.let { add(it) }
         }.filter { it.isNotBlank() }
-        if (want.isEmpty()) return 0 to ""
+        if (want.isEmpty()) return emptyList()
         val matched = ArrayList<File>()
         dirs.forEach { dir ->
             dir.walkTopDown().maxDepth(3).forEach { f ->
@@ -197,9 +231,7 @@ object GameCardMeta {
                 if (want.any { hay.contains(it) }) matched.add(f)
             }
         }
-        if (matched.isEmpty()) return 0 to ""
-        val last = matched.maxByOrNull { it.lastModified() } ?: return 0 to ""
-        return matched.size to last.absolutePath
+        return matched
     }
 
     private fun scaleDown(src: Bitmap, maxW: Int): Bitmap {

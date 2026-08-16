@@ -17,7 +17,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 11
+    const val BRIDGE_VERSION = 12
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
@@ -122,6 +122,17 @@ object LivePanel {
                     put("saveSize", if (probe.bytes >= MIN_SAVE_BYTES)
                         GameFolderScanner.humanSize(probe.bytes) else "")
                     put("addons", GameAddons.toJson(addons))
+                    put("titleId", titleIdHex(g.programId))
+                    put("version", g.version)
+                    val bytes = fileBytesOf(g.path)
+                    put("fileBytes", bytes)
+                    put("fileSize", if (bytes > 0) GameFolderScanner.humanSize(bytes) else "")
+                    val last = lastPlayedOf(g.path)
+                    put("lastPlayed", last)
+                    put("lastPlayedLabel", formatLastPlayed(last))
+                    val shBytes = runCatching { GameCardMeta.shaderBytes(titleIdHex(g.programId)) }.getOrDefault(0L)
+                    put("shaderBytes", shBytes)
+                    put("shaderSize", if (shBytes > 0) GameFolderScanner.humanSize(shBytes) else "")
                     val meta = runCatching { GameCardMeta.forGame(g) }.getOrNull()
                     if (meta != null) {
                         put("play", meta.playLabel)
@@ -429,4 +440,79 @@ object LivePanel {
         title = title.ifBlank { path.substringAfterLast('/').ifBlank { "game" } },
         path = path
     )
+
+    fun fileBytesOf(path: String): Long {
+        if (path.isBlank()) return 0
+        if (path.startsWith("/")) {
+            val f = File(path)
+            return if (f.isFile) f.length() else 0L
+        }
+        return runCatching { NativeLibrary.getSize(path) }.getOrDefault(0L).coerceAtLeast(0L)
+    }
+
+    fun lastPlayedOf(path: String): Long = runCatching {
+        val ctx = org.yuzu.yuzu_emu.YuzuApplication.appContext
+        androidx.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
+            .getLong(path + "_LastPlayed", 0L)
+    }.getOrDefault(0L)
+
+    fun markPlayed(path: String) {
+        if (path.isBlank()) return
+        runCatching {
+            val ctx = org.yuzu.yuzu_emu.YuzuApplication.appContext
+            androidx.preference.PreferenceManager.getDefaultSharedPreferences(ctx)
+                .edit()
+                .putLong(path + "_LastPlayed", System.currentTimeMillis())
+                .apply()
+        }
+    }
+
+    internal fun formatLastPlayed(ms: Long, now: Long = System.currentTimeMillis()): String {
+        if (ms <= 0L) return ""
+        fun startOfDay(ts: Long): Long {
+            val cal = java.util.Calendar.getInstance()
+            cal.timeInMillis = ts
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            return cal.timeInMillis
+        }
+        val startToday = startOfDay(now)
+        val day = 24L * 3600_000
+        return when {
+            ms >= startToday -> {
+                val cal = java.util.Calendar.getInstance()
+                cal.timeInMillis = ms
+                "сегодня %02d:%02d".format(cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE))
+            }
+            ms >= startToday - day -> "вчера"
+            else -> {
+                val cal = java.util.Calendar.getInstance()
+                cal.timeInMillis = ms
+                "%02d.%02d".format(cal.get(java.util.Calendar.DAY_OF_MONTH), cal.get(java.util.Calendar.MONTH) + 1)
+            }
+        }
+    }
+
+    fun removeFolder(uri: String): String {
+        if (uri.isBlank()) return org.json.JSONObject().put("ok", false).put("message", "пустой uri").toString()
+        val dirs = runCatching { NativeConfig.getGameDirs().toList() }.getOrDefault(emptyList())
+        val next = dirs.filter { it.uriString != uri }
+        if (next.size == dirs.size) {
+            return org.json.JSONObject().put("ok", false).put("message", "такой папки нет в списке").toString()
+        }
+        runCatching { NativeConfig.setGameDirs(next.toTypedArray()) }
+        runCatching { NativeConfig.saveGlobalConfig() }
+        return org.json.JSONObject().put("ok", true)
+            .put("message", "папка убрана из библиотеки, файлы на диске целы")
+            .put("left", next.size)
+            .toString()
+    }
+
+    fun shotsJson(path: String, title: String): String {
+        val g = org.yuzu.yuzu_emu.utils.GameHelper.cachedGameList.firstOrNull { it.path == path }
+            ?: gameFrom(path, title)
+        return GameCardMeta.listShotsJson(g)
+    }
 }

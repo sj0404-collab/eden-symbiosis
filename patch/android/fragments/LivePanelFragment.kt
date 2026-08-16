@@ -28,6 +28,7 @@ import org.yuzu.yuzu_emu.utils.Converter
 import org.yuzu.yuzu_emu.utils.UserPresets
 import org.yuzu.yuzu_emu.utils.CrashReport
 import org.yuzu.yuzu_emu.utils.GameAddons
+import org.yuzu.yuzu_emu.utils.LauncherSettings
 import org.yuzu.yuzu_emu.utils.LivePanel
 import org.yuzu.yuzu_emu.utils.PluginPack
 import org.yuzu.yuzu_emu.utils.SaveSource
@@ -467,6 +468,31 @@ class LivePanelFragment : Fragment() {
             }
         }
 
+
+        @JavascriptInterface
+        fun settings(): String = runCatching { LauncherSettings.json() }
+            .getOrDefault("""{"ok":false,"toggles":[]}""")
+
+        @JavascriptInterface
+        fun setBool(key: String, on: Boolean): String = runCatching {
+            LauncherSettings.setBool(key, on)
+        }.getOrDefault("""{"ok":false,"message":"не записалось"}""")
+
+        @JavascriptInterface
+        fun setResolution(index: Int): String = runCatching {
+            LauncherSettings.setResolution(index)
+        }.getOrDefault("""{"ok":false,"message":"масштаб не записался"}""")
+
+        @JavascriptInterface
+        fun removeFolder(uri: String): String = runCatching {
+            LivePanel.removeFolder(uri)
+        }.getOrDefault("""{"ok":false,"message":"папка не убралась"}""")
+
+        @JavascriptInterface
+        fun shots(path: String, title: String): String = runCatching {
+            LivePanel.shotsJson(path, title)
+        }.getOrDefault("""{"items":[]}""")
+
         @JavascriptInterface
         fun launch(path: String, title: String) {
             if (path.isBlank()) return
@@ -478,6 +504,7 @@ class LivePanelFragment : Fragment() {
                 // Сейв из выбранной папки кладём в NAND до запуска,
                 // иначе игра рисует NEW GAME.
                 runCatching { SaveSource.adoptFor(game) }
+                runCatching { LivePanel.markPlayed(game.path) }
                 // Тот же путь, что у списка игр: отдельная Activity + extra.
                 // navigate() из WebView-фрагмента молча не открывал игру.
                 val launched = runCatching {
