@@ -563,6 +563,23 @@ class LivePanelFragment : Fragment() {
                 // иначе игра рисует NEW GAME.
                 runCatching { SaveSource.adoptFor(game) }
                 runCatching { LivePanel.markPlayed(game.path) }
+                val useKenji = LivePanel.shouldLaunchKenji(act)
+                if (useKenji) {
+                    runCatching {
+                        act.startActivity(
+                            org.yuzu.yuzu_emu.activities.KenjiPlayerActivity.intent(
+                                act, game.path, game.title
+                            )
+                        )
+                    }.onFailure {
+                        android.widget.Toast.makeText(
+                            act,
+                            "второй плеер не открылся: ${it.message}",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    return@post
+                }
                 // Тот же путь, что у списка игр: отдельная Activity + extra.
                 // navigate() из WebView-фрагмента молча не открывал игру.
                 val launched = runCatching {

@@ -23,6 +23,7 @@
 # The probe service. Named as a string in the manifest and started by the
 # system in the :kenji process; R8 sees no call site at all.
 -keep class org.yuzu.yuzu_emu.utils.KenjiProbeService { *; }
+-keep class org.yuzu.yuzu_emu.activities.KenjiPlayerActivity { *; }
 
 # Screens the navigation graph creates by name.
 -keep class org.yuzu.yuzu_emu.fragments.EnginesFragment { *; }

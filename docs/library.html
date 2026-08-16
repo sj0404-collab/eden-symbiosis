@@ -527,9 +527,8 @@ function play(g) {
   if (eng && eng.current && eng.current !== eng.launch) {
     HOLD = g;
     $('sheet-title').textContent = g.title || 'Игра';
-    $('sheet-note').textContent = 'Выбрано ядро ' + (eng.currentLabel || eng.current) +
-      ', но игры запускает только Eden. Kenji — другой эмулятор, в этот APK как плеер не встроен.';
-    $('sheet-actions').innerHTML = '<button class="go" id="a-go">Запустить на Eden</button><button class="ghost" id="a-eng">Ядра</button><button class="ghost" id="a-close">Отмена</button>';
+    $('sheet-note').textContent = 'Второе ядро выбрано, но файл не скачан. Скачайте в Ядрах или запустите на основном.';
+    $('sheet-actions').innerHTML = '<button class="go" id="a-go">Основное ядро</button><button class="ghost" id="a-eng">Скачать ядро</button><button class="ghost" id="a-close">Отмена</button>';
     $('a-go').onclick = () => { closeSheet(); N().launch(g.path, g.title || ''); };
     $('a-eng').onclick = () => { closeSheet(); if (N().openEngines) N().openEngines(); };
     $('a-close').onclick = closeSheet;

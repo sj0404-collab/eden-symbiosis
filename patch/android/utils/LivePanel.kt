@@ -515,6 +515,11 @@ object LivePanel {
             .toString()
     }
 
+    fun shouldLaunchKenji(context: Context): Boolean {
+        if (EnginePreference.selectedRaw(context) != EngineLoader.Engine.KENJI) return false
+        return EngineLoader.state(context, EngineLoader.Engine.KENJI) is EngineLoader.State.Ready
+    }
+
     fun shotsJson(path: String, title: String): String {
         val g = org.yuzu.yuzu_emu.utils.GameHelper.cachedGameList.firstOrNull { it.path == path }
             ?: gameFrom(path, title)
@@ -522,12 +527,14 @@ object LivePanel {
     }
 
     /**
-     * Eden is compiled in and is the only core that can launch a game here.
-     * Kenji can be downloaded and probed; it does not start titles in this APK.
+     * Two players. Eden/Symbiosis is compiled in. Kenji, if downloaded,
+     * starts KenjiPlayerActivity in the :kenji process.
      */
     fun enginesJson(context: Context): String {
         val raw = EnginePreference.selectedRaw(context)
-        val launch = EngineLoader.Engine.EDEN
+        val kenjiReady = EngineLoader.state(context, EngineLoader.Engine.KENJI) is EngineLoader.State.Ready
+        val launch = if (raw == EngineLoader.Engine.KENJI && kenjiReady)
+            EngineLoader.Engine.KENJI else EngineLoader.Engine.EDEN
         val arr = JSONArray()
         EngineLoader.Engine.values().forEach { e ->
             val st = EngineLoader.state(context, e)
@@ -542,7 +549,7 @@ object LivePanel {
                 is EngineLoader.State.Missing ->
                     "нет файла · ${(EngineLoader.KNOWN_SIZE[e] ?: 0L) / 1048576} МБ"
                 is EngineLoader.State.Broken -> st.reason
-                is EngineLoader.State.Ready -> "скачан, запуск игр — только основное ядро"
+                is EngineLoader.State.Ready -> "скачан · отдельный плеер в процессе :kenji"
                 is EngineLoader.State.Builtin -> "встроено, запускает игры"
             }
             arr.put(
@@ -562,7 +569,7 @@ object LivePanel {
             .put("launch", launch.id)
             .put("launchLabel", launch.label)
             .put("items", arr)
-            .put("note", "игры запускает только основное ядро (Symbiosis). Второе ядро — Kenji-NX под нашей маркой, не плеер этого APK.")
+            .put("note", "два плеера: Symbiosis в основном процессе, второе ядро — в :kenji. Падение одного не закрывает лаунчер.")
             .toString()
     }
 
@@ -581,13 +588,16 @@ object LivePanel {
                 .put("message", why).toString()
         }
         EnginePreference.select(context, engine)
-        val launches = engine == EngineLoader.Engine.EDEN
+        val kenjiReady = EngineLoader.state(context, EngineLoader.Engine.KENJI) is EngineLoader.State.Ready
+        val launches = engine == EngineLoader.Engine.EDEN ||
+            (engine == EngineLoader.Engine.KENJI && kenjiReady)
         return JSONObject().put("ok", true).put("id", engine.id).put("label", engine.label)
             .put("launches", launches)
             .put(
                 "message",
-                if (launches) "ядро Eden — игры стартуют здесь"
-                else "выбран ${engine.label}. Игры всё равно запустит Eden — Kenji в этот APK не встроен как плеер."
+                if (engine == EngineLoader.Engine.KENJI)
+                    "второе ядро · отдельный плеер. Если упадёт — закроется только он."
+                else "основное ядро Symbiosis"
             )
             .toString()
     }

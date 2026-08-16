@@ -119,11 +119,11 @@ if ! grep -q "symbiosis_kenji" "$CM"; then
 
 # ── Kenji-NX bridge ────────────────────────────────────────────────
 add_library(symbiosis_kenji SHARED symbiosis_kenji_bridge.cpp)
-target_link_libraries(symbiosis_kenji PRIVATE log dl)
+target_link_libraries(symbiosis_kenji PRIVATE log dl android)
 
 # The name the core itself looks for.
 add_library(kenjinxjni SHARED symbiosis_kenji_bridge.cpp)
-target_link_libraries(kenjinxjni PRIVATE log dl)
+target_link_libraries(kenjinxjni PRIVATE log dl android)
 CMAKE
   echo "  added the Kenji bridge to jni/CMakeLists.txt"
 fi
@@ -154,6 +154,13 @@ service = """
             android:name="org.yuzu.yuzu_emu.utils.KenjiProbeService"
             android:process=":kenji"
             android:exported="false" />
+        <activity
+            android:name="org.yuzu.yuzu_emu.activities.KenjiPlayerActivity"
+            android:process=":kenji"
+            android:exported="false"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
+            android:launchMode="singleTask" />
 """
 
 marker = '</application>'
@@ -165,6 +172,39 @@ text = text.replace(marker, service + '    ' + marker, 1)
 open(path, 'w', encoding='utf-8').write(text)
 print('  declared KenjiProbeService in :kenji')
 PYEOF
+
+python3 - "$MANIFEST" <<'PYKENJI'
+import sys
+path = sys.argv[1]
+text = open(path, encoding='utf-8').read()
+if 'KenjiPlayerActivity' in text:
+    print('  KenjiPlayerActivity already in manifest')
+    sys.exit(0)
+act = '''
+        <activity
+            android:name="org.yuzu.yuzu_emu.activities.KenjiPlayerActivity"
+            android:process=":kenji"
+            android:exported="false"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
+            android:launchMode="singleTask" />
+'''
+if 'KenjiProbeService' in text:
+    text = text.replace('android:name="org.yuzu.yuzu_emu.utils.KenjiProbeService"',
+                        'android:name="org.yuzu.yuzu_emu.utils.KenjiProbeService"', 1)
+    # insert after the probe service tag
+    marker = 'android:name="org.yuzu.yuzu_emu.utils.KenjiProbeService"'
+    i = text.find(marker)
+    end = text.find('/>', i)
+    if end < 0:
+        print('  ::warning:: probe service tag not closed; player activity not added')
+        sys.exit(0)
+    text = text[:end+2] + act + text[end+2:]
+    open(path, 'w', encoding='utf-8').write(text)
+    print('  declared KenjiPlayerActivity in :kenji')
+else:
+    print('  ::warning:: KenjiProbeService missing; player activity not added')
+PYKENJI
 
 # Keep the WebView across rotation. Without this MainActivity is destroyed,
 # library.html reloads and every cover is decoded again — that is the lag.

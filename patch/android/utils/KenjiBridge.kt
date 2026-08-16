@@ -66,6 +66,12 @@ object KenjiBridge {
     private external fun nativeIsLoaded(): Boolean
     private external fun nativeLastError(): String
     private external fun nativeUnload()
+    private external fun nativeDeviceInit(): String
+    private external fun nativeGraphicsInit(): String
+    private external fun nativeAttachSurface(surface: android.view.Surface, width: Int, height: Int): String
+    private external fun nativeLoadGame(fd: Int, ext: String): String
+    private external fun nativeRunLoop(): String
+    private external fun nativePlayStop()
 
     data class Status(
         val ok: Boolean,
@@ -146,5 +152,54 @@ object KenjiBridge {
 
     fun unload() {
         if (bridgeLoaded) runCatching { nativeUnload() }
+    }
+
+    fun seedKeys(context: Context) {
+        val dest = File(context.getExternalFilesDir(null), "kenji").apply { mkdirs() }
+        val sys = File(dest, "system").apply { mkdirs() }
+        val keys = File(dest, "keys").apply { mkdirs() }
+        val srcRoot = runCatching { DirectoryInitialization.userDirectory }.getOrNull() ?: return
+        listOf("prod.keys", "title.keys").forEach { name ->
+            val src = File(File(srcRoot, "keys"), name)
+            if (!src.isFile) return@forEach
+            runCatching { src.copyTo(File(dest, name), overwrite = true) }
+            runCatching { src.copyTo(File(sys, name), overwrite = true) }
+            runCatching { src.copyTo(File(keys, name), overwrite = true) }
+        }
+    }
+
+    /** Prepare device + graphics. Surface and ROM come next. */
+    fun preparePlay(context: Context): Status {
+        seedKeys(context)
+        val started = start(context)
+        if (!started.ok) return started
+        nativeDeviceInit().takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
+        nativeGraphicsInit().takeIf { it.isNotEmpty() }?.let { return Status(false, it, started.symbols) }
+        return Status(true, "плеер второго ядра готов", started.symbols)
+    }
+
+    fun attachSurface(surface: android.view.Surface, width: Int, height: Int): Status {
+        ensureBridge()?.let { return Status(false, it) }
+        val err = runCatching { nativeAttachSurface(surface, width, height) }
+            .getOrElse { return Status(false, it.message ?: "surface") }
+        return if (err.isEmpty()) Status(true, "поверхность есть") else Status(false, err)
+    }
+
+    fun loadGame(fd: Int, ext: String): Status {
+        ensureBridge()?.let { return Status(false, it) }
+        val err = runCatching { nativeLoadGame(fd, ext.ifBlank { "nsp" }) }
+            .getOrElse { return Status(false, it.message ?: "load") }
+        return if (err.isEmpty()) Status(true, "игра передана ядру") else Status(false, err)
+    }
+
+    /** Blocks until the core leaves the run loop. Call from a worker thread. */
+    fun runLoop(): Status {
+        ensureBridge()?.let { return Status(false, it) }
+        val err = runCatching { nativeRunLoop() }.getOrElse { return Status(false, it.message ?: "loop") }
+        return if (err.isEmpty()) Status(true, "цикл завершён") else Status(false, err)
+    }
+
+    fun stopPlay() {
+        if (bridgeLoaded) runCatching { nativePlayStop() }
     }
 }

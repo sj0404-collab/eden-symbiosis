@@ -39,7 +39,8 @@ fun cpuLabel(index: Int): String = when (index) {
 
 fun cycleCpu(cur: Int): Int = if (cur == 1) 0 else 1
 
-fun engineLaunches(id: String): Boolean = id == "eden"
+fun playerFor(selected: String, kenjiReady: Boolean): String =
+    if (selected == "kenji" && kenjiReady) "kenji" else "eden"
 
 fun wrapIndex(i: Int, n: Int): Int {
     if (n <= 0) return 0
@@ -85,7 +86,9 @@ fun main() {
     check("cpu 0 is Dynarmic", cpuLabel(0) == "Dynarmic")
     check("cpu 1 is NCE", cpuLabel(1) == "NCE")
     check("cycle dynarmic to nce", cycleCpu(0) == 1)
-    check("only Eden launches games", engineLaunches("eden") && !engineLaunches("kenji"))
+    check("eden always eden player", playerFor("eden", true) == "eden")
+    check("kenji without file stays eden", playerFor("kenji", false) == "eden")
+    check("kenji ready uses kenji player", playerFor("kenji", true) == "kenji")
     println("\n$pass passed, $fail failed")
     if (fail > 0) kotlin.system.exitProcess(1)
 }

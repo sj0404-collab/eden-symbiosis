@@ -41,6 +41,9 @@
 //   a fault is reported as a message rather than a tombstone.
 
 #include <jni.h>
+#include <android/native_window_jni.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <dlfcn.h>
 #include <android/log.h>
 #include <csetjmp>
@@ -275,6 +278,133 @@ Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeUnload(JNIEnv*, jobject) {
         dlclose(g_core);
         g_core = nullptr;
         LOGI("core unloaded");
+    }
+}
+
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeDeviceInit(JNIEnv* env, jobject) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
+    using Fn = bool (*)();
+    auto fn = reinterpret_cast<Fn>(dlsym(g_core, "deviceInitialize"));
+    if (fn == nullptr) return env->NewStringUTF("нет deviceInitialize");
+    g_inCore = 1;
+    bool ok = fn();
+    g_inCore = 0;
+    if (!ok) {
+        g_lastError = "deviceInitialize отказал";
+        return env->NewStringUTF(g_lastError.c_str());
+    }
+    return env->NewStringUTF("");
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeGraphicsInit(JNIEnv* env, jobject) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
+    using Fn = bool (*)();
+    auto fn = reinterpret_cast<Fn>(dlsym(g_core, "graphicsInitialize"));
+    if (fn == nullptr) return env->NewStringUTF("нет graphicsInitialize");
+    g_inCore = 1;
+    bool ok = fn();
+    g_inCore = 0;
+    if (!ok) {
+        g_lastError = "graphicsInitialize отказал";
+        return env->NewStringUTF(g_lastError.c_str());
+    }
+    return env->NewStringUTF("");
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeAttachSurface(JNIEnv* env, jobject, jobject surface,
+                                                             jint width, jint height) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
+    if (surface == nullptr) return env->NewStringUTF("нет поверхности");
+    ANativeWindow* win = ANativeWindow_fromSurface(env, surface);
+    if (win == nullptr) return env->NewStringUTF("ANativeWindow не создался");
+    using InputFn = void (*)(int, int);
+    if (auto infn = reinterpret_cast<InputFn>(dlsym(g_core, "inputInitialize"))) {
+        g_inCore = 1;
+        infn(width > 0 ? width : 1280, height > 0 ? height : 720);
+        g_inCore = 0;
+    }
+    using RendFn = void (*)(void*, int, long);
+    auto rfn = reinterpret_cast<RendFn>(dlsym(g_core, "graphicsInitializeRenderer"));
+    if (rfn == nullptr) {
+        ANativeWindow_release(win);
+        return env->NewStringUTF("нет graphicsInitializeRenderer");
+    }
+    g_inCore = 1;
+    rfn(nullptr, 0, reinterpret_cast<long>(win));
+    g_inCore = 0;
+    using SizeFn = void (*)(int, int);
+    if (auto sfn = reinterpret_cast<SizeFn>(dlsym(g_core, "graphicsRendererSetSize"))) {
+        g_inCore = 1;
+        sfn(width > 0 ? width : ANativeWindow_getWidth(win),
+            height > 0 ? height : ANativeWindow_getHeight(win));
+        g_inCore = 0;
+    }
+    ANativeWindow_release(win);
+    return env->NewStringUTF("");
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeLoadGame(JNIEnv* env, jobject, jint fd, jstring jext) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (g_core == nullptr) return env->NewStringUTF("ядро не загружено");
+    if (fd < 0) return env->NewStringUTF("нет дескриптора файла");
+    using LoadFn = bool (*)(int, const char*, int);
+    auto fn = reinterpret_cast<LoadFn>(dlsym(g_core, "deviceLoadDescriptor"));
+    if (fn == nullptr) return env->NewStringUTF("нет deviceLoadDescriptor");
+    const char* ext = jext ? env->GetStringUTFChars(jext, nullptr) : nullptr;
+    g_inCore = 1;
+    bool ok = fn(fd, ext ? ext : "nsp", 0);
+    g_inCore = 0;
+    if (ext) env->ReleaseStringUTFChars(jext, ext);
+    if (!ok) {
+        g_lastError = "ядро не открыло игру";
+        return env->NewStringUTF(g_lastError.c_str());
+    }
+    return env->NewStringUTF("");
+}
+
+JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativeRunLoop(JNIEnv* env, jobject) {
+    using RunFn = void (*)();
+    void* core = nullptr;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        core = g_core;
+    }
+    if (core == nullptr) return env->NewStringUTF("ядро не загружено");
+    auto fn = reinterpret_cast<RunFn>(dlsym(core, "graphicsRendererRunLoop"));
+    if (fn == nullptr) return env->NewStringUTF("нет graphicsRendererRunLoop");
+    g_inCore = 1;
+    fn();
+    g_inCore = 0;
+    return env->NewStringUTF("");
+}
+
+JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_utils_KenjiBridge_nativePlayStop(JNIEnv*, jobject) {
+    void* core = nullptr;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        core = g_core;
+    }
+    if (core == nullptr) return;
+    using SigFn = void (*)();
+    if (auto s = reinterpret_cast<SigFn>(dlsym(core, "deviceSignalEmulationClose"))) {
+        g_inCore = 1;
+        s();
+        g_inCore = 0;
+    }
+    if (auto c = reinterpret_cast<SigFn>(dlsym(core, "deviceCloseEmulation"))) {
+        g_inCore = 1;
+        c();
+        g_inCore = 0;
     }
 }
 
