@@ -312,6 +312,7 @@
     </svg>
     Symbiosis
   </h1>
+  <button class="iconbtn" id="btn-engines">Ядра</button>
   <button class="iconbtn" id="btn-plugins">Плагины</button>
   <button class="iconbtn" id="btn-reload" title="Обновить интерфейс">↻</button>
   <button class="iconbtn" id="btn-tools">Утилиты</button>
@@ -775,7 +776,7 @@ function paintDock() {
     if (f) f.textContent = r.message || '';
   };
   paintCores();
-  if ($('dock-core')) $('dock-core').onclick = ev => { ev.stopPropagation(); cycleEngine(); };
+  if ($('dock-core')) $('dock-core').onclick = ev => { ev.stopPropagation(); openEnginesSheet(); };
   if ($('dock-cpu')) $('dock-cpu').onclick = ev => { ev.stopPropagation(); cycleCpu(); };
   fillDockShots(g);
 }
@@ -795,21 +796,141 @@ function paintCores() {
 }
 
 function cycleEngine() {
-  const eng = parse(call('engines'), { items: [], current: 'eden' });
+  openEnginesSheet();
+}
+
+function engineActions(it) {
+  const btns = [];
+  if (it.state === 'missing' || it.state === 'broken') {
+    btns.push('<button class="ghost e-dl" data-id="' + esc(it.id) + '">Скачать</button>');
+  }
+  if (it.state === 'ready') {
+    btns.push('<button class="ghost e-probe" data-id="' + esc(it.id) + '">Проверить</button>');
+  }
+  if (it.usable && !it.selected) {
+    btns.push('<button class="ghost e-sel" data-id="' + esc(it.id) + '">Выбрать</button>');
+  }
+  if (it.usable) {
+    btns.push('<button class="go e-run" data-id="' + esc(it.id) + '">Запустить</button>');
+  }
+  if (it.state === 'ready') {
+    btns.push('<button class="ghost e-rm" data-id="' + esc(it.id) + '">Удалить</button>');
+  }
+  return btns.join('');
+}
+
+function openEnginesSheet(note) {
+  HOLD = null;
+  const eng = parse(call('engines'), { items: [], note: '' });
   const items = eng.items || [];
-  if (!items.length) {
+  $('sheet-title').textContent = 'Ядра';
+  const cards = items.length ? items.map(it => {
+    const mark = it.selected ? ' ✓ выбран' : '';
+    const play = it.launches ? ' · этим играют' : '';
+    return '<div class="plug" data-id="' + esc(it.id) + '">' +
+      '<div class="nm"><b>' + esc(it.label || it.id) + mark + play + '</b>' +
+      '<span style="color:var(--dim);font-size:12px">' + esc(it.note || it.state || '') + '</span></div></div>' +
+      '<div class="row" style="margin:0 0 10px">' + engineActions(it) + '</div>';
+  }).join('') : '<div class="empty" style="padding:12px">мост ядер не ответил — нужен новый APK</div>';
+  $('sheet-note').innerHTML =
+    '<div class="note">Скачать · Проверить · Запустить. Второе ядро (~55 МБ) живёт отдельным плеером: если упадёт, лаунчер останется.</div>' +
+    cards +
+    (note ? '<div class="logline"><div class="' + (String(note).indexOf('Не ') === 0 || String(note).indexOf('не ') === 0 ? 'bad' : 'ok') + '">' + esc(note) + '</div></div>' : '');
+  $('sheet-actions').innerHTML =
+    '<button class="ghost" id="a-eng-native">Открыть экран ядер</button>' +
+    '<button class="ghost" id="a-close">Закрыть</button>';
+  if ($('a-eng-native')) $('a-eng-native').onclick = () => {
+    closeSheet();
+    if (N() && N().openEngines) N().openEngines();
+  };
+  $('a-close').onclick = closeSheet;
+  $('sheet-note').querySelectorAll('.e-dl').forEach(b => {
+    b.onclick = ev => { ev.stopPropagation(); startEngineDownload(b.dataset.id); };
+  });
+  $('sheet-note').querySelectorAll('.e-probe').forEach(b => {
+    b.onclick = ev => { ev.stopPropagation(); startEngineProbe(b.dataset.id); };
+  });
+  $('sheet-note').querySelectorAll('.e-sel').forEach(b => {
+    b.onclick = ev => {
+      ev.stopPropagation();
+      const r = parse(call('selectEngine', b.dataset.id), { message: 'нет моста' });
+      openEnginesSheet(r.message || '');
+      paintCores();
+    };
+  });
+  $('sheet-note').querySelectorAll('.e-run').forEach(b => {
+    b.onclick = ev => { ev.stopPropagation(); launchWithEngine(b.dataset.id); };
+  });
+  $('sheet-note').querySelectorAll('.e-rm').forEach(b => {
+    b.onclick = ev => {
+      ev.stopPropagation();
+      const r = parse(call('removeEngine', b.dataset.id), { message: 'нет моста' });
+      openEnginesSheet(r.message || '');
+      paintCores();
+    };
+  });
+  openSheet();
+}
+
+function startEngineDownload(id) {
+  if (!N() || !N().downloadEngine) {
     if (N() && N().openEngines) N().openEngines();
     return;
   }
-  const ids = items.map(it => it.id);
-  const i = Math.max(0, ids.indexOf(eng.current || 'eden'));
-  const next = items[(i + 1) % items.length];
-  const r = parse(call('selectEngine', next.id), { message: 'нет моста' });
-  const dock = $('dock');
-  const who = dock && dock.querySelector('.who');
-  if (who) who.textContent = r.message || '';
-  if (!r.ok && r.needDownload && N() && N().openEngines) N().openEngines();
+  $('sheet-note').innerHTML = '<div class="note" id="eng-status">Скачиваю второе ядро…</div>';
+  $('sheet-actions').innerHTML = '<button class="ghost" id="a-close">Скрыть</button>';
+  $('a-close').onclick = closeSheet;
+  N().downloadEngine(id);
+}
+
+function startEngineProbe(id) {
+  if (!N() || !N().probeEngine) {
+    if (N() && N().openEngines) N().openEngines();
+    return;
+  }
+  $('sheet-note').innerHTML = '<div class="note" id="eng-status">Проверяю ядро в отдельном процессе…</div>';
+  $('sheet-actions').innerHTML = '<button class="ghost" id="a-close">Скрыть</button>';
+  $('a-close').onclick = closeSheet;
+  N().probeEngine(id);
+}
+
+function launchWithEngine(id) {
+  const r = parse(call('selectEngine', id), { message: 'нет моста' });
+  if (!r.ok) {
+    openEnginesSheet(r.message || 'ядро не выбралось');
+    paintCores();
+    if (r.needDownload) startEngineDownload(id);
+    return;
+  }
+  const g = RAIL_LIST[LAUNCH_I] || GAMES[0];
+  if (g && g.path && N() && N().launch) {
+    closeSheet();
+    paintCores();
+    N().launch(g.path, g.title || '');
+    return;
+  }
+  openEnginesSheet((r.message || 'ядро выбрано') + ' · откройте игру на лаунчере и нажмите Запустить');
   paintCores();
+}
+
+function onEngineProgress(info) {
+  const el = $('eng-status');
+  if (!el || !info) return;
+  const done = info.done || 0;
+  const total = info.total || 0;
+  el.textContent = total > 0
+    ? ('Скачиваю… ' + Math.floor(done / 1048576) + ' из ' + Math.floor(total / 1048576) + ' МБ')
+    : ('Скачиваю… ' + Math.floor(done / 1048576) + ' МБ');
+}
+
+function onEngineDone(info) {
+  paintCores();
+  openEnginesSheet((info && info.message) || (info && info.ok ? 'скачано' : 'не скачалось'));
+}
+
+function onEngineProbe(info) {
+  const msg = info && info.message ? info.message : 'нет ответа';
+  openEnginesSheet(info && info.ok ? ('Ядро запускается: ' + msg) : ('Не запустилось: ' + msg));
 }
 
 function cycleCpu() {
@@ -1286,6 +1407,7 @@ if ($('ln-next')) $('ln-next').onclick = () => snapTo(LAUNCH_I + 1);
 $('q').addEventListener('input', render);
 $('fab').onclick = () => { if (N() && N().pickFolder) N().pickFolder(); };
 $('fab-saves').onclick = pickSaves;
+$('btn-engines').onclick = () => openEnginesSheet();
 $('btn-tools').onclick = () => { if (N() && N().openUtilities) N().openUtilities(); };
 $('btn-settings').onclick = openSettingsSheet;
 $('btn-plugins').onclick = openPluginsSheet;

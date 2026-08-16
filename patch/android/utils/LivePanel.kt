@@ -17,7 +17,7 @@ import org.yuzu.yuzu_emu.model.Game
  */
 object LivePanel {
 
-    const val BRIDGE_VERSION = 14
+    const val BRIDGE_VERSION = 15
 
     private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
 
@@ -580,7 +580,7 @@ object LivePanel {
         val usable = st is EngineLoader.State.Builtin || st is EngineLoader.State.Ready
         if (!usable) {
             val why = when (st) {
-                is EngineLoader.State.Missing -> "сначала скачайте Kenji (~${(EngineLoader.KNOWN_SIZE[engine] ?: 0L) / 1048576} МБ) в Утилиты → Ядра"
+                is EngineLoader.State.Missing -> "сначала скачайте второе ядро (~${(EngineLoader.KNOWN_SIZE[engine] ?: 0L) / 1048576} МБ) — кнопка «Ядра» на лаунчере"
                 is EngineLoader.State.Broken -> (st as EngineLoader.State.Broken).reason
                 else -> "ядро недоступно"
             }

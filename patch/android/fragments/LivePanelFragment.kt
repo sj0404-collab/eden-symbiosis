@@ -552,6 +552,89 @@ class LivePanelFragment : Fragment() {
         }
 
         @JavascriptInterface
+        fun downloadEngine(id: String) {
+            val ctx = context?.applicationContext ?: return
+            val engine = org.yuzu.yuzu_emu.utils.EngineLoader.Engine.values()
+                .firstOrNull { it.id == id } ?: return
+            Thread({
+                val result = org.yuzu.yuzu_emu.utils.EngineDownloader.download(ctx, engine) { done, total ->
+                    val payload = JSONObject()
+                        .put("id", id)
+                        .put("done", done)
+                        .put("total", total)
+                        .toString()
+                    main.post {
+                        web?.evaluateJavascript(
+                            "try{if(typeof onEngineProgress==='function')onEngineProgress($payload)}catch(e){}",
+                            null
+                        )
+                    }
+                }
+                val payload = JSONObject()
+                    .put("id", id)
+                    .put("ok", result.ok)
+                    .put("message", result.message)
+                    .toString()
+                main.post {
+                    web?.evaluateJavascript(
+                        "try{if(typeof onEngineDone==='function')onEngineDone($payload)}catch(e){}",
+                        null
+                    )
+                }
+            }, "kenji-dl").start()
+        }
+
+        @JavascriptInterface
+        fun probeEngine(id: String) {
+            val ctx = context?.applicationContext ?: return
+            if (id != org.yuzu.yuzu_emu.utils.EngineLoader.Engine.KENJI.id) {
+                val payload = JSONObject()
+                    .put("id", id)
+                    .put("ok", true)
+                    .put("message", "основное ядро уже в приложении")
+                    .toString()
+                main.post {
+                    web?.evaluateJavascript(
+                        "try{if(typeof onEngineProbe==='function')onEngineProbe($payload)}catch(e){}",
+                        null
+                    )
+                }
+                return
+            }
+            org.yuzu.yuzu_emu.utils.KenjiProbeService.probe(ctx) { ok, message ->
+                val payload = JSONObject()
+                    .put("id", id)
+                    .put("ok", ok)
+                    .put("message", message)
+                    .toString()
+                main.post {
+                    web?.evaluateJavascript(
+                        "try{if(typeof onEngineProbe==='function')onEngineProbe($payload)}catch(e){}",
+                        null
+                    )
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun removeEngine(id: String): String = runCatching {
+            val ctx = requireContext().applicationContext
+            val engine = org.yuzu.yuzu_emu.utils.EngineLoader.Engine.values()
+                .firstOrNull { it.id == id }
+                ?: return@runCatching JSONObject().put("ok", false).put("message", "нет такого ядра").toString()
+            if (engine == org.yuzu.yuzu_emu.utils.EngineLoader.Engine.EDEN) {
+                return@runCatching JSONObject().put("ok", false).put("message", "основное ядро встроено, его нельзя удалить").toString()
+            }
+            if (org.yuzu.yuzu_emu.utils.EnginePreference.selectedRaw(ctx) == engine) {
+                org.yuzu.yuzu_emu.utils.EnginePreference.select(ctx, org.yuzu.yuzu_emu.utils.EngineLoader.Engine.EDEN)
+            }
+            val gone = org.yuzu.yuzu_emu.utils.EngineLoader.remove(ctx, engine)
+            JSONObject().put("ok", gone)
+                .put("message", if (gone) "второе ядро удалено с устройства" else "не удалось удалить файл ядра")
+                .toString()
+        }.getOrDefault("""{"ok":false,"message":"не удалилось"}""")
+
+        @JavascriptInterface
         fun launch(path: String, title: String) {
             if (path.isBlank()) return
             main.post {

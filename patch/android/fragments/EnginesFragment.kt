@@ -156,6 +156,28 @@ class EnginesFragment : Fragment() {
                 render()
             })
         }
+        if (usable) {
+            buttons.addView(button("Запустить") {
+                EnginePreference.select(ctx, engine)
+                val last = org.yuzu.yuzu_emu.utils.LivePanel.rememberedGames()
+                    .maxByOrNull { org.yuzu.yuzu_emu.utils.LivePanel.lastPlayedOf(it.path) }
+                if (engine == EngineLoader.Engine.KENJI && last != null) {
+                    startActivity(
+                        org.yuzu.yuzu_emu.activities.KenjiPlayerActivity.intent(
+                            ctx, last.path, last.title
+                        )
+                    )
+                } else {
+                    android.widget.Toast.makeText(
+                        ctx,
+                        if (last == null) "вернитесь на лаунчер и нажмите Запустить на игре"
+                        else "ядро выбрано — на лаунчере нажмите Запустить",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                    requireActivity().onBackPressedDispatcher.onBackPressed()
+                }
+            })
+        }
 
         if (state is EngineLoader.State.Missing || state is EngineLoader.State.Broken) {
             if (EngineLoader.deviceSupported()) {
