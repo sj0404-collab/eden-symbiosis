@@ -1,13 +1,13 @@
 {
   "kind": "CLI-агент",
-  "os": "linux",
-  "url": "https://stated-occupied-earliest-able.trycloudflare.com",
-  "agentUrl": "https://stated-occupied-earliest-able.trycloudflare.com/hub?token=zen-d2ea3659f91781575c902040",
-  "agentToken": "zen-d2ea3659f91781575c902040",
-  "branch": "agent-work",
-  "startedAt": "2026-08-17T23:58:15Z",
+  "os": "windows",
+  "url": "https://luis-family-friendship-winners.trycloudflare.com",
+  "agentUrl": "https://luis-family-friendship-winners.trycloudflare.com/hub?token=zen-f115029caa7b4756aa4db665",
+  "agentToken": "zen-f115029caa7b4756aa4db665",
+  "branch": "agent-work-windows",
+  "startedAt": "2026-08-17T23:58:20Z",
   "state": "live",
-  "runId": "32082628186",
-  "runNumber": "24",
+  "runId": "32082605067",
+  "runNumber": "23",
   "repo": "sj0404-collab/eden-symbiosis"
 }
