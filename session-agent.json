@@ -1,7 +1,13 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-14T15:55:50Z",
-  "runId": "31790779121",
-  "runNumber": "22",
+  "kind": "CLI-агент",
+  "os": "linux",
+  "url": "https://stated-occupied-earliest-able.trycloudflare.com",
+  "agentUrl": "https://stated-occupied-earliest-able.trycloudflare.com/hub?token=zen-d2ea3659f91781575c902040",
+  "agentToken": "zen-d2ea3659f91781575c902040",
+  "branch": "agent-work",
+  "startedAt": "2026-08-17T23:58:15Z",
+  "state": "live",
+  "runId": "32082628186",
+  "runNumber": "24",
   "repo": "sj0404-collab/eden-symbiosis"
 }
