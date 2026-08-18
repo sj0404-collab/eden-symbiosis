@@ -22,8 +22,16 @@ val panelAssetsSource = rootProject.file("app/src/main/java/dev/symbiosis/panel/
 
 val copyPanel by tasks.registering(Copy::class) {
     description = "Bundles the panel pages from docs/ into the APK."
-    from(docsDir) { include(panelPages) }
-    into(panelAssetsDir.map { it.dir("panel") })
+    // The destination is the assets root and the subdirectory is set on the
+    // source, so this task's output directory is exactly what gets registered
+    // as an asset source below. Copying straight into .../panel would make the
+    // output directory the panel subfolder, which cannot be handed to
+    // assets.srcDir without losing the "panel/" prefix inside the APK.
+    from(docsDir) {
+        include(panelPages)
+        into("panel")
+    }
+    into(panelAssetsDir)
 
     // Captured here rather than reached for inside the task actions: touching
     // rootProject at execution time is what breaks the configuration cache.
@@ -64,7 +72,15 @@ android {
 
     sourceSets {
         getByName("main") {
-            assets.srcDir(panelAssetsDir)
+            // Registering the task itself, not the bare directory. A plain path
+            // tells Gradle where the assets are but nothing about who produces
+            // them, so every consumer - mergeReleaseAssets, but also
+            // lintVitalAnalyzeRelease and generateReleaseLintVitalReportModel -
+            // reads a directory with no declared dependency on the task filling
+            // it. Gradle 8 treats that as an error, and the build failed on
+            // exactly those two lint tasks. Passing the TaskProvider carries the
+            // dependency to all of them automatically.
+            assets.srcDir(copyPanel)
         }
     }
 
@@ -88,10 +104,6 @@ android {
         jvmTarget = "17"
     }
 }
-
-// Every packaging path needs the pages present, not just assembleRelease.
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
-    .configureEach { dependsOn(copyPanel) }
 
 dependencies {
     implementation("androidx.activity:activity-ktx:1.9.2")
