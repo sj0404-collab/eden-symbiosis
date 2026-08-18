@@ -1,3 +1,5 @@
+import java.util.zip.ZipFile
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -20,7 +22,7 @@ val docsDir = rootProject.file("../docs")
 val panelAssetsDir = layout.buildDirectory.dir("generated/panelAssets")
 val panelAssetsSource = rootProject.file("app/src/main/java/dev/symbiosis/panel/PanelAssets.kt")
 
-val copyPanel by tasks.registering(Copy::class) {
+val copyPanel = tasks.register<Copy>("copyPanel") {
     description = "Bundles the panel pages from docs/ into the APK."
     // The destination is the assets root and the subdirectory is set on the
     // source, so this task's output directory is exactly what gets registered
@@ -130,7 +132,7 @@ tasks.matching { it.name matches Regex("package(Debug|Release)") }.configureEach
     doLast {
         val apks = outputs.files.asFileTree.matching { include("**/*.apk") }.files
         for (apk in apks) {
-            val inside = java.util.zip.ZipFile(apk).use { zip ->
+            val inside = ZipFile(apk).use { zip ->
                 zip.entries().asSequence().map { it.name }
                     .filter { it.startsWith("assets/panel/") }.toSet()
             }
