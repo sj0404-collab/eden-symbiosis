@@ -1,7 +1,14 @@
 {
-  "state": "ended",
-  "startedAt": "2026-08-12T15:35:29Z",
-  "runId": "31595641900",
-  "runNumber": "17",
+  "kind": "Стол Linux",
+  "os": "linux",
+  "url": "https://perception-defines-threaded-subsidiary.trycloudflare.com",
+  "deskUrl": "https://perception-defines-threaded-subsidiary.trycloudflare.com/vnc.html?autoconnect=1&resize=scale&quality=6&compression=6&show_dot=true",
+  "terminal": "https://perception-defines-threaded-subsidiary.trycloudflare.com/term/",
+  "auth": "без пароля",
+  "label": "sj0404-collab",
+  "startedAt": "2026-08-18T00:12:26Z",
+  "state": "live",
+  "runId": "32083411993",
+  "runNumber": "19",
   "repo": "sj0404-collab/eden-symbiosis"
 }
