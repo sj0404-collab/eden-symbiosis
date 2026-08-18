@@ -311,8 +311,15 @@ class MainActivity : ComponentActivity() {
         /** Override for a local build or a fork, used by the tests. */
         const val EXTRA_URL = "panel_url"
 
-        /** Bumped when the shell changes; shown in the user agent. */
-        const val SHELL_VERSION = "2.0"
+        /**
+         * Build version, shown in the user agent.
+         *
+         * Taken from BuildConfig rather than written here: Gradle derives it
+         * from the commit count and sha, so there is one source of truth and
+         * nothing to remember to bump. A hand-edited constant went stale
+         * immediately - every build called itself 2.0.
+         */
+        val SHELL_VERSION: String = BuildConfig.PANEL_VERSION
 
         private val BACKGROUND = Color.parseColor("#0d0d12")
     }

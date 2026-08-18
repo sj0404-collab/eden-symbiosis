@@ -3528,7 +3528,13 @@ function startEmbeddedServer() {
         const startedMs = parseInt(process.env.SESSION_STARTED_MS || '0', 10) || (Date.now() - Math.round(process.uptime() * 1000));
         const elapsedMs = Date.now() - startedMs;
         json(res, 200, { home: WORKSPACE_ROOT, workspace: WORKSPACE_ROOT, platform: process.platform, mode: access.local ? 'local' : 'remote', ip: address, state, terminalAvailable: !!nodePty && !!WebSocketServer, terminalTtlMs: HUB_PTY_TTL_MS,
-          session: { startedMs, elapsedMs, limitMs, remainingMs: limitMs ? Math.max(0, limitMs - elapsedMs) : null } }); return;
+          session: { startedMs, elapsedMs, limitMs, remainingMs: limitMs ? Math.max(0, limitMs - elapsedMs) : null },
+          // Which commit is actually serving this page. The hub is served by
+          // the agent, not by the APK, so a stale session keeps showing old
+          // UI long after a fix is merged - and there was no way to tell.
+          build: agentBuildInfo(),
+          // What the single key resolved to. Never the values themselves.
+          keys: symbiosisKeyReport() }); return;
       }
       if (url.pathname === '/api/path-history' && req.method === 'GET') { const state = loadHubState(); json(res, 200, { success: true, recentPaths: state.recentPaths || [] }); return; }
       if (url.pathname === '/api/path-history' && req.method === 'POST') { const body = await readJson(req); const p = hubPath(body.p); if (p.error) { json(res, 400, p); return; } const state = loadHubState(); state.recentPaths = [p.path, ...(state.recentPaths || []).filter(x => x !== p.path)].slice(0, 50); saveHubState(state); json(res, 200, { success: true, recentPaths: state.recentPaths }); return; }
@@ -4085,7 +4091,7 @@ function openSecretKeyInput() {
     return false;
   }
 }
-function openRouterKey() { return CONFIG.openRouterApiKey || process.env.OPENROUTER_API_KEY || ''; }
+function openRouterKey() { return CONFIG.openRouterApiKey || process.env.OPENROUTER_API_KEY || symbiosisKeys().openrouter || ''; }
 function openRouterRequest(payload) {
   return new Promise((resolve, reject) => {
     const key = openRouterKey();
@@ -4154,7 +4160,93 @@ async function fetchOpenRouterFreeModels() {
   });
 }
 
-function githubModelsToken() { return process.env.GITHUB_MODELS_TOKEN || process.env.GITHUB_TOKEN || ''; }
+// ═══════════════════════════════════════════════════════════════════
+//  BUILD IDENTITY
+// ═══════════════════════════════════════════════════════════════════
+//
+// The hub is served by whichever agent session is running, so the UI in front
+// of the user can be hours behind main while the repository is already fixed -
+// which is exactly what happened: a full-screen chat shipped, the model list
+// did not, because the session predated it. Reporting the commit makes that
+// visible instead of looking like the fix never landed.
+let AGENT_BUILD_CACHE = null;
+function agentBuildInfo() {
+  if (AGENT_BUILD_CACHE) return AGENT_BUILD_CACHE;
+  const run = args => {
+    try {
+      return execFileSync('git', args, { cwd: __dirname, encoding: 'utf8', timeout: 2500 }).trim();
+    } catch { return ''; }
+  };
+  const sha = run(['rev-parse', '--short', 'HEAD']);
+  const count = run(['rev-list', '--count', 'HEAD']);
+  const when = run(['log', '-1', '--format=%cI']);
+  AGENT_BUILD_CACHE = {
+    version: count && sha ? `${count}.${sha}` : 'dev',
+    commit: sha || null,
+    committedAt: when || null,
+    startedAt: new Date(Date.now() - Math.round(process.uptime() * 1000)).toISOString()
+  };
+  return AGENT_BUILD_CACHE;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ONE KEY
+// ═══════════════════════════════════════════════════════════════════
+//
+// Six secrets had to be set by hand - OPENROUTER_API_KEY, HF_TOKEN,
+// GITHUB_TOKEN, GITHUB_MODELS_TOKEN, HUGGINGFACE_TOKEN, OPENAI_API_KEY - each
+// with its own name, and getting one wrong showed up only as a provider
+// silently listed as unavailable. SYMBIOSIS_KEY takes them all: one secret,
+// newline- or comma-separated, and each token is routed by its own prefix.
+//
+// Prefixes are unambiguous and issuer-assigned, so nothing has to be labelled:
+//   sk-or-...        OpenRouter
+//   hf_...           Hugging Face
+//   ghp_ / gho_ /
+//   ghu_ / ghs_ /
+//   github_pat_...   GitHub
+//   sk-ant-...       Anthropic
+//   sk-...           OpenAI (checked last: sk-or- and sk-ant- are narrower)
+//
+// The individual variables still win when set, so an existing setup keeps
+// working and a single provider can be overridden without touching the rest.
+let SYMBIOSIS_KEY_CACHE = null;
+function symbiosisKeys() {
+  if (SYMBIOSIS_KEY_CACHE) return SYMBIOSIS_KEY_CACHE;
+  const out = { openrouter: '', huggingface: '', github: '', anthropic: '', openai: '', unknown: [] };
+  const raw = process.env.SYMBIOSIS_KEY || process.env.SYMBIOSIS_KEYS || '';
+  for (const piece of String(raw).split(/[\s,;]+/)) {
+    const t = piece.trim();
+    if (t.length < 8) continue;
+    if (/^sk-or-/i.test(t)) out.openrouter ||= t;
+    else if (/^hf_/i.test(t)) out.huggingface ||= t;
+    else if (/^(ghp_|gho_|ghu_|ghs_|github_pat_)/i.test(t)) out.github ||= t;
+    else if (/^sk-ant-/i.test(t)) out.anthropic ||= t;
+    else if (/^sk-/i.test(t)) out.openai ||= t;
+    else out.unknown.push(t.slice(0, 6) + '…');
+  }
+  SYMBIOSIS_KEY_CACHE = out;
+  return out;
+}
+
+/** What the one key resolved to, for the UI. Never returns a secret value. */
+function symbiosisKeyReport() {
+  const k = symbiosisKeys();
+  const present = name => !!k[name];
+  return {
+    configured: !!(process.env.SYMBIOSIS_KEY || process.env.SYMBIOSIS_KEYS),
+    providers: {
+      openrouter: { fromKey: present('openrouter'), active: !!openRouterKey() },
+      huggingface: { fromKey: present('huggingface'), active: !!huggingFaceToken() },
+      github: { fromKey: present('github'), active: !!githubModelsToken() }
+    },
+    unrecognised: k.unknown
+  };
+}
+
+function githubModelsToken() {
+  return process.env.GITHUB_MODELS_TOKEN || process.env.GITHUB_TOKEN || symbiosisKeys().github || '';
+}
 async function fetchGitHubModelsCatalog() {
   const token = githubModelsToken();
   if (!token) throw new Error('GitHub Models token is not configured. Set GITHUB_TOKEN or GITHUB_MODELS_TOKEN with models:read in the Core environment.');
@@ -4172,7 +4264,7 @@ async function fetchGitHubModelsCatalog() {
     req.on('error', reject); req.on('timeout', () => req.destroy(new Error('GitHub Models catalog timeout'))); req.end();
   });
 }
-function huggingFaceToken() { return process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || ''; }
+function huggingFaceToken() { return process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || symbiosisKeys().huggingface || ''; }
 // Named here rather than inline in the settings response, so the hub's model
 // list and that response cannot drift apart. Both read these.
 const GITHUB_MODELS = [

@@ -144,6 +144,8 @@
   <span>токены <span class="v" id="m-tok">0</span></span>
   <span><span class="v" id="m-time">0с</span></span>
   <span title="Время сессии раннера">сессия <span class="v" id="m-sess">—</span></span>
+  <span title="Коммит, который отдаёт эту страницу. Хаб отдаёт агент, а не APK,
+поэтому старая сессия показывает старый интерфейс.">сборка <span class="v" id="m-build">—</span></span>
 </div>
 
 <div id="stream">
@@ -705,6 +707,22 @@ async function sessionClock(){
   try{
     const r = await fetch('/api/info', { headers: H() });
     const info = await r.json();
+    // Build identity, from the same request the clock already makes.
+    if (info.build){
+      const b = $('m-build');
+      if (b){
+        b.textContent = info.build.version || 'dev';
+        // An agent started well before its own commit means the session is
+        // running older code than the repository has - the reason a merged
+        // fix can appear missing.
+        if (info.build.committedAt && info.build.startedAt){
+          const lag = (new Date(info.build.startedAt) - new Date(info.build.committedAt)) / 60000;
+          b.title = 'Коммит ' + (info.build.commit || '?') +
+                    ' · сессия запущена ' + new Date(info.build.startedAt).toLocaleString() +
+                    (lag < -1 ? ' · внимание: код новее сессии, перезапустите агента' : '');
+        }
+      }
+    }
     const el = $('m-sess');
     const ses = info.session;
     if (!ses || !ses.limitMs){

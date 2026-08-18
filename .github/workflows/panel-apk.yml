@@ -53,6 +53,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: versionCode is the commit count, and the default
+          # shallow clone has exactly one commit - so every build would call
+          # itself version 1 and Android would refuse to install it over an
+          # earlier APK.
+          fetch-depth: 0
 
       - uses: actions/setup-java@v4
         with:

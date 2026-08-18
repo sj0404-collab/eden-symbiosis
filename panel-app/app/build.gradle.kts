@@ -18,6 +18,37 @@ val panelPages = listOf(
     "manifest.webmanifest"
 )
 
+// Version numbers come from git, so nothing has to be bumped by hand.
+//
+// Two hard-coded numbers - versionCode/versionName here, SHELL_VERSION in
+// MainActivity - meant every build claimed 2.0. Android refuses to install an
+// APK whose versionCode is not higher than the installed one, so a rebuilt
+// panel could silently fail to update on the phone, and the reported version
+// said nothing about what was actually in it.
+//
+//   versionCode  total commit count: monotonic by construction, so each build
+//                from a later commit always installs over the earlier one.
+//   versionName  "<count>.<short sha>", plus "+dirty" for an uncommitted tree,
+//                so a build can be traced back to the exact source.
+//
+// Falls back to 1 / "dev" when git is unavailable - a source download with no
+// .git still has to build.
+fun git(vararg args: String): String? = try {
+    val p = ProcessBuilder(listOf("git") + args)
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(true)
+        .start()
+    val out = p.inputStream.bufferedReader().readText().trim()
+    if (p.waitFor() == 0 && out.isNotEmpty()) out else null
+} catch (e: Exception) { null }
+
+val panelVersionCode: Int = git("rev-list", "--count", "HEAD")?.toIntOrNull() ?: 1
+val panelVersionName: String = run {
+    val sha = git("rev-parse", "--short", "HEAD")
+    val dirty = !git("status", "--porcelain").isNullOrEmpty()
+    if (sha == null) "dev" else "$panelVersionCode.$sha" + if (dirty) "+dirty" else ""
+}
+
 val docsDir = rootProject.file("../docs")
 val panelAssetsDir = layout.buildDirectory.dir("generated/panelAssets")
 val panelAssetsSource = rootProject.file("app/src/main/java/dev/symbiosis/panel/PanelAssets.kt")
@@ -68,8 +99,16 @@ android {
         applicationId = "dev.symbiosis.panel"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = panelVersionCode
+        versionName = panelVersionName
+        // So the shell reports the same string without a third copy to update.
+        buildConfigField("String", "PANEL_VERSION", "\"$panelVersionName\"")
+    }
+
+    // AGP 8 generates BuildConfig only on request, and buildConfigField above
+    // is silently ignored without this - the class would simply not exist.
+    buildFeatures {
+        buildConfig = true
     }
 
     sourceSets {
