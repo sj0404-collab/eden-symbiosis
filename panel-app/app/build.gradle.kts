@@ -72,15 +72,14 @@ android {
 
     sourceSets {
         getByName("main") {
-            // Registering the task itself, not the bare directory. A plain path
-            // tells Gradle where the assets are but nothing about who produces
-            // them, so every consumer - mergeReleaseAssets, but also
-            // lintVitalAnalyzeRelease and generateReleaseLintVitalReportModel -
-            // reads a directory with no declared dependency on the task filling
-            // it. Gradle 8 treats that as an error, and the build failed on
-            // exactly those two lint tasks. Passing the TaskProvider carries the
-            // dependency to all of them automatically.
-            assets.srcDir(copyPanel)
+            // The directory is named here; who fills it is declared below.
+            //
+            // Handing srcDir() the TaskProvider instead looked tidier and did
+            // build - but AGP resolved the asset directory without ever running
+            // the task, so the APK shipped with no assets/panel at all and the
+            // verification step caught an empty panel. Naming the path and
+            // wiring the dependency explicitly is what actually works.
+            assets.srcDir(panelAssetsDir)
         }
     }
 
@@ -102,6 +101,48 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+    }
+}
+
+// Everything that reads the generated assets directory must run after the task
+// that fills it. Two groups need this, and missing either one is fatal in a
+// different way:
+//
+//   *Assets   - mergeReleaseAssets and friends. Without this the pages are
+//               simply absent from the APK.
+//   lint*     - lintVitalAnalyzeRelease, generateReleaseLintVitalReportModel.
+//               These only read the directory, but Gradle 8 fails the build
+//               outright when a task consumes another's output undeclared.
+tasks.matching {
+    it.name.startsWith("merge") && it.name.endsWith("Assets") ||
+        it.name.startsWith("lint") ||
+        it.name.startsWith("generate") && it.name.contains("Lint") ||
+        it.name.startsWith("package") && it.name.endsWith("Assets")
+}.configureEach { dependsOn(copyPanel) }
+
+// Last line of defence, inside the build itself.
+//
+// The APK has already been produced at this point, so this catches the exact
+// failure seen on CI: a build that succeeds while assets/panel is missing,
+// leaving an app that shows "страница не входит в сборку" on the phone. Better
+// to fail the build than to publish that.
+tasks.matching { it.name matches Regex("package(Debug|Release)") }.configureEach {
+    doLast {
+        val apks = outputs.files.asFileTree.matching { include("**/*.apk") }.files
+        for (apk in apks) {
+            val inside = java.util.zip.ZipFile(apk).use { zip ->
+                zip.entries().asSequence().map { it.name }
+                    .filter { it.startsWith("assets/panel/") }.toSet()
+            }
+            val missing = panelPages.filter { "assets/panel/$it" !in inside }
+            if (missing.isNotEmpty()) {
+                throw GradleException(
+                    "${apk.name} is missing ${missing.size} panel page(s): $missing\n" +
+                        "found in the APK: ${inside.sorted()}"
+                )
+            }
+            logger.lifecycle("${apk.name}: all ${panelPages.size} panel pages packaged")
+        }
     }
 }
 
