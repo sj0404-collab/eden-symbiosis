@@ -148,8 +148,20 @@ console.log('\nthe version actually computes');
 const git = (...a) => { try { return execFileSync('git', a, { cwd: ROOT, encoding: 'utf8' }).trim(); } catch { return ''; } };
 const count = parseInt(git('rev-list', '--count', 'HEAD'), 10);
 check('the commit count is a sane number', Number.isInteger(count) && count > 0, String(count));
-check('it is greater than the old hard-coded 2', count > 2,
-  'an APK built now must out-rank the one that said versionCode 2');
+
+// A shallow clone reports one commit however long the history is, so the
+// monotonicity check below is only meaningful with the full history - and
+// asserting it anyway would fail for a reason that says nothing about the
+// code. This is not hypothetical: CI checks this repository out shallow, and
+// that is precisely what the fetch-depth requirement above exists to fix.
+const shallow = fs.existsSync(path.join(ROOT, '.git', 'shallow')) ||
+  git('rev-parse', '--is-shallow-repository') === 'true';
+if (shallow) {
+  console.log('  skip the version outranks the old hard-coded 2 — shallow clone, count is always 1');
+} else {
+  check('it is greater than the old hard-coded 2', count > 2,
+    'an APK built now must out-rank the one that said versionCode 2');
+}
 
 // ── 4. build identity is visible ─────────────────────────────────────
 console.log('\nthe running build identifies itself');
