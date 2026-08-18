@@ -98,13 +98,20 @@ check('the empty-answer guard is still there',
 // ── 2. the prompt carries real facts ─────────────────────────────────
 console.log('\nthe prompt carries live facts about the workspace');
 check('a workspace snapshot is built', /ЧТО СЕЙЧАС В РАБОЧЕЙ ПАПКЕ/.test(SRC));
+// The snapshot is framed differently once the github preset is on, so assert
+// the behaviour it must keep, not one exact sentence.
+check('the snapshot is framed for the github preset too',
+  /ЛОКАЛЬНАЯ ПАПКА \(справочно/.test(SRC));
 check('it includes the absolute path', /Полный путь: \$\{WORKSPACE_ROOT\}/.test(SRC));
 check('it counts directories and files', /Папок: \$\{dirs\.length\}/.test(SRC) && /Файлов: \$\{files\.length\}/.test(SRC));
 check('it reports whether this is a git repo and which branch',
   /Git-репозиторий: \$\{isRepo/.test(SRC));
 check('the snapshot does not replace the tools',
-  /всё равно вызови list_dir \/ git_status/.test(SRC),
+  /всё равно вызови инструмент/.test(SRC),
   'a stale snapshot must not become the answer');
+check('the tool it names follows the active preset',
+  /PRESETS\.active\.includes\('github'\)[\s\S]{0,400}github_list \/ github_commits \/ github_read[\s\S]{0,200}Обычно это list_dir \/ git_status/.test(SRC),
+  'naming local tools unconditionally overrode the github preset');
 check('an unreadable workspace is reported rather than crashing the prompt',
   /сейчас не читается/.test(SRC));
 check('the snapshot is wired into the prompt',

@@ -109,7 +109,7 @@ console.log('\npresets');
 check('presets are appended to the system prompt', /\$\{presetPrompt\(\)\}/.test(SRC));
 check('they persist to disk', /PRESETS_FILE/.test(SRC) && /savePresets/.test(SRC));
 check('the built-in github preset forbids cloning',
-  /Не вызывай git_clone/.test(SRC));
+  /НЕ используй: git_clone/.test(SRC));
 check('it lists the github_ tools to use instead', /github_commit_files/.test(SRC));
 check('there is a tables preset', /BUILT_IN_PRESETS[\s\S]{0,2000}tables:/.test(SRC));
 check('there is a local-only preset', /BUILT_IN_PRESETS[\s\S]{0,2500}local:/.test(SRC));
@@ -180,7 +180,8 @@ process.stdout.write(JSON.stringify({choices:[{message:{role:'assistant',content
   const child = spawn(process.execPath, [AGENT, '--no-dash'], {
     cwd: ROOT,
     env: { PATH: BIN + path.delimiter + process.env.PATH, MCP_PORT: String(port),
-           ZEN_BIND_HOST: '127.0.0.1', ZEN_OPEN_BROWSER: '0', HOME: TMP, ZEN_WORKSPACE: TMP },
+           ZEN_BIND_HOST: '127.0.0.1', ZEN_OPEN_BROWSER: '0', HOME: TMP, ZEN_WORKSPACE: TMP,
+           SYMBIOSIS_REPO: 'octocat/Hello-World' },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   try {
@@ -228,6 +229,28 @@ process.stdout.write(JSON.stringify({choices:[{message:{role:'assistant',content
       check('the custom preset reaches it too', sys.includes('Отвечай коротко.'));
       check('the tables rule reaches it', sys.includes('ТАБЛИЦЫ'));
       check('the github tools are described to the model', sys.includes('github_write'));
+
+      // Regressions found by talking to a real model, not by reading the code.
+      // The preset text was present and still ignored, because a nearer,
+      // more concrete instruction contradicted it.
+      const snapshot = sys.split('ПОСТОЯННЫЕ УКАЗАНИЯ')[0];
+      check('the workspace snapshot does not order local git tools in github mode',
+        !/всё равно вызови list_dir \/ git_status/.test(snapshot),
+        'this line sat just before the preset and beat it: the model ran ' +
+        'git_status and answered "тут нет git-репозитория"');
+      check('the snapshot points at the github tools instead',
+        /github_list \/ github_commits \/ github_read/.test(snapshot));
+      check('the snapshot is not framed as the place work happens',
+        sys.includes('работаешь ты через GitHub API'));
+      check('the preset forbids the local tools by name',
+        /НЕ используй: git_clone, git_status/.test(sys));
+      check('the preset forbids the "no repository here" answer',
+        sys.includes('Никогда не отвечай "тут нет git-репозитория"'));
+      // The code defaulted the repo but never told the model, so it kept
+      // asking the user for an owner/name it had already been given.
+      check('the default repository is named in the prompt',
+        /Репозиторий по умолчанию для github_\*: [\w.-]+\/[\w.-]+/.test(sys),
+        'the model asked "уточните owner/name" for a repo it was pointed at');
     }
   } finally {
     try { process.kill(-child.pid, 'SIGKILL'); } catch {}

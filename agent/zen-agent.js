@@ -3947,6 +3947,21 @@ function buildSystemPrompt() {
   // so a question about the environment looked to it like a question about
   // itself - and it answered with philosophy rather than a path. Reading a
   // directory listing costs nothing and turns that into a fact.
+  // The repository the github_* tools default to. The code knew it and the
+  // model did not, so with the github preset on it kept asking "укажите
+  // owner/name" for a repository it was already pointed at.
+  let repoFact = '';
+  try {
+    const repo = process.env.SYMBIOSIS_REPO || detectSessionRepo();
+    if (repo) {
+      repoFact = `\n- Репозиторий по умолчанию для github_*: ${repo} ` +
+        `(аргумент repo можно не передавать — он подставится сам).`;
+    } else if (PRESETS.active.includes('github')) {
+      repoFact = `\n- Репозиторий по умолчанию не задан. Спроси owner/name ` +
+        `или предложи задать SYMBIOSIS_REPO.`;
+    }
+  } catch {}
+
   let envFacts = '';
   try {
     const entries = fs.readdirSync(WORKSPACE_ROOT, { withFileTypes: true });
@@ -3961,13 +3976,23 @@ function buildSystemPrompt() {
       } catch {}
     }
     envFacts =
-      `\n\nЧТО СЕЙЧАС В РАБОЧЕЙ ПАПКЕ (снимок на момент запроса):\n` +
+      `\n\n${PRESETS.active.includes('github')
+        ? 'ЛОКАЛЬНАЯ ПАПКА (справочно — работаешь ты через GitHub API, а не здесь):'
+        : 'ЧТО СЕЙЧАС В РАБОЧЕЙ ПАПКЕ (снимок на момент запроса):'}\n` +
       `- Полный путь: ${WORKSPACE_ROOT}\n` +
       `- Папок: ${dirs.length}${dirs.length ? ' — ' + dirs.slice(0, 12).join(', ') + (dirs.length > 12 ? ', …' : '') : ''}\n` +
       `- Файлов: ${files.length}${files.length ? ' — ' + files.slice(0, 12).join(', ') + (files.length > 12 ? ', …' : '') : ''}\n` +
       `- Git-репозиторий: ${isRepo ? `да${branch ? `, ветка ${branch}` : ''}` : 'нет'}\n` +
       `Эти данные — снимок. Если пользователь спрашивает про содержимое или git, ` +
-      `всё равно вызови list_dir / git_status: снимок мог устареть, а инструмент даст точный ответ.`;
+      `всё равно вызови инструмент: снимок мог устареть, а инструмент даст точный ответ.` +
+      // Which tool that is depends on the active preset. Naming list_dir and
+      // git_status unconditionally here contradicted the github preset three
+      // lines further down - and the nearer, more concrete instruction won:
+      // the model answered "в этой папке нет git-репозитория" about a
+      // repository it was supposed to read over the API.
+      (PRESETS.active.includes('github')
+        ? ` В режиме работы через GitHub API это github_list / github_commits / github_read, а не локальные list_dir / git_status.`
+        : ` Обычно это list_dir / git_status.`);
   } catch (e) {
     envFacts = `\n\nРАБОЧАЯ ПАПКА ${WORKSPACE_ROOT} сейчас не читается (${String(e.message || e).slice(0, 80)}). ` +
       `На вопрос о папке вызови workspace_info и скажи об этой ошибке прямо.`;
@@ -3975,7 +4000,7 @@ function buildSystemPrompt() {
   const longRule = CONFIG.longTaskMode
     ? `Долгая задача включена: разрешено до ${agentStepLimit()} шагов и длительные команды. Для серверов используй process_start/process_logs, регулярно давай checkpoint и принимай /correct или /abort.`
     : 'Обычный лимит задачи: используй короткие безопасные шаги; для многочасовой работы пользователь включает /long on.';
-  return SYSTEM_PROMPT + `\n\nТЕКУЩИЙ КОНТЕКСТ MCP:\n- Платформа: ${PLATFORM.name}\n- Провайдер: ${currentProvider}\n- Модель: ${currentModel}\n- Режим: ${CONFIG.agentMode}\n- Активная AI-сессия: ${activeSession}\n- Активная рабочая папка: ${WORKSPACE_ROOT}\n- ${providerRule}\n- ${clarifyRule}\n- ${modeRule}\n- ${longRule}\n- Относительные пути разрешаются от неё; внутренняя папка Termux не используется.${envFacts}${presetPrompt()}${pluginPrompt ? `\n\nPLUGIN SYSTEM INSTRUCTIONS:\n${pluginPrompt}` : ''}`;
+  return SYSTEM_PROMPT + `\n\nТЕКУЩИЙ КОНТЕКСТ MCP:\n- Платформа: ${PLATFORM.name}\n- Провайдер: ${currentProvider}\n- Модель: ${currentModel}\n- Режим: ${CONFIG.agentMode}\n- Активная AI-сессия: ${activeSession}\n- Активная рабочая папка: ${WORKSPACE_ROOT}\n- ${providerRule}\n- ${clarifyRule}\n- ${modeRule}\n- ${longRule}\n- Относительные пути разрешаются от неё; внутренняя папка Termux не используется.${repoFact}${envFacts}${presetPrompt()}${pluginPrompt ? `\n\nPLUGIN SYSTEM INSTRUCTIONS:\n${pluginPrompt}` : ''}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -4333,8 +4358,17 @@ const BUILT_IN_PRESETS = {
     text: [
       'РЕЖИМ РАБОТЫ: напрямую через GitHub API, без клонирования.',
       '',
-      'Не вызывай git_clone и не создавай локальных копий репозитория.',
-      'Вместо локальных файловых инструментов используй github_*:',
+      'ЭТО ПРАВИЛО ВАЖНЕЕ ОСТАЛЬНЫХ. Работа идёт с удалённым репозиторием,',
+      'а не с локальной папкой. Локальная папка может быть пустой и не быть',
+      'git-репозиторием — это нормально и не мешает работе.',
+      '',
+      'НЕ используй: git_clone, git_status, git_log, git_diff, read_file,',
+      'list_dir, write_file для содержимого репозитория. Они смотрят в',
+      'локальную папку, а нужного там нет.',
+      'Никогда не отвечай "тут нет git-репозитория" — вместо этого вызови',
+      'соответствующий github_* и покажи данные с GitHub.',
+      '',
+      'Используй github_*:',
       '  github_read / github_list      — посмотреть файл или папку',
       '  github_write                   — записать файл (это сразу коммит)',
       '  github_commit_files            — несколько файлов одним коммитом',
