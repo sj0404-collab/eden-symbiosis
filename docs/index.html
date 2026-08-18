@@ -989,6 +989,16 @@ async function loadDesks() {
   const card = $('desks-card');
   if (!box || !card) return;
 
+  // The session page refreshes itself every 30 seconds, and this function
+  // rewrites the card's innerHTML. With the chat embedded that would tear down
+  // the iframe and reload the hub mid-sentence - losing whatever was typed and
+  // scrolling the conversation back to the top. The open chat is left exactly
+  // as it is; the poll still runs, it just does not touch this card.
+  //
+  // Only the chat is protected: a desk iframe is a video stream with no state
+  // to lose, and its thumbnails genuinely need refreshing.
+  if (deskOpen === 'agent' && box.querySelector('iframe')) return;
+
   const read = async slot => {
     try {
       const f = await api(
@@ -1070,7 +1080,27 @@ async function loadDesks() {
       </div>`;
   };
 
-  if (deskOpen && DESKS[deskOpen]) {
+  if (deskOpen === 'agent' && agent) {
+    // The chat opens here, inside the panel, rather than in the browser.
+    //
+    // It used to be window.open(): on a phone that leaves the app entirely,
+    // and the address carries the session token, so it ended up in another
+    // browser's history and address bar. The hub sends no X-Frame-Options and
+    // no frame-ancestors, so it frames cleanly.
+    //
+    // Taller than a desk (85vh) because this one is typed into: the composer
+    // has to stay above the keyboard.
+    const url = agent.agentUrl || agent.url || '';
+    box.innerHTML = `
+      <div class="row" style="margin-bottom:8px">
+        <button class="small">CLI-агент</button>
+        <button class="ghost small" onclick="collapseDesks()">Свернуть</button>
+      </div>
+      <iframe src="${esc(url)}" style="border:1px solid var(--line);border-radius:10px;
+              width:100%;height:85vh;background:var(--panel)"
+              allow="clipboard-read; clipboard-write"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`;
+  } else if (deskOpen && DESKS[deskOpen]) {
     const s = DESKS[deskOpen];
     const url = s.deskUrl || s.url || '';
     const other = deskOpen === 'linux' ? 'windows' : 'linux';
@@ -1092,7 +1122,10 @@ async function loadDesks() {
         <b>CLI-агент</b>
         <div class="note" style="margin:4px 0 8px" id="desk-age-agent">${esc(ageLine(agent))}</div>
         <div class="row">
-          <button class="small" onclick="window.open('${esc(agent.agentUrl || agent.url)}','_blank')">Открыть чат</button>
+          <button class="small" onclick="expandDesk('agent')">Открыть чат</button>
+          <button class="ghost small"
+                  onclick="window.open('${esc(agent.agentUrl || agent.url)}','_blank')">
+            В браузере</button>
           ${agent.runId && tok() ? `<button class="ghost small" onclick="stopRun(${agent.runId})">Выключить</button>` : ''}
         </div>
       </div>` : '';
@@ -1105,6 +1138,23 @@ async function loadDesks() {
 
 function expandDesk(slot) { deskOpen = slot; loadDesks(); }
 function collapseDesks()  { deskOpen = null; loadDesks(); }
+
+/**
+ * Open a desk or the chat inside the panel, from anywhere in the UI.
+ *
+ * The desks card sits on the session page, so a button elsewhere has to switch
+ * to that page first and then scroll to it - expanding something the user
+ * cannot see reads as a dead button. loadDesks() is async, hence the scroll on
+ * the next frame, once the iframe has been laid out.
+ */
+function openDeskInPanel(slot) {
+  go('sess');
+  expandDesk(slot);
+  requestAnimationFrame(() => {
+    const el = $('desks');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
 
 // ── one session per account ─────────────────────────────────────────
 //
@@ -1298,8 +1348,16 @@ function openLive() {
       : 'Активной сессии нет.');
     return;
   }
-  if (s.agentUrl) { window.open(s.agentUrl, '_blank'); return; }
-  if (s.vncUrl)   { window.open(s.vncUrl, '_blank'); return; }
+  // Both of these used to be window.open(), which on a phone leaves the app
+  // and hands the session token to the browser's address bar and history.
+  // They open in the panel now; "В браузере" is still there for anyone who
+  // wants a real tab.
+  //
+  // The desks card lives on the session page - there is no separate "desks"
+  // tab - and openDeskInPanel() scrolls to it, because expanding a panel that
+  // is off-screen looks like the button did nothing.
+  if (s.agentUrl) { openDeskInPanel('agent'); return; }
+  if (s.vncUrl)   { openDeskInPanel(s.rdpHost ? 'windows' : 'linux'); return; }
   if (s.rdpHost) {
     // RDP is not HTTP: there is nothing to open in a browser, so hand over the
     // details and let the RDP client take them.

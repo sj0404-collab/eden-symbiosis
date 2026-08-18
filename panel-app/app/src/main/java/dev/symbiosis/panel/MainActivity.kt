@@ -151,12 +151,7 @@ class MainActivity : ComponentActivity() {
                 // Keep the panel itself and the session tunnels inside the
                 // app; send anything else - a GitHub run page, gofile - to the
                 // browser, where the user is already signed in.
-                val internal = host == PANEL_HOST ||
-                    host.endsWith("github.io") ||
-                    host.endsWith("ngrok-free.app") ||
-                    host.endsWith("ngrok.io") ||
-                    host.endsWith("ngrok.app")
-                if (internal) return false
+                if (isInternal(host)) return false
                 return runCatching {
                     startActivity(Intent(Intent.ACTION_VIEW, url))
                     true
@@ -267,6 +262,37 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        /**
+         * Hosts that belong to this app and must open in it, not in a browser.
+         *
+         * The agent's chat is the reason this list matters. `agent.yml` puts
+         * the hub behind a **cloudflared quick tunnel**, so its address is
+         * `*.trycloudflare.com` - which was not listed here, so tapping
+         * "Открыть чат" handed the session to the browser. Outside the app the
+         * token in the URL lands in another browser's history and the user
+         * loses the panel they were working in.
+         *
+         * ngrok stays because older sessions and the desk workflows still use
+         * it; both tunnels are in the workflows today.
+         */
+        private val INTERNAL_SUFFIXES = listOf(
+            "trycloudflare.com",   // the agent hub and the desks
+            "cfargotunnel.com",    // a named cloudflare tunnel, if one is used
+            "ngrok-free.app",
+            "ngrok.io",
+            "ngrok.app",
+            "github.io"
+        )
+
+        /** True when [host] is the bundled panel or one of our own tunnels. */
+        fun isInternal(host: String?): Boolean {
+            val h = host?.lowercase() ?: return false
+            if (h == PANEL_HOST) return true
+            // endsWith alone would also match "evil-trycloudflare.com", so the
+            // suffix has to start at a label boundary.
+            return INTERNAL_SUFFIXES.any { h == it || h.endsWith(".$it") }
+        }
+
         /**
          * The origin the bundled panel is served under.
          *
