@@ -116,9 +116,26 @@
 <header>
   <span class="title"><b>Zen</b> Agent</span>
   <select id="model" style="max-width:38%"></select>
+  <button class="ghost" onclick="togglePresets()" title="Пресеты — постоянные указания">☰</button>
   <button class="ghost" onclick="toggleLocal()" title="Локальная модель в раннере">⤓</button>
   <button class="ghost" onclick="toggleTerm()" title="Терминал">▣</button>
 </header>
+
+<!-- Presets: standing instructions that apply to every task, so a way of
+     working is stated once instead of being retyped - "here is the token,
+     work straight on GitHub, do not clone anything". -->
+<div id="presets" style="display:none;border-bottom:1px solid var(--line);
+     background:var(--panel);padding:10px 12px">
+  <div style="font-size:13px;color:var(--dim);margin-bottom:8px">
+    Постоянные указания. Действуют на каждую задачу, пока включены.
+  </div>
+  <div id="preset-list"></div>
+  <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">
+    <input id="preset-id" placeholder="имя-пресета" style="flex:0 0 130px">
+    <input id="preset-text" placeholder="что делать всегда" style="flex:1;min-width:160px">
+    <button onclick="savePreset()">Сохранить</button>
+  </div>
+</div>
 
 <!-- Local models: downloaded into the runner and served from there, so there
      is no quota and no rate limit at all. Hidden until asked for, because it
@@ -241,6 +258,63 @@ $('model').onchange = async () => {
 };
 
 loadModels();
+
+/* ── presets ─────────────────────────────────────────────────────── */
+function togglePresets(){
+  const box = $('presets');
+  const showing = box.style.display !== 'none';
+  box.style.display = showing ? 'none' : 'block';
+  if (!showing) loadPresets();
+}
+
+async function loadPresets(){
+  const box = $('preset-list');
+  try{
+    const d = await (await fetch('/api/presets', {headers:H()})).json();
+    box.innerHTML = '';
+    for (const p of (d.presets || [])){
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;padding:6px 0;cursor:pointer';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = !!p.on; cb.style.marginTop = '3px';
+      cb.onchange = () => setPreset(p.id, cb.checked);
+      // textContent, not innerHTML: a preset label is user-supplied text and
+      // esc() lives inside md(), so it is not in scope here anyway.
+      const txt = document.createElement('div');
+      const head = document.createElement('div');
+      head.style.fontSize = '13.5px';
+      head.textContent = p.label;
+      const sub = document.createElement('div');
+      sub.style.cssText = 'font-size:11.5px;color:var(--dim)';
+      sub.textContent = p.id + (p.builtIn ? '' : ' · свой');
+      txt.append(head, sub);
+      row.append(cb, txt);
+      box.appendChild(row);
+    }
+    if (!d.presets || !d.presets.length) box.textContent = 'Пресетов нет.';
+  }catch(e){ box.textContent = 'Не удалось загрузить: ' + e.message; }
+}
+
+async function setPreset(id, on){
+  try{
+    await fetch('/api/presets', {method:'POST', headers:H(), body: JSON.stringify({id, on})});
+  }catch(e){ say('**Не удалось переключить пресет:** ' + e.message); }
+}
+
+async function savePreset(){
+  const id = $('preset-id').value.trim();
+  const text = $('preset-text').value.trim();
+  if (!id || !text) return;
+  try{
+    const r = await fetch('/api/presets', {method:'POST', headers:H(),
+      body: JSON.stringify({save:true, id, text})});
+    const d = await r.json();
+    if (!r.ok){ say('**Пресет не сохранён:** ' + (d.error || r.status)); return; }
+    $('preset-id').value = ''; $('preset-text').value = '';
+    await loadPresets();
+    say('Пресет **' + id + '** сохранён и включён.');
+  }catch(e){ say('**Пресет не сохранён:** ' + e.message); }
+}
 
 /* ── local models in the runner ──────────────────────────────────────
    The point of this panel is to escape quotas entirely: the weights sit on

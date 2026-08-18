@@ -27,6 +27,9 @@ catch (e) { capabilitiesModule = null; }
 // it. A hard require made the agent refuse to start at all with
 // "Cannot find module", which is a poor trade for a feature most runs never
 // touch. Absent it, the local-AI endpoints report that it is unavailable.
+let GitHubApi = null;
+try { ({ GitHubApi } = require('../lib/github-api')); } catch {}
+
 let LocalAiManager = null;
 try { ({ LocalAiManager } = require('../lib/local-ai')); } catch {}
 if (!LocalAiManager) {
@@ -895,6 +898,23 @@ const MCP_TOOLS = {
   run_lint: 'Запустить npm lint или указанный lint script',
   code_check: 'Проверить синтаксис JavaScript-файла',
   dependency_audit: 'Выполнить npm audit без автоматических исправлений',
+  github_read: 'Прочитать файл прямо из GitHub, без клонирования',
+  github_write: 'Записать файл прямо в GitHub — это сразу коммит',
+  github_list: 'Список файлов в папке репозитория на GitHub',
+  github_delete: 'Удалить файл в GitHub одним коммитом',
+  github_commit_files: 'Несколько файлов одним коммитом через GitHub API',
+  github_search: 'Поиск кода в репозитории на GitHub',
+  github_commits: 'История коммитов без клонирования',
+  github_branches: 'Список веток репозитория',
+  github_create_branch: 'Создать ветку на GitHub',
+  github_pr: 'Открыть pull request',
+  github_repo: 'Сведения о репозитории',
+  github_my_repos: 'Список репозиториев, видимых токену',
+  github_runs: 'Последние запуски GitHub Actions',
+  github_run_workflow: 'Запустить workflow на GitHub',
+  preset_list: 'Показать пресеты и какие включены',
+  preset_set: 'Включить или выключить пресет (id, on)',
+  preset_save: 'Сохранить свой пресет (id, text)',
   git_status: 'Статус Git-репозитория',
   git_diff: 'Показать Git diff',
   git_branch: 'Показать текущую и доступные Git-ветки',
@@ -2603,6 +2623,66 @@ async function handleMCPTool(tool, args = {}) {
       return await gitLiveTool(`git add -A && git commit -m ${shellQuote(message)}`, cwdResult, args);
     }
 
+    // ── GitHub, without a checkout ────────────────────────────────
+    // Every one of these is a single API call against the live repository.
+    // No clone, no working copy, and a write is already a commit - which is
+    // why there is no github_push: there is nothing left to push.
+    case 'github_read': case 'github_write': case 'github_list':
+    case 'github_delete': case 'github_commit_files': case 'github_search':
+    case 'github_commits': case 'github_branches': case 'github_create_branch':
+    case 'github_pr': case 'github_repo': case 'github_my_repos':
+    case 'github_runs': case 'github_run_workflow': {
+      const api = githubApi();
+      if (!api) return { error: 'Модуль GitHub API недоступен (lib/github-api.js).' };
+      const map = {
+        github_read: 'readFile', github_write: 'writeFile', github_list: 'list',
+        github_delete: 'deleteFile', github_commit_files: 'commitFiles',
+        github_search: 'search', github_commits: 'commits', github_branches: 'branches',
+        github_create_branch: 'createBranch', github_pr: 'pullRequest',
+        github_repo: 'repoInfo', github_my_repos: 'myRepos',
+        github_runs: 'runs', github_run_workflow: 'dispatch'
+      };
+      try {
+        return await api[map[tool]](args || {});
+      } catch (e) {
+        // The API's own message names the cause - a missing scope, a bad
+        // path, a protected branch - so it is passed through rather than
+        // flattened into "request failed".
+        return { error: String(e && e.message || e) };
+      }
+    }
+
+    case 'preset_list': {
+      const all = allPresets();
+      return {
+        active: PRESETS.active,
+        presets: Object.entries(all).map(([id, p]) => ({
+          id, label: p.label, builtIn: !!p.builtIn,
+          on: PRESETS.active.includes(id),
+          preview: String(p.text).split('\n')[0].slice(0, 90)
+        }))
+      };
+    }
+
+    case 'preset_set': {
+      const id = String(args.id || '').trim();
+      const on = args.on === undefined ? true : !(args.on === false || args.on === 'false' || args.on === 'off');
+      const result = setPresetActive(id, on);
+      if (result.error) return result;
+      return { ...result, note: on ? `Пресет '${id}' включён.` : `Пресет '${id}' выключен.` };
+    }
+
+    case 'preset_save': {
+      const id = String(args.id || '').trim();
+      const text = String(args.text || '').trim();
+      if (!/^[\w-]{2,32}$/.test(id)) return { error: 'id пресета: 2-32 символа, буквы, цифры, _ и -.' };
+      if (!text) return { error: 'Нужен text — что именно агент должен всегда делать.' };
+      PRESETS.custom[id] = text;
+      savePresets();
+      if (args.activate !== false) setPresetActive(id, true);
+      return { id, saved: true, active: PRESETS.active };
+    }
+
     case 'open_url': {
       const url = String(args.url || '').trim();
       if (!/^https?:\/\//i.test(url)) return { error: 'open_url принимает только http:// или https:// URL.' };
@@ -3339,6 +3419,28 @@ function startEmbeddedServer() {
       // missing, fetches the weights if they are missing, starts the server,
       // and only then switches the agent over. Doing it in three separate
       // calls from the UI meant a half-finished state on any failure.
+      if (url.pathname === '/api/presets' && req.method === 'GET') {
+        const all = allPresets();
+        json(res, 200, { success: true, active: PRESETS.active,
+          presets: Object.entries(all).map(([id, p]) => ({
+            id, label: p.label, builtIn: !!p.builtIn, on: PRESETS.active.includes(id), text: p.text })) });
+        return;
+      }
+      if (url.pathname === '/api/presets' && req.method === 'POST') {
+        const body = await readJson(req);
+        if (body.save) {
+          const id = String(body.id || '').trim();
+          if (!/^[\w-]{2,32}$/.test(id)) { json(res, 400, { error: 'id: 2-32 символа, буквы, цифры, _ и -' }); return; }
+          if (!String(body.text || '').trim()) { json(res, 400, { error: 'Нужен text' }); return; }
+          PRESETS.custom[id] = String(body.text).trim();
+          savePresets();
+          setPresetActive(id, body.on !== false);
+          json(res, 200, { success: true, active: PRESETS.active }); return;
+        }
+        const r = setPresetActive(String(body.id || ''), body.on !== false);
+        if (r.error) { json(res, 400, r); return; }
+        json(res, 200, { success: true, ...r }); return;
+      }
       if (url.pathname === '/api/local-ai/prepare' && req.method === 'POST') {
         const body = await readJson(req);
         if (typeof localAi.prepare !== 'function') { json(res, 400, { error: 'local-ai module not installed' }); return; }
@@ -3708,6 +3810,15 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент с доступом к ф�
 - sqlite_info(), sqlite_query(database, sql), sqlite_schema(database), sqlite_backup(database, destination) — локальная SQLite
 - env_list(path), env_set(key, value), env_delete(key) — .env без показа секретных значений
 - git_status(), git_diff(), git_branch(), git_log(), git_init(), git_commit(message) — Git без угадывания состояния
+- GITHUB БЕЗ КЛОНИРОВАНИЯ — быстрее и не занимает диск:
+  github_read({repo,path}), github_list({repo,path}), github_write({repo,path,content,message})
+  github_commit_files({repo,files:[{path,content}],message}) — несколько файлов одним коммитом
+  github_delete, github_search({query}), github_commits, github_branches, github_create_branch
+  github_pr({head,title}), github_repo, github_my_repos, github_runs, github_run_workflow({workflow})
+  Запись через github_write и github_commit_files — это СРАЗУ коммит в ветку;
+  отдельный push не нужен. repo можно не указывать: берётся репозиторий сессии.
+  Клонируй только когда нужно всё дерево: сборка, тесты, массовый рефакторинг.
+- preset_list(), preset_set({id,on}), preset_save({id,text}) — постоянные указания пользователя
 - git_clone(repo), git_pull(), git_push(branch) — работа с ЛЮБЫМ репозиторием, не только текущим.
   Ты НЕ ограничен текущей папкой: git_clone({"repo":"owner/name"}) кладёт репозиторий
   в work/<name>, затем set_workspace({"path":"<путь из ответа>"}) делает его рабочим.
@@ -3721,6 +3832,17 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент с доступом к ф�
 - open_url(url), clipboard_read(), clipboard_write(text), notify(title, content) — сеть и Android Termux:API
 - execute_command(command, cwd, timeout) — только для команд, которым нет специального инструмента
 - todo_list(), todo_add(text), todo_done(id), todo_remove(id) — постоянный план задач, привязанный к проекту
+
+ТАБЛИЦЫ:
+Когда в ответе сравниваются несколько объектов - файлы, модели, запуски,
+ветки, варианты решения - оформляй markdown-таблицей, а не длинным списком.
+Интерфейс её рисует, и на телефоне это читается заметно лучше.
+
+| Что | Значение |
+|---|---|
+| файл | src/main.kt |
+
+Одиночный факт таблицей не оформляй - для него хватит фразы.
 
 ФОРМАТ ВЫЗОВА:
 - В режиме OpenRouter тебе переданы нативные function tools. Вызывай их через API tool_calls; не печатай TOOL_JSON в обычном тексте.
@@ -3853,7 +3975,7 @@ function buildSystemPrompt() {
   const longRule = CONFIG.longTaskMode
     ? `Долгая задача включена: разрешено до ${agentStepLimit()} шагов и длительные команды. Для серверов используй process_start/process_logs, регулярно давай checkpoint и принимай /correct или /abort.`
     : 'Обычный лимит задачи: используй короткие безопасные шаги; для многочасовой работы пользователь включает /long on.';
-  return SYSTEM_PROMPT + `\n\nТЕКУЩИЙ КОНТЕКСТ MCP:\n- Платформа: ${PLATFORM.name}\n- Провайдер: ${currentProvider}\n- Модель: ${currentModel}\n- Режим: ${CONFIG.agentMode}\n- Активная AI-сессия: ${activeSession}\n- Активная рабочая папка: ${WORKSPACE_ROOT}\n- ${providerRule}\n- ${clarifyRule}\n- ${modeRule}\n- ${longRule}\n- Относительные пути разрешаются от неё; внутренняя папка Termux не используется.${envFacts}${pluginPrompt ? `\n\nPLUGIN SYSTEM INSTRUCTIONS:\n${pluginPrompt}` : ''}`;
+  return SYSTEM_PROMPT + `\n\nТЕКУЩИЙ КОНТЕКСТ MCP:\n- Платформа: ${PLATFORM.name}\n- Провайдер: ${currentProvider}\n- Модель: ${currentModel}\n- Режим: ${CONFIG.agentMode}\n- Активная AI-сессия: ${activeSession}\n- Активная рабочая папка: ${WORKSPACE_ROOT}\n- ${providerRule}\n- ${clarifyRule}\n- ${modeRule}\n- ${longRule}\n- Относительные пути разрешаются от неё; внутренняя папка Termux не используется.${envFacts}${presetPrompt()}${pluginPrompt ? `\n\nPLUGIN SYSTEM INSTRUCTIONS:\n${pluginPrompt}` : ''}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -4158,6 +4280,136 @@ async function fetchOpenRouterFreeModels() {
     req.on('timeout', () => { req.destroy(); resolve(openRouterFreeModels); });
     req.end();
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  GITHUB API CLIENT
+// ═══════════════════════════════════════════════════════════════════
+//
+// Built lazily and cached: the token can arrive after start-up (SYMBIOSIS_KEY
+// set later, /key), so binding it once at load time would leave the tools
+// permanently unauthenticated.
+//
+// The default repository is the one the session is working on, so a task can
+// say "прочитай README" without repeating owner/name every call. It is taken
+// from the workspace's own git remote when there is one.
+let GITHUB_API_CACHE = null;
+function detectSessionRepo() {
+  try {
+    const out = execFileSync('git', ['remote', 'get-url', 'origin'],
+      { cwd: WORKSPACE_ROOT, encoding: 'utf8', timeout: 2500 }).trim();
+    const m = out.match(/github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/i);
+    return m ? m[1] : '';
+  } catch { return ''; }
+}
+function githubApi() {
+  if (!GitHubApi) return null;
+  if (!GITHUB_API_CACHE) {
+    GITHUB_API_CACHE = new GitHubApi(
+      () => githubModelsToken(),
+      () => process.env.SYMBIOSIS_REPO || detectSessionRepo()
+    );
+  }
+  return GITHUB_API_CACHE;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PRESETS
+// ═══════════════════════════════════════════════════════════════════
+//
+// A preset is standing instruction: state once how you want the agent to
+// work, and it applies to every task in the session instead of being retyped
+// - "here is the token, work directly on GitHub, do not clone anything, push
+// when you are done".
+//
+// It is appended to the system prompt, so it steers the model the same way
+// the built-in rules do, and it survives a restart because it is saved with
+// the session.
+const PRESETS_FILE = path.join(os.homedir(), '.zen_presets.json');
+
+const BUILT_IN_PRESETS = {
+  github: {
+    label: 'Прямо в GitHub, без клонирования',
+    text: [
+      'РЕЖИМ РАБОТЫ: напрямую через GitHub API, без клонирования.',
+      '',
+      'Не вызывай git_clone и не создавай локальных копий репозитория.',
+      'Вместо локальных файловых инструментов используй github_*:',
+      '  github_read / github_list      — посмотреть файл или папку',
+      '  github_write                   — записать файл (это сразу коммит)',
+      '  github_commit_files            — несколько файлов одним коммитом',
+      '  github_search                  — найти код в репозитории',
+      '  github_commits / github_branches — история и ветки',
+      '  github_run_workflow / github_runs — запустить сборку и посмотреть её',
+      '',
+      'Каждая запись через github_write и github_commit_files — это уже',
+      'коммит в ветку, отдельный git_push не нужен и не существует для них.',
+      'После изменений покажи ссылку на коммит.',
+      '',
+      'Клонируй только если задача требует всего дерева сразу: сборка,',
+      'прогон тестов, массовый рефакторинг. Тогда скажи об этом явно.'
+    ].join('\n')
+  },
+  tables: {
+    label: 'Ответы таблицами',
+    text: [
+      'ФОРМАТ ОТВЕТА: где сравниваются несколько объектов - файлы, модели,',
+      'запуски, варианты - оформляй markdown-таблицей, а не списком.',
+      'Таблица рендерится в интерфейсе и читается на телефоне лучше.'
+    ].join('\n')
+  },
+  local: {
+    label: 'Только локальная модель',
+    text: [
+      'Работай на локальной модели в раннере. Не переключайся на онлайн-',
+      'провайдеров с лимитами; если локальная модель не запущена, скажи об',
+      'этом и предложи запустить её через панель локальных моделей.'
+    ].join('\n')
+  }
+};
+
+let PRESETS = { active: [], custom: {} };
+
+function loadPresets() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(PRESETS_FILE, 'utf8'));
+    if (saved && typeof saved === 'object') {
+      PRESETS.active = Array.isArray(saved.active) ? saved.active : [];
+      PRESETS.custom = saved.custom && typeof saved.custom === 'object' ? saved.custom : {};
+    }
+  } catch {}
+}
+
+function savePresets() {
+  try { fs.writeFileSync(PRESETS_FILE, JSON.stringify(PRESETS, null, 2), { mode: 0o600 }); } catch {}
+}
+
+/** Every preset that can be switched on, built-in and user-defined alike. */
+function allPresets() {
+  const out = {};
+  for (const [id, p] of Object.entries(BUILT_IN_PRESETS)) out[id] = { ...p, builtIn: true };
+  for (const [id, text] of Object.entries(PRESETS.custom)) {
+    out[id] = { label: id, text: String(text), builtIn: false };
+  }
+  return out;
+}
+
+/** The text appended to the system prompt for the active presets. */
+function presetPrompt() {
+  const all = allPresets();
+  const parts = PRESETS.active.map(id => all[id] && all[id].text).filter(Boolean);
+  if (!parts.length) return '';
+  return '\n\nПОСТОЯННЫЕ УКАЗАНИЯ ПОЛЬЗОВАТЕЛЯ (пресеты):\n' + parts.join('\n\n');
+}
+
+function setPresetActive(id, on) {
+  const known = allPresets();
+  if (!known[id]) return { error: `Нет пресета '${id}'. Доступны: ${Object.keys(known).join(', ')}` };
+  const set = new Set(PRESETS.active);
+  if (on) set.add(id); else set.delete(id);
+  PRESETS.active = [...set];
+  savePresets();
+  return { active: PRESETS.active };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -5752,6 +6004,7 @@ function drawSessions() {
 
 async function main() {
   loadOpenRouterKey();
+loadPresets();
   loadHistory();
   rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   let inputClosed = false;
@@ -5981,6 +6234,33 @@ async function main() {
     if (lower === '/stream') { CONFIG.streamMode = !CONFIG.streamMode; console.log(c('AI-стриминг: ' + (CONFIG.streamMode ? 'ВКЛ' : 'ВЫКЛ'), CONFIG.streamMode ? 'green' : 'yellow')); finishCommand(); return; }
     // Checked before /auto, or "/autoswitch off" would match the /auto prefix
     // and silently toggle auto-approval instead.
+    if (lower === '/preset' || lower.startsWith('/preset ')) {
+      const rest = text.replace(/^\/preset\s*/i, '').trim();
+      const all = allPresets();
+      if (!rest) {
+        console.log(c('Пресеты — постоянные указания, действуют на каждую задачу.', 'gray'));
+        for (const [id, p] of Object.entries(all)) {
+          const on = PRESETS.active.includes(id);
+          console.log(`  ${on ? c('[вкл]', 'green') : c('[выкл]', 'gray')} ${c(id, 'brightCyan')} — ${p.label}`);
+        }
+        console.log(c('  /preset <id> on|off · /preset save <id> <текст>', 'gray'));
+        finishCommand(); return;
+      }
+      const saveMatch = rest.match(/^save\s+([\w-]{2,32})\s+([\s\S]+)$/i);
+      if (saveMatch) {
+        PRESETS.custom[saveMatch[1]] = saveMatch[2].trim();
+        savePresets();
+        setPresetActive(saveMatch[1], true);
+        console.log(c(`Пресет '${saveMatch[1]}' сохранён и включён.`, 'green'));
+        finishCommand(); return;
+      }
+      const [id, state] = rest.split(/\s+/);
+      const on = !/^(off|выкл|0|нет)$/i.test(state || 'on');
+      const r = setPresetActive(id, on);
+      console.log(r.error ? c(r.error, 'red')
+        : c(`Пресет '${id}' ${on ? 'включён' : 'выключен'}. Активны: ${r.active.join(', ') || '—'}`, 'green'));
+      finishCommand(); return;
+    }
     if (lower === '/autoswitch' || lower.startsWith('/autoswitch ')) {
       const value = lower.replace(/^\/autoswitch\s*/, '').trim();
       CONFIG.autoSwitchModel = value === 'on' || value === '1' || value === 'да' ? true
