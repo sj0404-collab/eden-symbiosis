@@ -157,15 +157,70 @@ const H = () => { const h={'Content-Type':'application/json'}; if(TOKEN) h['X-Ze
 const $ = id => document.getElementById(id);
 const stream = $('stream');
 
-// Mirrors ZEN_MODELS in zen-agent.js: only the three measured to answer 3/3.
-const MODELS = [
-  ['laguna-s-2.1-free','Laguna S 2.1'],
-  ['mimo-v2.5-free','MiMo V2.5'],
-  ['deepseek-v4-flash-free','DeepSeek V4']
+/* The model list comes from the agent, which knows what is actually reachable.
+   It used to be three ids copied from ZEN_MODELS, so an OpenRouter key, a
+   GitHub token and a model downloaded into the runner were all invisible here
+   and could not be selected. Grouped by provider, and a provider with no
+   credentials is shown disabled rather than omitted - "нужен ключ" explains
+   itself, a missing entry does not. */
+const FALLBACK_MODELS = [
+  { id:'laguna-s-2.1-free', name:'Laguna S 2.1', providerName:'OpenCode Zen', providerId:'zen', configured:true }
 ];
-MODELS.forEach(([id,l])=>{const o=document.createElement('option');o.value=id;o.textContent=l;$('model').appendChild(o);});
-$('model').value = localStorage.getItem('zen_model') || MODELS[0][0];
-$('model').onchange = () => localStorage.setItem('zen_model', $('model').value);
+
+async function loadModels(){
+  const sel = $('model');
+  let models = [];
+  try {
+    const r = await fetch('/api/models', { headers: H() });
+    models = (await r.json()).models || [];
+  } catch (e) { /* offline: fall through to the built-in entry */ }
+  if (!models.length) models = FALLBACK_MODELS;
+
+  sel.innerHTML = '';
+  const groups = new Map();
+  for (const m of models){
+    const key = (m.providerIcon ? m.providerIcon + ' ' : '') + (m.providerName || m.providerId || '—');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  }
+  for (const [label, list] of groups){
+    const g = document.createElement('optgroup');
+    g.label = label + ' (' + list.length + ')';
+    for (const m of list){
+      const o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = (m.name || m.id) + (m.free ? ' · free' : '');
+      // Selectable only when its provider can actually be used.
+      if (m.configured === false){ o.disabled = true; o.textContent += ' — нет ключа'; }
+      o.dataset.provider = m.providerId || '';
+      g.appendChild(o);
+    }
+    sel.appendChild(g);
+  }
+
+  const saved = localStorage.getItem('zen_model');
+  const usable = [...sel.options].filter(o => !o.disabled);
+  const pick = models.find(m => m.selected && m.configured !== false)
+    || models.find(m => m.id === saved && m.configured !== false);
+  sel.value = pick ? pick.id : (usable[0] ? usable[0].value : '');
+}
+
+$('model').onchange = async () => {
+  const opt = $('model').selectedOptions[0];
+  localStorage.setItem('zen_model', $('model').value);
+  // Switching model may also mean switching provider, and the server has to be
+  // told: picking a GitHub model while the agent still talks to Zen would send
+  // an unknown id to the wrong endpoint.
+  const provider = opt && opt.dataset.provider;
+  if (!provider) return;
+  try {
+    const r = await fetch('/api/agent/settings', { method:'POST', headers:H(),
+      body: JSON.stringify({ provider, model: $('model').value }) });
+    if (!r.ok) say('**Не удалось выбрать модель:** ' + ((await r.json()).error || r.status));
+  } catch (e) { say('**Не удалось выбрать модель:** ' + e.message); }
+};
+
+loadModels();
 
 /* Verb and icon per tool, so a row reads like a sentence: "Read  src/main.kt".
    Anything unknown falls back to the raw name rather than a wrong guess. */

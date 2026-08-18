@@ -31,17 +31,30 @@ let LocalAiManager = null;
 try { ({ LocalAiManager } = require('../lib/local-ai')); } catch {}
 if (!LocalAiManager) {
   const unavailable = () => ({ success: false, error: 'local-ai module not installed' });
+  // Every method the agent calls has to exist here, or the fallback is worse
+  // than no fallback: /api/local-ai/models called listModels() and threw a
+  // TypeError instead of reporting that local AI is unavailable, so asking the
+  // hub for the model list failed outright rather than simply showing none.
   LocalAiManager = class {
     constructor() {}
     root() { return null; }
+    runtimeRoot() { return null; }
     catalog() { return []; }
+    runtimeCatalog() { return []; }
+    listModels() { return []; }
+    listRuntimes() { return []; }
+    task() { return null; }
     publicConfig() { return { available: false }; }
     async status() { return { success: false, available: false, error: 'local-ai module not installed' }; }
     async start() { return unavailable(); }
     async stop() { return unavailable(); }
     async download() { return unavailable(); }
+    async startDownload() { return unavailable(); }
+    async startRuntimeDownload() { return unavailable(); }
+    async installRuntimeToTermux() { return unavailable(); }
     async remove() { return unavailable(); }
     async chat() { return unavailable(); }
+    configure() { return unavailable(); }
     updateConfig() { return unavailable(); }
   };
 }
@@ -73,6 +86,14 @@ let CONFIG = {
   longTaskMaxSteps: Math.max(50, parseInt(process.env.ZEN_LONG_MAX_STEPS || '250', 10) || 250),
   longCommandTimeoutMs: Math.max(300000, parseInt(process.env.ZEN_LONG_COMMAND_TIMEOUT_MS || '3600000', 10) || 3600000),
   maxProviderRetries: Math.max(1, parseInt(process.env.MAX_PROVIDER_RETRIES || '3', 10) || 3),
+  // Fall back to another model when the chosen one is rate-limited.
+  //
+  // On by default because the Zen free tier runs out constantly and an answer
+  // from a second model beats no answer. Turn it off (/autoswitch off, or
+  // ZEN_AUTO_SWITCH=0) when the model matters: a local model has no quota to
+  // hit, a paid key is being paid for, and a silent substitution makes any
+  // comparison between models worthless.
+  autoSwitchModel: process.env.ZEN_AUTO_SWITCH !== '0',
   // Ответ модели выводится по мере поступления; /stream переключает режим.
   streamMode: true,
   autoApprove: false,
@@ -2961,9 +2982,86 @@ function startEmbeddedServer() {
     if (!cmd) return true;
     try { execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { stdio: 'ignore', timeout: 2500 }); return true; } catch { return false; }
   };
+  // Every model the agent can actually reach, from every configured provider.
+  //
+  // This used to return the three Zen models and nothing else - the hub's
+  // dropdown showed three entries even with an OpenRouter key set, a GitHub
+  // token present and a model downloaded into the runner. Those providers were
+  // all implemented; they simply were not listed, so they could not be picked.
+  //
+  // A provider with no credentials is still listed, marked configured:false,
+  // so the reason a model is unavailable is visible rather than the model
+  // silently missing.
   const getHubModels = () => {
-    const rows = ZEN_MODELS.map(m => ({ id: m.id, name: m.name || m.id, ctx: 128000, out: 32000, desc: 'OpenCode Zen', free: true, providerId: 'zen', providerName: 'OpenCode Zen', providerIcon: '🟢', selected: m.id === currentModel }));
-    if (currentProvider === 'openrouter' && currentModel && !rows.some(m => m.id === currentModel)) rows.unshift({ id: currentModel, name: currentModel, ctx: 128000, out: 32000, desc: 'OpenRouter (current)', free: false, providerId: 'openrouter', providerName: 'OpenRouter', providerIcon: '🟣', selected: true });
+    const rows = [];
+    const add = (id, name, providerId, providerName, providerIcon, extra = {}) => {
+      if (!id) return;
+      rows.push({
+        id, name: name || id, providerId, providerName, providerIcon,
+        ctx: extra.ctx ?? 128000, out: extra.out ?? 32000,
+        desc: extra.desc || providerName, free: extra.free ?? false,
+        configured: extra.configured ?? true,
+        selected: id === currentModel && providerId === currentProvider
+      });
+    };
+
+    for (const m of ZEN_MODELS) {
+      add(m.id, m.name, 'zen', 'OpenCode Zen', '🟢',
+        { free: true, desc: m.note || 'OpenCode Zen' });
+    }
+
+    // OpenRouter: whatever the catalogue returned - free and paid alike.
+    // openRouterFreeModels is refreshed by fetchOpenRouterModels().
+    const orConfigured = !!openRouterKey();
+    for (const m of openRouterFreeModels) {
+      add(m.id, m.name, 'openrouter', 'OpenRouter', '🟣', {
+        free: String(m.id).endsWith(':free'),
+        ctx: Number(m.ctx) || 128000,
+        desc: orConfigured ? 'OpenRouter' : 'OpenRouter — нужен ключ (/key)',
+        configured: orConfigured
+      });
+    }
+
+    const ghConfigured = !!githubModelsToken();
+    for (const id of GITHUB_MODELS) {
+      add(id, id, 'github', 'GitHub Models', '🐙', {
+        desc: ghConfigured ? 'GitHub Models' : 'GitHub Models — нужен GITHUB_TOKEN',
+        configured: ghConfigured
+      });
+    }
+
+    const hfConfigured = !!huggingFaceToken();
+    for (const id of HUGGINGFACE_MODELS) {
+      add(id, id, 'huggingface', 'Hugging Face', '🤗', {
+        desc: hfConfigured ? 'Hugging Face' : 'Hugging Face — нужен HF_TOKEN',
+        configured: hfConfigured
+      });
+    }
+
+    // Models downloaded into the runner and served by a local engine. These
+    // have no quota and no rate limit at all, which is the whole point of
+    // having them, so they must be selectable.
+    try {
+      const local = typeof localAi.listModels === 'function' ? localAi.listModels() : [];
+      for (const m of (Array.isArray(local) ? local : [])) {
+        const id = m.id || m.name || m.file;
+        add(id, m.name || id, 'local', 'Local AI', '💾', {
+          free: true, desc: m.engine ? `Локальная модель (${m.engine})` : 'Локальная модель',
+          configured: true
+        });
+      }
+    } catch {}
+
+    // A model chosen from the CLI that no catalogue lists - a paid OpenRouter
+    // id, a freshly pulled local file - must not vanish from the dropdown.
+    if (currentModel && !rows.some(m => m.id === currentModel && m.providerId === currentProvider)) {
+      rows.unshift({
+        id: currentModel, name: currentModel,
+        providerId: currentProvider, providerName: providerDisplayName(),
+        providerIcon: '⭐', ctx: 128000, out: 32000,
+        desc: 'выбрана сейчас', free: false, configured: true, selected: true
+      });
+    }
     return rows;
   };
   const safeTerminalId = value => /^[A-Za-z0-9_.-]{1,80}$/.test(String(value || '')) ? String(value) : null;
@@ -3859,11 +3957,19 @@ async function callZenWithRetry(messages, model = currentModel, maxAttempts = CO
       lastErr = e;
       const rateLimited = isRateLimit(e.message);
       if (attempt < maxAttempts) {
-        if (rateLimited) {
+        // Swapping the model behind the user's back is only acceptable as a
+        // last resort on a free tier. With autoSwitchModel off the chosen
+        // model is the one that runs - a local model has no quota to hit, and
+        // silently answering from a different model makes a comparison
+        // meaningless. Retry the same one instead.
+        if (rateLimited && CONFIG.autoSwitchModel) {
           const prev = usedModel;
           usedModel = nextModel(usedModel);
           console.log(`\n${c('⚠️ Лимит API на ' + prev + '. Переключаюсь на ' + usedModel + '...', 'yellow')}`);
           await new Promise(r => setTimeout(r, 700));
+        } else if (rateLimited) {
+          console.log(`\n${c('⚠️ Лимит API на ' + usedModel + '. Автопереключение выключено — повторяю на этой же модели.', 'yellow')}`);
+          await new Promise(r => setTimeout(r, 1200));
         } else {
           const wait = 650 * attempt;
           console.log(`\n${c('⚠️ Попытка ' + attempt + '/' + maxAttempts + ' не удалась. Повтор через ' + (wait / 1000) + 's...', 'yellow')}`);
@@ -4000,9 +4106,23 @@ async function fetchOpenRouterFreeModels() {
       res.on('end', () => {
         try {
           const all = JSON.parse(raw).data || [];
-          const free = all.filter(model => String(model.id || '').endsWith(':free') || model.id === 'openrouter/free')
-            .map(model => ({ id: model.id, name: model.name || model.id, ctx: model.context_length ? String(model.context_length) : 'free' }));
-          if (free.length) openRouterFreeModels = free;
+          // Everything the catalogue offers, not just the ':free' ones.
+          //
+          // Filtering to free models meant that a paid key - which is the
+          // reason to configure OpenRouter at all - still showed the same
+          // handful of free entries, and the hundreds of models the key could
+          // reach were unreachable from the UI. Free ones are sorted first
+          // because they are the safe default, but nothing is dropped.
+          const mapped = all
+            .map(model => ({
+              id: model.id,
+              name: model.name || model.id,
+              ctx: model.context_length ? String(model.context_length) : '',
+              free: String(model.id || '').endsWith(':free') || model.id === 'openrouter/free'
+            }))
+            .filter(m => m.id);
+          mapped.sort((a, b) => (a.free === b.free ? a.id.localeCompare(b.id) : (a.free ? -1 : 1)));
+          if (mapped.length) openRouterFreeModels = mapped;
         } catch {}
         resolve(openRouterFreeModels);
       });
@@ -4032,6 +4152,19 @@ async function fetchGitHubModelsCatalog() {
   });
 }
 function huggingFaceToken() { return process.env.HF_TOKEN || process.env.HUGGINGFACE_TOKEN || ''; }
+// Named here rather than inline in the settings response, so the hub's model
+// list and that response cannot drift apart. Both read these.
+const GITHUB_MODELS = [
+  'openai/gpt-4.1', 'openai/gpt-4.1-mini', 'openai/gpt-4o', 'openai/gpt-4o-mini',
+  'openai/o4-mini', 'meta/llama-3.3-70b-instruct', 'meta/llama-4-maverick-17b-128e-instruct-fp8',
+  'mistral-ai/mistral-medium-2505', 'deepseek/deepseek-v3-0324', 'xai/grok-3-mini'
+];
+const HUGGINGFACE_MODELS = [
+  'openai/gpt-oss-120b:cerebras', 'google/gemma-4-31B-it:cerebras',
+  'deepseek-ai/DeepSeek-R1:fastest', 'Qwen/Qwen3-235B-A22B-Instruct-2507:fastest',
+  'meta-llama/Llama-3.3-70B-Instruct:fastest'
+];
+
 const COMPATIBLE_PROVIDERS = {
   github: { label: 'GitHub Models', hostname: 'models.github.ai', path: '/inference/chat/completions', key: githubModelsToken, defaultModel: 'openai/gpt-4.1', headers: { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } },
   huggingface: { label: 'Hugging Face Inference Providers', hostname: 'router.huggingface.co', path: '/v1/chat/completions', key: huggingFaceToken, defaultModel: 'openai/gpt-oss-120b:cerebras', headers: {} }
@@ -4142,7 +4275,12 @@ async function callOpenRouterStream(messages, model = currentModel) {
 
 async function callOpenRouterWithRetry(messages, model = currentModel) {
   let lastError = null;
-  const candidates = [model, ...openRouterFreeModels.map(m => m.id).filter(id => id !== model)].slice(0, 5);
+  // With auto-switch off the chosen model is the only candidate: a paid key is
+  // being paid for deliberately, and quietly answering from a different model
+  // is worse than reporting the failure.
+  const candidates = CONFIG.autoSwitchModel
+    ? [model, ...openRouterFreeModels.map(m => m.id).filter(id => id !== model)].slice(0, 5)
+    : [model];
   for (const candidate of candidates) {
     try {
       const result = CONFIG.streamMode ? await callOpenRouterStream(messages, candidate) : await callOpenRouter(messages, candidate);
@@ -5728,6 +5866,18 @@ async function main() {
       finishCommand(); return;
     }
     if (lower === '/stream') { CONFIG.streamMode = !CONFIG.streamMode; console.log(c('AI-стриминг: ' + (CONFIG.streamMode ? 'ВКЛ' : 'ВЫКЛ'), CONFIG.streamMode ? 'green' : 'yellow')); finishCommand(); return; }
+    // Checked before /auto, or "/autoswitch off" would match the /auto prefix
+    // and silently toggle auto-approval instead.
+    if (lower === '/autoswitch' || lower.startsWith('/autoswitch ')) {
+      const value = lower.replace(/^\/autoswitch\s*/, '').trim();
+      CONFIG.autoSwitchModel = value === 'on' || value === '1' || value === 'да' ? true
+        : value === 'off' || value === '0' || value === 'нет' ? false
+        : !CONFIG.autoSwitchModel;
+      saveHistory();
+      console.log(c('Автопереключение модели при лимите: ' + (CONFIG.autoSwitchModel ? 'ВКЛ' : 'ВЫКЛ'), CONFIG.autoSwitchModel ? 'green' : 'yellow'));
+      if (!CONFIG.autoSwitchModel) console.log(c(`Отвечать будет только ${currentModel}; при лимите — ошибка, а не подмена.`, 'gray'));
+      finishCommand(); return;
+    }
     if (lower === '/auto' || lower.startsWith('/auto ')) {
       const value = lower.replace(/^\/auto\s*/,'').trim();
       CONFIG.autoApprove = value === 'on' || value === '1' || value === 'да' ? true : value === 'off' || value === '0' || value === 'нет' ? false : !CONFIG.autoApprove;

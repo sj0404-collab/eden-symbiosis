@@ -45,10 +45,16 @@ check('the "Открыть чат" button expands the embedded view',
 
 check('there is a deskOpen === \'agent\' branch that renders an iframe',
   /deskOpen === 'agent' && agent/.test(PANEL) &&
-  /deskOpen === 'agent'[\s\S]{0,900}<iframe/.test(PANEL));
+  /deskOpen === 'agent'[\s\S]{0,2200}<iframe/.test(PANEL));
 
-check('the embedded chat is taller than a desk, for the keyboard',
-  /deskOpen === 'agent'[\s\S]{0,900}height:85vh/.test(PANEL));
+// The chat started as an 85vh iframe inside the desks card. That card sits on
+// a page with 12px padding and 90px of bottom padding for the tab bar, so it
+// was never actually full-screen. It is now a fixed overlay; the height check
+// lives in t_models_and_fullscreen.js, and this one only guards against a
+// regression back into the card.
+check('the chat is not boxed inside the card any more',
+  !/height:85vh/.test(PANEL) && /id = 'chat-overlay'/.test(PANEL),
+  'an iframe inside the card inherits the page padding');
 
 check('opening a session no longer pops the chat out',
   !/if \(s\.agentUrl\) \{ window\.open/.test(PANEL),

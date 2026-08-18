@@ -1081,25 +1081,45 @@ async function loadDesks() {
   };
 
   if (deskOpen === 'agent' && agent) {
-    // The chat opens here, inside the panel, rather than in the browser.
+    // The chat opens full-screen, inside the app.
     //
     // It used to be window.open(): on a phone that leaves the app entirely,
-    // and the address carries the session token, so it ended up in another
-    // browser's history and address bar. The hub sends no X-Frame-Options and
-    // no frame-ancestors, so it frames cleanly.
+    // and the address carries the session token. Then it was an 85vh iframe
+    // inside this card - but the card sits on a page with 12px padding and
+    // 90px of bottom padding for the tab bar, so the chat lost roughly a
+    // fifth of the screen and its composer sat above a dead strip.
     //
-    // Taller than a desk (85vh) because this one is typed into: the composer
-    // has to stay above the keyboard.
+    // A fixed overlay ignores all of that: it covers the viewport exactly,
+    // and 100dvh (not vh) follows the browser chrome as it collapses, which
+    // is what keeps the input visible when the keyboard opens on Android.
     const url = agent.agentUrl || agent.url || '';
-    box.innerHTML = `
-      <div class="row" style="margin-bottom:8px">
-        <button class="small">CLI-агент</button>
-        <button class="ghost small" onclick="collapseDesks()">Свернуть</button>
-      </div>
-      <iframe src="${esc(url)}" style="border:1px solid var(--line);border-radius:10px;
-              width:100%;height:85vh;background:var(--panel)"
-              allow="clipboard-read; clipboard-write"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`;
+    let ov = document.getElementById('chat-overlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'chat-overlay';
+      document.body.appendChild(ov);
+    }
+    ov.style.cssText =
+      'position:fixed;inset:0;z-index:9999;background:var(--bg);' +
+      'display:flex;flex-direction:column;height:100dvh';
+    // Rebuilt only when the address changes, so a re-render never reloads the
+    // hub and throws away what the user was typing.
+    if (ov.dataset.url !== url) {
+      ov.dataset.url = url;
+      ov.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;
+                    padding-top:calc(8px + env(safe-area-inset-top));
+                    border-bottom:1px solid var(--line);background:var(--panel)">
+          <b style="flex:1;font-size:14px">CLI-агент</b>
+          <button class="ghost small" onclick="openChatInBrowser()">В браузере</button>
+          <button class="ghost small" onclick="collapseDesks()">Закрыть</button>
+        </div>
+        <iframe src="${esc(url)}" style="border:0;flex:1;width:100%;background:var(--bg)"
+                allow="clipboard-read; clipboard-write"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`;
+    }
+    document.body.style.overflow = 'hidden';
+    box.innerHTML = '<div class="note">Чат открыт на весь экран.</div>';
   } else if (deskOpen && DESKS[deskOpen]) {
     const s = DESKS[deskOpen];
     const url = s.deskUrl || s.url || '';
@@ -1137,7 +1157,27 @@ async function loadDesks() {
 }
 
 function expandDesk(slot) { deskOpen = slot; loadDesks(); }
-function collapseDesks()  { deskOpen = null; loadDesks(); }
+function collapseDesks()  { deskOpen = null; closeChatOverlay(); loadDesks(); }
+
+/** Tear down the full-screen chat and give the page its scrolling back. */
+function closeChatOverlay() {
+  const ov = document.getElementById('chat-overlay');
+  if (ov) ov.remove();
+  document.body.style.overflow = '';
+}
+
+/** Hand the current chat address to a real browser tab, on request. */
+function openChatInBrowser() {
+  const ov = document.getElementById('chat-overlay');
+  const url = ov && ov.dataset.url;
+  if (url) window.open(url, '_blank');
+}
+
+// Android's back gesture should leave the chat, not the panel. Without this
+// the overlay stays up and back appears to do nothing.
+window.addEventListener('popstate', () => {
+  if (document.getElementById('chat-overlay')) collapseDesks();
+});
 
 /**
  * Open a desk or the chat inside the panel, from anywhere in the UI.
