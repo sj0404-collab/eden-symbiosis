@@ -45,7 +45,10 @@ fun git(vararg args: String): String? = try {
 val panelVersionCode: Int = git("rev-list", "--count", "HEAD")?.toIntOrNull() ?: 1
 val panelVersionName: String = run {
     val sha = git("rev-parse", "--short", "HEAD")
-    val dirty = !git("status", "--porcelain").isNullOrEmpty()
+    // Tracked changes only. The build itself creates untracked files - the
+    // Gradle wrapper, local.properties, the copied assets - so counting those
+    // marked every CI build "+dirty", which is precisely the case that is not.
+    val dirty = !git("status", "--porcelain", "--untracked-files=no").isNullOrEmpty()
     if (sha == null) "dev" else "$panelVersionCode.$sha" + if (dirty) "+dirty" else ""
 }
 
