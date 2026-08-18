@@ -115,9 +115,27 @@
 
 <header>
   <span class="title"><b>Zen</b> Agent</span>
-  <select id="model" style="max-width:44%"></select>
+  <select id="model" style="max-width:38%"></select>
+  <button class="ghost" onclick="toggleLocal()" title="Локальная модель в раннере">⤓</button>
   <button class="ghost" onclick="toggleTerm()" title="Терминал">▣</button>
 </header>
+
+<!-- Local models: downloaded into the runner and served from there, so there
+     is no quota and no rate limit at all. Hidden until asked for, because it
+     is the exception rather than the normal path. -->
+<div id="local" style="display:none;border-bottom:1px solid var(--line);
+     background:var(--panel);padding:10px 12px">
+  <div style="font-size:13px;color:var(--dim);margin-bottom:8px">
+    Модель скачивается в раннер и работает локально — без лимитов и без
+    интернета после загрузки. Живёт до конца сессии.
+  </div>
+  <div class="row" style="gap:8px;flex-wrap:wrap">
+    <select id="local-model" style="flex:1;min-width:180px"></select>
+    <button id="local-go" onclick="prepareLocal()">Скачать и запустить</button>
+    <button class="ghost" onclick="stopLocal()">Остановить</button>
+  </div>
+  <div id="local-status" style="font-size:12px;color:var(--dim);margin-top:8px"></div>
+</div>
 
 <div id="bar">
   <span><span class="dot" id="dot"></span> <span class="v" id="phase">готов</span></span>
@@ -221,6 +239,88 @@ $('model').onchange = async () => {
 };
 
 loadModels();
+
+/* ── local models in the runner ──────────────────────────────────────
+   The point of this panel is to escape quotas entirely: the weights sit on
+   the same machine as the agent, so nothing is rate-limited and nothing is
+   billed. The cost is disk and startup time, both shown up front. */
+function toggleLocal(){
+  const box = $('local');
+  const showing = box.style.display !== 'none';
+  box.style.display = showing ? 'none' : 'block';
+  if (!showing) loadLocalCatalog();
+}
+
+async function loadLocalCatalog(){
+  const sel = $('local-model');
+  const st  = $('local-status');
+  try{
+    const [cat, status] = await Promise.all([
+      fetch('/api/local-ai/catalog', {headers:H()}).then(r=>r.json()),
+      fetch('/api/local-ai/status',  {headers:H()}).then(r=>r.json())
+    ]);
+    sel.innerHTML = '';
+    for (const m of (cat.catalog || [])){
+      const o = document.createElement('option');
+      o.value = m.id;
+      // Size and context are the two things that decide whether a model is
+      // worth the wait on a runner, so they go in the label rather than a
+      // tooltip nobody opens on a phone.
+      o.textContent = `${m.name} · ${(m.sizeMb/1024).toFixed(1)} ГБ · ${Math.round(m.ctx/1024)}k`
+                    + (m.downloaded ? ' · скачана' : '');
+      sel.appendChild(o);
+    }
+    const bits = [];
+    bits.push(status.runtimeInstalled ? 'llama.cpp готов' : 'llama.cpp будет скачан (~30 МБ)');
+    bits.push(`скачано моделей: ${status.modelsDownloaded || 0}`);
+    if (status.serving) bits.push(`сейчас работает: ${status.serving.modelId}`);
+    if (!status.hfTokenConfigured) bits.push('HF_TOKEN не задан — публичные модели скачаются, закрытые нет');
+    st.textContent = bits.join(' · ');
+  }catch(e){
+    st.textContent = 'Не удалось получить список: ' + e.message;
+  }
+}
+
+async function prepareLocal(){
+  const btn = $('local-go');
+  const st  = $('local-status');
+  const id  = $('local-model').value;
+  if (!id) return;
+  btn.disabled = true;
+  const started = Date.now();
+  // A 2-5 GB download over a runner's link takes minutes; a button that just
+  // sits there looks broken, so the elapsed time keeps ticking.
+  const tick = setInterval(() => {
+    st.textContent = `Готовлю ${id}… ${Math.round((Date.now()-started)/1000)}с. `
+                   + 'Скачивание и первый запуск занимают несколько минут.';
+  }, 1000);
+  try{
+    const r = await fetch('/api/local-ai/prepare', {method:'POST', headers:H(),
+      body: JSON.stringify({modelId:id})});
+    const d = await r.json();
+    clearInterval(tick);
+    if (d.success){
+      st.textContent = `Работает локально: ${d.modelId} (порт ${d.port}). Лимитов нет.`;
+      say(`Переключился на локальную модель **${d.modelId}** в раннере. Онлайн-лимиты больше не действуют.`);
+      await loadModels();
+    } else {
+      st.textContent = 'Не получилось: ' + (d.error || r.status);
+    }
+  }catch(e){
+    clearInterval(tick);
+    st.textContent = 'Не получилось: ' + e.message;
+  }
+  btn.disabled = false;
+}
+
+async function stopLocal(){
+  const st = $('local-status');
+  try{
+    await fetch('/api/local-ai/stop', {method:'POST', headers:H()});
+    st.textContent = 'Локальная модель остановлена.';
+    await loadLocalCatalog();
+  }catch(e){ st.textContent = 'Не удалось остановить: ' + e.message; }
+}
 
 /* Verb and icon per tool, so a row reads like a sentence: "Read  src/main.kt".
    Anything unknown falls back to the raw name rather than a wrong guess. */

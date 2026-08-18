@@ -154,10 +154,26 @@ jobs:
           # round - the limit is a ceiling, not a quota - but a real build or a
           # multi-file refactor needs the headroom, and hitting the cap
           # mid-task looks exactly like the agent giving up.
+          # Provider credentials.
+          #
+          # Only GITHUB_TOKEN used to be passed, so GitHub Models worked and
+          # Hugging Face and OpenRouter did not - their models were listed as
+          # "нужен ключ" no matter what was in the repository secrets. Each is
+          # optional: an absent secret expands to an empty string, the token
+          # helper reports it as unset, and the model stays visibly disabled
+          # instead of failing at request time.
+          #
+          # HF_TOKEN does double duty: it is the Hugging Face provider's key
+          # and it lifts the anonymous rate limit when pulling a GGUF for the
+          # local runtime, which is what makes a multi-gigabyte download
+          # finish reliably.
           ZEN_BIND_HOST=0.0.0.0 ZEN_REMOTE_TOKEN="$TOKEN" MCP_PORT=8765 \
             ZEN_LONG_TASKS=1 ZEN_LONG_MAX_STEPS=250 \
             SESSION_STARTED_MS="$(date +%s000)" SESSION_LIMIT_MS=21600000 \
             GITHUB_TOKEN="$GH_TOKEN" \
+            HF_TOKEN="${{ secrets.HF_TOKEN }}" \
+            OPENROUTER_API_KEY="${{ secrets.OPENROUTER_API_KEY }}" \
+            ZEN_LOCAL_AI_PORT=8791 \
             nohup node agent/zen-agent.js > /tmp/agent.log 2>&1 &
 
           for i in $(seq 1 30); do

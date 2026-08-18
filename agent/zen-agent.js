@@ -54,6 +54,7 @@ if (!LocalAiManager) {
     async installRuntimeToTermux() { return unavailable(); }
     async remove() { return unavailable(); }
     async chat() { return unavailable(); }
+    async prepare() { return unavailable(); }
     configure() { return unavailable(); }
     updateConfig() { return unavailable(); }
   };
@@ -3333,6 +3334,26 @@ function startEmbeddedServer() {
       }
       if (url.pathname === '/api/local-ai/chat' && req.method === 'POST') {
         const body = await readJson(req); json(res, 200, await localAi.chat(body)); return;
+      }
+      // One button for "use a local model instead": fetches llama.cpp if it is
+      // missing, fetches the weights if they are missing, starts the server,
+      // and only then switches the agent over. Doing it in three separate
+      // calls from the UI meant a half-finished state on any failure.
+      if (url.pathname === '/api/local-ai/prepare' && req.method === 'POST') {
+        const body = await readJson(req);
+        if (typeof localAi.prepare !== 'function') { json(res, 400, { error: 'local-ai module not installed' }); return; }
+        const result = await localAi.prepare(body);
+        if (result && result.success) {
+          currentProvider = 'local';
+          currentModel = result.modelId || currentModel;
+          saveHistory();
+        }
+        json(res, result && result.success ? 200 : 400, { ...result, provider: currentProvider, model: currentModel });
+        return;
+      }
+      if (url.pathname === '/api/local-ai/stop' && req.method === 'POST') {
+        if (typeof localAi.stop !== 'function') { json(res, 400, { error: 'local-ai module not installed' }); return; }
+        json(res, 200, { success: true, ...(await localAi.stop()) }); return;
       }
       // ── Termux:API capability status for the hybrid APK/Site. ──
       if (url.pathname === '/api/termux/status' && req.method === 'GET') { json(res, 200, { success: true, ...termuxApiStatus() }); return; }
