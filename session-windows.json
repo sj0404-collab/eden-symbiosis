@@ -1,12 +1,6 @@
 {
-  "kind": "Стол Windows",
-  "os": "windows",
-  "url": "https://objective-terry-mother-motors.trycloudflare.com",
-  "deskUrl": "https://objective-terry-mother-motors.trycloudflare.com/",
-  "auth": "без пароля",
-  "label": "sj0404-collab",
-  "startedAt": "2026-08-18T00:08:42Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-18T00:09:29Z",
   "runId": "32083307186",
   "runNumber": "18",
   "repo": "sj0404-collab/eden-symbiosis"
