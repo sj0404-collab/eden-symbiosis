@@ -108,7 +108,13 @@ if command -v kotlinc >/dev/null 2>&1; then
     [ -e "$f" ] || continue
     n=$(basename "$f" .kt)
     kotlinc "$f" -include-runtime -d "$BUILD/$n.jar" 2>/dev/null
-    if out=$(java -jar "$BUILD/$n.jar" 2>&1); then
+    # Run from the repository root. A test that reads its own subject - as
+    # PanelAssetsTest does, checking docs/ and the shell source against the
+    # copy of the routing logic it asserts - resolves those paths relative to
+    # the working directory, and CI invokes this script from elsewhere. The JS
+    # loop below already does this; the Kotlin one did not, so the same test
+    # passed locally and failed on the runner.
+    if out=$(cd "$HERE" && java -jar "$BUILD/$n.jar" 2>&1); then
       echo "  PASS  $n — $(printf '%s' "$out" | tail -1)"; pass=$((pass+1))
     else
       echo "  FAIL  $n"; printf '%s\n' "$out" | tail -8 | sed 's/^/        /'
