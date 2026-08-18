@@ -1,13 +1,13 @@
 {
   "kind": "CLI-агент",
   "os": "windows",
-  "url": "https://luis-family-friendship-winners.trycloudflare.com",
-  "agentUrl": "https://luis-family-friendship-winners.trycloudflare.com/hub?token=zen-f115029caa7b4756aa4db665",
-  "agentToken": "zen-f115029caa7b4756aa4db665",
+  "url": "https://suffered-skirt-knows-competitions.trycloudflare.com",
+  "agentUrl": "https://suffered-skirt-knows-competitions.trycloudflare.com/hub?token=zen-af9144d43ba64104bee3215d",
+  "agentToken": "zen-af9144d43ba64104bee3215d",
   "branch": "agent-work-windows",
-  "startedAt": "2026-08-17T23:58:20Z",
+  "startedAt": "2026-08-18T08:22:41Z",
   "state": "live",
-  "runId": "32082605067",
-  "runNumber": "23",
-  "repo": "sj0404-collab/eden-symbiosis"
+  "runId": "32116013479",
+  "runNumber": "25",
+  "repo": "sj0404-collab/symbiosis"
 }
