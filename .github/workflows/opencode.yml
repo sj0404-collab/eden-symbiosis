@@ -64,7 +64,7 @@ jobs:
       - name: Prepare the working branch
         working-directory: fork
         run: |
-          git config user.email "opencode@eden-symbiosis"
+          git config user.email "opencode@symbiosis"
           git config user.name  "opencode session"
 
           BRANCH="${{ inputs.branch }}"

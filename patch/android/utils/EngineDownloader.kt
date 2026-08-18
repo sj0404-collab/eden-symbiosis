@@ -46,7 +46,7 @@ object EngineDownloader {
      */
     fun urlFor(engine: EngineLoader.Engine): String = when (engine) {
         EngineLoader.Engine.KENJI ->
-            "https://github.com/sj0404-collab/eden-symbiosis/releases/download/engine-kenji/libkenji.so"
+            "https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/libkenji.so"
         EngineLoader.Engine.EDEN -> ""   // built in; never downloaded
     }
 

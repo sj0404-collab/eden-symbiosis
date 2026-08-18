@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- The panel is fetched over the network; without this the app is a
-         blank screen. -->
+    <!-- The panel itself ships inside the APK and opens with no connection.
+         The network is still needed for what the panel is for: reading the
+         GitHub API, starting workflows, reaching a session tunnel. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 

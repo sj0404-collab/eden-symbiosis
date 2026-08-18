@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 Eden Symbiosis Project
+// SPDX-FileCopyrightText: Copyright 2026 Symbiosis Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 package dev.symbiosis.panel
@@ -17,6 +17,7 @@ import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -28,19 +29,25 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 
 /**
- * A window onto the panel, which lives on GitHub Pages.
+ * The Symbiosis panel, served from inside the APK.
  *
- * The page is fetched from the network rather than bundled in the APK, so a
- * change pushed to docs/index.html is live in the app on the next launch with
- * no reinstall. That is the entire reason this app exists as a shell: the
- * alternative - packaging the HTML as an asset - would mean rebuilding and
- * resideloading the APK for every wording change.
+ * The previous shell fetched the page from GitHub Pages so that editing
+ * docs/index.html updated every install with no reinstall. That traded away
+ * the thing the panel is for: it was a blank retry screen with no network,
+ * on first run and on every run where Pages was slow or blocked, and the app
+ * was useless exactly when a phone is offline. The page now ships in assets/
+ * and the APK is self-contained - it opens with no connection at all.
  *
- * The cost of that choice is that the app is useless with no network on first
- * run, since there is nothing local to fall back to. The WebView's own HTTP
- * cache covers later launches: [WebSettings.LOAD_CACHE_ELSE_NETWORK] is not
- * used, because silently serving a stale panel would hide exactly the updates
- * this design is for. Instead a failed load shows a retry screen that says so.
+ * WHY A CUSTOM ORIGIN RATHER THAN file://
+ *   The panel keeps its GitHub token in localStorage and calls api.github.com.
+ *   A file:// document has an opaque origin: Chromium gives it no usable
+ *   localStorage and blocks its cross-origin fetches, so the token would be
+ *   forgotten between launches and every API call would fail CORS. Serving the
+ *   asset through [PanelAssets] under a real https:// origin gives the page a
+ *   normal, stable security context, which is what both features need.
+ *
+ * Only the panel's own documents come from assets. Everything genuinely remote
+ * - api.github.com, the session tunnels - still goes to the network as usual.
  */
 class MainActivity : ComponentActivity() {
 
@@ -49,6 +56,8 @@ class MainActivity : ComponentActivity() {
     // Named errorView, not error: Kotlin's stdlib error() shadows a bare
     // "error" inside a lambda, and the reference silently fails to resolve.
     private lateinit var errorView: LinearLayout
+
+    private val assets_ by lazy { PanelAssets(this) }
 
     // Kept as a field so the retry button reloads the same address the app
     // started from, including an override supplied for testing.
@@ -102,13 +111,13 @@ class MainActivity : ComponentActivity() {
             loadWithOverviewMode = true
             cacheMode = WebSettings.LOAD_DEFAULT
             mediaPlaybackRequiresUserGesture = false
-            // No file or content access: this shell only ever shows a remote
-            // page, so nothing local should be reachable from it.
+            // The page is delivered by the interceptor, not read off disk, so
+            // the WebView itself never needs file or content access.
             allowFileAccess = false
             allowContentAccess = false
             javaScriptCanOpenWindowsAutomatically = true
             setSupportMultipleWindows(false)
-            userAgentString = "$userAgentString SymbiosisPanel/1.0"
+            userAgentString = "$userAgentString SymbiosisPanel/$SHELL_VERSION"
         }
 
         CookieManager.getInstance().setAcceptCookie(true)
@@ -127,15 +136,23 @@ class MainActivity : ComponentActivity() {
         }
 
         web.webViewClient = object : WebViewClient() {
+            // Serve the panel's own pages out of the APK. Returning null hands
+            // the request back to the WebView, so api.github.com and the
+            // tunnels are fetched over the network exactly as before.
+            override fun shouldInterceptRequest(
+                view: WebView, request: WebResourceRequest
+            ): WebResourceResponse? = assets_.serve(request.url)
+
             override fun shouldOverrideUrlLoading(
                 view: WebView, request: WebResourceRequest
             ): Boolean {
                 val url = request.url
                 val host = url.host ?: return false
-                // Keep the panel and the session tunnels inside the app; send
-                // anything else - a GitHub run page, gofile - to the browser,
-                // where the user is already signed in.
-                val internal = host.endsWith("github.io") ||
+                // Keep the panel itself and the session tunnels inside the
+                // app; send anything else - a GitHub run page, gofile - to the
+                // browser, where the user is already signed in.
+                val internal = host == PANEL_HOST ||
+                    host.endsWith("github.io") ||
                     host.endsWith("ngrok-free.app") ||
                     host.endsWith("ngrok.io") ||
                     host.endsWith("ngrok.app")
@@ -155,7 +172,9 @@ class MainActivity : ComponentActivity() {
                 view: WebView, request: WebResourceRequest, err: WebResourceError
             ) {
                 // Sub-resource failures are noise; only a failed main document
-                // means the panel is not on screen.
+                // means the panel is not on screen. With the page bundled this
+                // should now be unreachable, but a missing asset would still
+                // land here and must not leave a blank screen.
                 if (!request.isForMainFrame) return
                 showError()
             }
@@ -192,15 +211,16 @@ class MainActivity : ComponentActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         )
         addView(TextView(context).apply {
-            text = "Панель не загрузилась"
+            text = "Панель не открылась"
             setTextColor(Color.WHITE)
             textSize = 19f
         })
         addView(TextView(context).apply {
-            // Say why rather than showing a generic failure: with the page
-            // living on the network, "no connection" is the whole explanation.
-            text = "Страница живёт в сети, локальной копии нет. " +
-                "Проверьте связь и попробуйте снова."
+            // The page ships inside the APK, so a failure here is a broken
+            // build rather than a network problem. Say that, instead of
+            // sending the user to check a connection that is not involved.
+            text = "Страница входит в состав приложения, поэтому связь тут ни при чём. " +
+                "Похоже, сборка повреждена — переустановите APK."
             setTextColor(Color.parseColor("#8a8a9e"))
             textSize = 14f
             setPadding(0, 16, 0, 24)
@@ -247,11 +267,26 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        /** Where the panel lives. Changing the page updates every install. */
-        const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/"
+        /**
+         * The origin the bundled panel is served under.
+         *
+         * A real https host, not file:// and not localhost: the page needs a
+         * secure, non-opaque origin for localStorage to persist and for its
+         * fetches to api.github.com to be ordinary CORS requests. Nothing is
+         * ever fetched from this address over the network - every request to
+         * it is answered from assets/ - but it must look like a normal site to
+         * the WebView's security model.
+         */
+        const val PANEL_HOST = "panel.symbiosis.local"
+
+        /** Where the panel lives, now inside the APK. */
+        const val PANEL_URL = "https://$PANEL_HOST/index.html"
 
         /** Override for a local build or a fork, used by the tests. */
         const val EXTRA_URL = "panel_url"
+
+        /** Bumped when the shell changes; shown in the user agent. */
+        const val SHELL_VERSION = "2.0"
 
         private val BACKGROUND = Color.parseColor("#0d0d12")
     }

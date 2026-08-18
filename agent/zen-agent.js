@@ -3021,10 +3021,37 @@ function startEmbeddedServer() {
     const v = String(value || '').trim(); return /^[A-Za-z0-9._:/-]{1,160}$/.test(v) ? v : null;
   };
   const safeWebProvider = value => ['zen', 'openrouter', 'github', 'huggingface', 'local'].includes(String(value || '').trim()) ? String(value).trim() : null;
-  const webRunSummary = run => ({ id: run.id, session: run.session, status: run.status, createdAt: run.createdAt, finishedAt: run.finishedAt || null, answer: run.answer || null, error: run.error || null, approval: run.approval || null, events: (run.events || []).slice(-160) });
+  // A run is over the moment its status is not one of these. Both sides need
+  // the same list, and they used to disagree: the server wrote 'error' while
+  // the browser only ever ended on completed/failed/aborted, so a failed run
+  // was polled forever and the console just went quiet. `done` is now sent
+  // explicitly so the client never has to re-derive it from a string.
+  const WEB_RUN_LIVE = ['queued', 'running', 'awaiting_approval'];
+  const webRunDone = run => !WEB_RUN_LIVE.includes(run.status);
+  const webRunSummary = run => ({ id: run.id, session: run.session, status: run.status, done: webRunDone(run), createdAt: run.createdAt, finishedAt: run.finishedAt || null, answer: run.answer || null, error: run.error || null, approval: run.approval || null, events: (run.events || []).slice(-160) });
+  // Completed runs are kept only long enough for a slow client to read the
+  // answer. Without this the map grows for the whole session and every POST
+  // walks it looking for stale entries.
+  const HUB_WEB_RUN_TTL_MS = Math.max(60_000, parseInt(process.env.ZEN_WEB_RUN_TTL_MS || '900000', 10) || 900_000);
+  const pruneWebRuns = () => {
+    const now = Date.now();
+    for (const [id, r] of HUB_WEB_RUNS) {
+      if (!webRunDone(r)) continue;
+      const at = Date.parse(r.finishedAt || r.createdAt || '') || now;
+      if (now - at > HUB_WEB_RUN_TTL_MS) HUB_WEB_RUNS.delete(id);
+    }
+  };
   const launchWebRun = (sessionName, input, requestedModel, requestedProvider) => {
-    const run = { id: 'run_' + crypto.randomUUID(), session: sessionName, status: 'queued', createdAt: new Date().toISOString(), answer: null, error: null, approval: null, resolveApproval: null, events: [] };
+    const run = { id: 'run_' + crypto.randomUUID(), session: sessionName, status: 'queued', createdAt: new Date().toISOString(), startedMs: Date.now(), answer: null, error: null, approval: null, resolveApproval: null, events: [] };
     HUB_WEB_RUNS.set(run.id, run);
+    // Claimed synchronously, before the loop is scheduled. agentBusy used to be
+    // raised inside agentLoop, one setImmediate later, and in that window the
+    // run was 'queued' with no owner - so a second POST arriving right then saw
+    // "not busy, stale entry" and reaped a run that was about to start. The
+    // browser then polled a run marked failed while the agent kept working on
+    // it: exactly the "answered once, now silent" symptom.
+    agentBusy = true;
+    WEB_AGENT_RUN_CONTEXT = run;
     setImmediate(async () => {
       const oldStreamMode = CONFIG.streamMode;
       try {
@@ -3055,7 +3082,14 @@ function startEmbeddedServer() {
       } finally {
         CONFIG.streamMode = oldStreamMode;
         if (WEB_AGENT_RUN_CONTEXT === run) WEB_AGENT_RUN_CONTEXT = null;
+        // The claim above must be released here as well, not only by
+        // agentLoop's own finally: anything that throws before the loop is
+        // entered - a bad session name, a provider that will not initialise -
+        // never reaches that code, and the flag would stay raised, answering
+        // 409 to every later message with no way back but a restart.
+        agentBusy = false;
         run.approval = null; run.resolveApproval = null; run.finishedAt = new Date().toISOString();
+        pruneWebRuns();
       }
     });
     return run;
@@ -3267,8 +3301,13 @@ function startEmbeddedServer() {
         // hostage with a 409 nobody can clear. Reap those first, then decide.
         const stale = [];
         for (const r of HUB_WEB_RUNS.values()) {
-          if (!['queued', 'running', 'awaiting_approval'].includes(r.status)) continue;
-          if (agentBusy && WEB_AGENT_RUN_CONTEXT === r) continue;
+          if (!WEB_RUN_LIVE.includes(r.status)) continue;
+          // The owner of the agent is never stale, whatever its status.
+          if (WEB_AGENT_RUN_CONTEXT === r) continue;
+          // Nor is a run that was claimed moments ago. The reaper used to key
+          // off agentBusy alone, which is raised a tick after the run object
+          // appears; a message sent inside that tick killed a healthy run.
+          if (Date.now() - (r.startedMs || Date.parse(r.createdAt) || 0) < 5000) continue;
           r.status = 'error';
           r.error = r.error || 'Прошлый запуск не завершился корректно и был сброшен.';
           r.approval = null;
@@ -3318,6 +3357,14 @@ function startEmbeddedServer() {
         agentBusy = false;
         WEB_AGENT_RUN_CONTEXT = null;
         pendingConfirmation = null;
+        // Lower the abort flag again. It is raised above to stop whatever is
+        // running, and agentLoop clears it on entry - but a reset issued while
+        // nothing was running left it raised, and the next task then died at
+        // its very first step with "Задача остановлена пользователем", which
+        // reads as the agent ignoring the message.
+        abortRequested = false;
+        activeProviderAbort = null;
+        pruneWebRuns();
         setRunPhase('user-control', 'сброшено пользователем');
         auditEvent('web_agent_reset', { wasBusy, cleared });
         json(res, 200, { success: true, wasBusy, cleared, message: 'Агент свободен. Можно отправлять новую задачу.' });
@@ -4052,10 +4099,56 @@ async function callOpenRouterWithRetry(messages, model = currentModel) {
   throw lastError || new Error('OpenRouter request failed');
 }
 
+/**
+ * Repair a history window before it is sent to an OpenAI-compatible provider.
+ *
+ * Two ways the window becomes invalid, both of which the API rejects outright
+ * with a 400 rather than answering:
+ *
+ *   1. slice(-maxHistory) can cut between an assistant message carrying
+ *      tool_calls and the role:'tool' results that answer it. What is left is
+ *      an orphan tool message whose tool_call_id refers to nothing.
+ *   2. A run that ends mid-tool - an abort, a thrown provider error - leaves
+ *      the assistant's tool_calls in history with no results after them.
+ *
+ * Either one poisons every later message in the session, which is why the chat
+ * would answer once, then refuse everything until it was rephrased into a new
+ * session or the window finally slid past the damage. Dropping the unmatched
+ * halves costs a little context and keeps the conversation usable.
+ */
+function repairToolPairs(messages) {
+  const answered = new Set();
+  for (const m of messages) if (m.role === 'tool' && m.tool_call_id) answered.add(m.tool_call_id);
+
+  const out = [];
+  const known = new Set();
+  for (const m of messages) {
+    if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) {
+      const kept = m.tool_calls.filter(call => answered.has(call?.id));
+      if (!kept.length) {
+        // No results survived: keep the prose, drop the dangling calls.
+        const content = String(m.content || '').trim();
+        if (content) out.push({ role: 'assistant', content });
+        continue;
+      }
+      for (const call of kept) known.add(call.id);
+      out.push(kept.length === m.tool_calls.length ? m : { ...m, tool_calls: kept });
+      continue;
+    }
+    if (m.role === 'tool') {
+      if (!m.tool_call_id || !known.has(m.tool_call_id)) continue;  // orphan
+      out.push(m);
+      continue;
+    }
+    out.push(m);
+  }
+  return out;
+}
+
 function messagesForProvider() {
   scrubHistorySecrets();
   const base = { role: 'system', content: buildSystemPrompt() };
-  if (currentProvider !== 'zen') return [base, ...history.slice(-CONFIG.maxHistory)];
+  if (currentProvider !== 'zen') return [base, ...repairToolPairs(history.slice(-CONFIG.maxHistory))];
   // Zen не гарантирует поддержку role:tool/tool_calls; превращаем результаты в обычный контекст.
   const normalized = history.slice(-CONFIG.maxHistory).map(message => {
     if (message.role === 'tool') return { role: 'user', content: `Результат MCP-инструмента:\n${message.content}` };
@@ -5022,7 +5115,17 @@ ${correction}` });
       let res;
       try { res = await callCurrentProvider(); }
       catch (firstError) {
-        if (currentProvider === 'zen' && CONFIG.streamMode) res = await callZenWithRetry(messagesForProvider(), currentModel, undefined, false);
+        // The fallback used to be gated on streamMode. The web console turns
+        // streaming off for every run it launches, so in the browser this
+        // branch never ran: the first hiccup from a free model - a 500, a
+        // dropped socket, a rate limit - ended the whole task. In the terminal
+        // the same failure quietly switched models and carried on, which is
+        // why the CLI felt reliable and the chat did not. Retry either way.
+        if (currentProvider === 'zen') {
+          console.log(c('⚠️ Zen не ответил, пробую ещё раз с запасной моделью…', 'yellow'));
+          setRunPhase('model', 'повтор после ошибки');
+          res = await callZenWithRetry(messagesForProvider(), currentModel, undefined, false);
+        }
         else { stopTelemetryTicker(telemetryTimer); if (spinner) spinner.stop(); throw firstError; }
       }
       recordProviderResult(res);
@@ -5055,23 +5158,52 @@ ${correction}` });
 
       if (correctionQueue.length) continue;
 
+      // The stream path substitutes this string for an empty body, so a blank
+      // reply arrives here as prose and is reported as a real answer.
+      if (text.trim() === 'Модель вернула пустой ответ.') text = '';
+
       if (!text || text.length < 8) {
+        // The nudge is a throwaway - it must not stay in history, or every
+        // later turn is trained to expect it and the window fills with
+        // instructions to nobody. It used to be pushed unconditionally, and a
+        // second empty reply pushed a second copy.
+        const nudge = { role: 'user', content: 'Используй доступные инструменты или дай конкретный ответ.' };
         try {
-          history.push({ role: 'user', content: 'Используй доступные инструменты или дай конкретный ответ.' });
+          history.push(nudge);
           setRunPhase('model', 'повторный запрос');
           const r2 = await callCurrentProvider();
           recordProviderResult(r2);
-          if (r2.text && r2.text.length > 8) text = r2.text;
+          if (r2.text && r2.text.trim() && r2.text.trim() !== 'Модель вернула пустой ответ.') text = r2.text;
           if (currentProvider !== 'zen' && r2.toolCalls?.length) {
+            const at = history.indexOf(nudge); if (at !== -1) history.splice(at, 1);
             history.push({ role: 'assistant', content: r2.text || '', tool_calls: r2.toolCalls });
             await handleNativeToolCalls(r2.toolCalls, writtenFiles);
             continue;
           }
-        } catch {}
+        } catch (e) {
+          auditEvent('empty_reply_retry_failed', { step: TELEMETRY.step, error: String(e && e.message || e) });
+        } finally {
+          const at = history.indexOf(nudge); if (at !== -1) history.splice(at, 1);
+        }
       }
 
       if (CONFIG.autoUseTools && await handleToolCall(text, writtenFiles)) {
         continue;
+      }
+
+      // Still nothing after the retry. Ending the loop with an empty
+      // finalAnswer produced a run marked "completed" carrying no text - the
+      // console printed nothing at all and looked frozen. Say what happened
+      // and name the model, since the usual cause is a free model that has
+      // stopped serving this session.
+      if (!text.trim()) {
+        finalAnswer = `Модель ${currentModel} вернула пустой ответ дважды подряд. ` +
+          'Обычно это исчерпанный лимит бесплатной модели или слишком длинный контекст. ' +
+          'Смените модель или начните новую сессию — /clear.';
+        setRunPhase('error', 'пустой ответ модели');
+        webRunEvent('empty_reply', { step: String(TELEMETRY.step), model: String(currentModel) });
+        history.push({ role: 'assistant', content: finalAnswer });
+        break;
       }
 
       finalAnswer = text;

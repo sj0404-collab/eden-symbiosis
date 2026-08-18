@@ -67,7 +67,7 @@ jobs:
       - name: Prepare the working branch
         working-directory: fork
         run: |
-          git config user.email "agent@eden-symbiosis"
+          git config user.email "agent@symbiosis"
           git config user.name  "Zen agent"
           BRANCH="${{ inputs.branch }}"
 
@@ -277,7 +277,7 @@ jobs:
         working-directory: fork
         shell: pwsh
         run: |
-          git config user.email "agent@eden-symbiosis"
+          git config user.email "agent@symbiosis"
           git config user.name  "Zen agent"
           $branch = "${{ inputs.branch }}-windows"
 

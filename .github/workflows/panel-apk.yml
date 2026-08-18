@@ -1,29 +1,45 @@
 name: Panel APK
 
-# Builds the panel app: a WebView shell around docs/index.html, which is served
-# from GitHub Pages.
+# Builds the Symbiosis panel as one self-contained APK.
 #
-# WHY A SHELL RATHER THAN A PACKAGED PAGE
-#   The panel changes constantly - a new button, a reworded warning - and the
-#   phone should not need a reinstall for any of that. Loading the page from
-#   the network means a push to docs/ is live on the next launch. The APK only
-#   needs rebuilding when the shell itself changes: the URL it points at, the
-#   download handling, the icon.
+# WHAT CHANGED AND WHY
+#   The shell used to be a WebView pointed at GitHub Pages, so that editing
+#   docs/index.html updated every install with no reinstall. That traded away
+#   the thing the panel is for: with no connection it was a retry screen, and
+#   a phone offline is exactly when you want the panel open. The pages are now
+#   copied into assets/ by Gradle and served from inside the APK, so the app
+#   works with no network at all.
 #
-#   The trade is that the app needs a connection on first run and shows a retry
-#   screen without one. That is deliberate; a bundled copy would go stale and
-#   hide the very updates this exists to deliver.
+#   The cost is that a wording change in docs/ no longer reaches an installed
+#   app on its own - the APK has to be rebuilt. That is why this workflow also
+#   triggers on docs/, and why the run summary prints the MD5: so it is obvious
+#   when the installed build is behind.
 #
 #   Signed with the debug key. It is sideloaded from a link and never goes to
 #   Play; a release build with no signing config produces an APK that cannot be
 #   installed at all, which is worse than a well-understood debug signature.
+#
+# The emulator fork is not touched by any of this - see build.yml for that.
 
 on:
   workflow_dispatch:
+    inputs:
+      upload_to_gofile:
+        description: "Also upload the APK to gofile.io"
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
       - 'panel-app/**'
+      # The pages are packaged into the APK now, so a change to them is a
+      # change to the app.
+      - 'docs/index.html'
+      - 'docs/library.html'
+      - 'docs/desks.html'
+      - 'docs/panel.html'
+      - 'docs/icon.svg'
+      - 'docs/manifest.webmanifest'
       - '.github/workflows/panel-apk.yml'
 
 # A release is written, so read alone is not enough.
@@ -52,18 +68,20 @@ jobs:
           key: panel-gradle-${{ hashFiles('panel-app/**/*.gradle.kts') }}
           restore-keys: panel-gradle-
 
-      - name: Check the panel URL resolves
-        # A shell pointing at a 404 builds perfectly and is useless on the
-        # phone. Catch that here rather than after installing.
+      - name: Check the pages exist before building
+        # Gradle fails on a missing page too, but four minutes later and
+        # buried in a stack trace. Fail here, in one readable line.
         run: |
-          URL=$(grep -oP 'PANEL_URL = "\K[^"]+' \
-            panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt)
-          echo "panel URL: $URL"
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 "$URL" || echo 000)
-          echo "HTTP $CODE"
-          if [ "$CODE" != "200" ]; then
-            echo "::warning::the panel URL answered $CODE - Pages may still be deploying"
-          fi
+          missing=0
+          for f in index.html library.html desks.html panel.html icon.svg manifest.webmanifest; do
+            if [ -s "docs/$f" ]; then
+              printf '  %-22s %s bytes\n' "$f" "$(stat -c%s "docs/$f")"
+            else
+              echo "::error::docs/$f is missing or empty - the APK would ship a 404"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
 
       - name: Type-check against the stubs first
         # Ten seconds here against four minutes of Gradle. The first build of
@@ -80,10 +98,34 @@ jobs:
             echo "::error::the stub lost TextView.error and can no longer catch the shadowing bug"
             exit 1
           }
+          # The interceptor is the whole delivery mechanism now; without this
+          # in the stub the type check would not cover it at all.
+          grep -q 'shouldInterceptRequest' panel-app/stubs/android_webkit.kt || {
+            echo "::error::the stub lost shouldInterceptRequest - the asset path is no longer type-checked"
+            exit 1
+          }
 
           kotlinc panel-app/stubs/*.kt \
-                  panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt \
+                  panel-app/app/src/main/java/dev/symbiosis/panel/*.kt \
                   -d /tmp/stubout
+
+      - name: Show the build environment
+        # The runner image supplies the JDK, Gradle and the Android SDK. When
+        # one of them moves, the failure surfaces deep inside a Gradle stack
+        # trace; printing them first turns that into one obvious line.
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version
+          gradle --version | grep -E 'Gradle|JVM'
+          echo "ANDROID_HOME=${ANDROID_HOME:-unset}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-unset}"
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ -z "$SDK" ] || [ ! -d "$SDK/platforms" ]; then
+            echo "::error::no Android SDK on this runner - the build cannot resolve compileSdk 34"
+            exit 1
+          fi
+          ls "$SDK/platforms"
+          echo "android-34 present: $([ -d "$SDK/platforms/android-34" ] && echo yes || echo NO)"
 
       - name: Build
         working-directory: panel-app
@@ -91,16 +133,102 @@ jobs:
           gradle wrapper --gradle-version 8.7 --no-daemon
           ./gradlew assembleRelease --no-daemon --stacktrace
 
+      - name: Verify the panel is actually inside the APK
+        # The build succeeding proves nothing about packaging: an empty
+        # assets/ directory produces a perfectly valid APK that shows the
+        # "not part of this build" screen on the phone. Look inside.
+        run: |
+          APK=$(find panel-app -name '*.apk' -path '*release*' | head -1)
+          [ -n "$APK" ] || { echo "::error::no APK was produced"; exit 1; }
+          echo "APK: $APK"
+
+          LIST=$(unzip -l "$APK")
+          fail=0
+          for f in index.html library.html desks.html panel.html icon.svg manifest.webmanifest; do
+            if printf '%s' "$LIST" | grep -q "assets/panel/$f"; then
+              echo "  ok      assets/panel/$f"
+            else
+              echo "::error::assets/panel/$f is not in the APK"
+              fail=1
+            fi
+          done
+
+          # The index must be the real panel, not a stub or a truncated copy.
+          unzip -p "$APK" assets/panel/index.html > /tmp/index.html
+          SIZE=$(stat -c%s /tmp/index.html)
+          echo "  index.html in APK: $SIZE bytes"
+          [ "$SIZE" -gt 20000 ] || {
+            echo "::error::assets/panel/index.html is only $SIZE bytes - not the real page"
+            fail=1
+          }
+          grep -q 'api.github.com' /tmp/index.html || {
+            echo "::error::the packaged index.html does not look like the panel"
+            fail=1
+          }
+
+          # It must match what is in the repository, or the APK ships a stale
+          # page while docs/ has moved on.
+          if ! cmp -s /tmp/index.html docs/index.html; then
+            echo "::error::the packaged index.html differs from docs/index.html"
+            fail=1
+          fi
+
+          # The shell must not still be pointing at Pages.
+          if grep -rq 'github\.io/symbiosis/"' panel-app/app/src/main/java/dev/symbiosis/panel/MainActivity.kt; then
+            echo "::error::MainActivity still loads the panel from the network"
+            fail=1
+          fi
+
+          # No emulator. This app is the panel alone: the 21 MB emulator APK
+          # carries libkenjinxjni.so and friends, and if any native library
+          # appears here something has pulled the fork's tree into the build.
+          if printf '%s' "$LIST" | grep -qE 'lib/.*\.so'; then
+            echo "::error::native libraries are in the panel APK - the emulator leaked into the build"
+            printf '%s' "$LIST" | grep -E 'lib/.*\.so' | head
+            fail=1
+          else
+            echo "  ok      no native libraries (no emulator)"
+          fi
+
+          # No stubs. panel-app/stubs/ exists only to type-check without the
+          # Android SDK; those files declare package android.webkit and friends,
+          # so if they were ever compiled in they would shadow the real
+          # framework at runtime. They live outside the Gradle source set, and
+          # this keeps it that way.
+          #
+          # CookieManager2 is the canary: a class invented purely for the stub,
+          # with no counterpart in the Android framework, so finding it in the
+          # dex means the stubs were compiled. Grepping for the package name
+          # would prove nothing - the real android.webkit is referenced by every
+          # build.
+          if unzip -p "$APK" classes.dex | strings | grep -q 'CookieManager2'; then
+            echo "::error::stub classes were compiled into the APK (found CookieManager2)"
+            fail=1
+          else
+            echo "  ok      no stub classes in the dex"
+          fi
+
+          # The dex must hold exactly the two real classes and nothing else of
+          # ours. A build that silently dropped PanelAssets would still run and
+          # would show the panel as a blank page.
+          DEX=$(unzip -p "$APK" classes.dex | strings)
+          for cls in 'Ldev/symbiosis/panel/MainActivity' 'Ldev/symbiosis/panel/PanelAssets'; do
+            if printf '%s' "$DEX" | grep -q "$cls"; then
+              echo "  ok      $cls"
+            else
+              echo "::error::$cls is missing from the APK"
+              fail=1
+            fi
+          done
+
+          [ "$fail" -eq 0 ]
+
       - name: Report and upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPLOAD: ${{ github.event.inputs.upload_to_gofile }}
         run: |
           APK=$(find panel-app -name '*.apk' -path '*release*' | head -1)
-          if [ -z "$APK" ]; then
-            echo "::error::no APK was produced"
-            find panel-app -name '*.apk' || true
-            exit 1
-          fi
           SIZE=$(stat -c%s "$APK")
           MD5=$(md5sum "$APK" | cut -d' ' -f1)
           cp "$APK" symbiosis-panel.apk
@@ -112,39 +240,43 @@ jobs:
           # all and the summary simply omitted the row. Report what happened
           # and always fall back to the release, which cannot disappear.
           LINK=""
-          SERVER=$(curl -s -m 20 https://api.gofile.io/servers \
-            | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['data']['servers'][0]['name'])" 2>/dev/null || true)
-          if [ -n "$SERVER" ]; then
-            echo "gofile server: $SERVER"
-            LINK=$(curl -s -m 300 -F "file=@symbiosis-panel.apk" \
-              "https://$SERVER.gofile.io/contents/uploadfile" \
-              | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('data',{}).get('downloadPage',''))" 2>/dev/null || true)
+          if [ "$UPLOAD" != "false" ]; then
+            SERVER=$(curl -s -m 20 https://api.gofile.io/servers \
+              | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['data']['servers'][0]['name'])" 2>/dev/null || true)
+            if [ -n "$SERVER" ]; then
+              echo "gofile server: $SERVER"
+              LINK=$(curl -s -m 300 -F "file=@symbiosis-panel.apk" \
+                "https://$SERVER.gofile.io/contents/uploadfile" \
+                | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('data',{}).get('downloadPage',''))" 2>/dev/null || true)
+            fi
+            [ -n "$LINK" ] && echo "gofile: $LINK" || echo "gofile upload produced no link"
           fi
-          [ -n "$LINK" ] && echo "gofile: $LINK" || echo "gofile upload produced no link"
 
           # A rolling release tag, so there is one permanent address for the
           # current app instead of an artifact that expires in 90 days and
           # needs a signed-in browser to fetch.
           gh release delete panel-latest --yes --cleanup-tag 2>/dev/null || true
           gh release create panel-latest symbiosis-panel.apk \
-            --title "Panel APK (latest)" \
-            --notes "Оболочка над панелью. Содержимое грузится из сети, поэтому обновлять APK нужно только при изменении самой оболочки. MD5 \`$MD5\`." \
+            --title "Symbiosis panel (latest)" \
+            --notes "Панель целиком внутри APK — открывается без интернета. Сеть нужна только для GitHub API. MD5 \`$MD5\`." \
             && DIRECT="https://github.com/${GITHUB_REPOSITORY}/releases/download/panel-latest/symbiosis-panel.apk" \
             || DIRECT=""
 
           {
-            echo "## Panel APK"
+            echo "## Symbiosis panel APK"
             echo ""
             echo "| | |"
             echo "|---|---|"
-            echo "| Size | $((SIZE/1024)) KB |"
+            echo "| Размер | $((SIZE/1024)) KB |"
             echo "| MD5 | \`$MD5\` |"
             [ -n "$DIRECT" ] && echo "| Скачать | $DIRECT |"
             [ -n "$LINK" ] && echo "| Зеркало | $LINK |"
             echo ""
-            echo "The app loads the panel from GitHub Pages, so changes to"
-            echo "\`docs/index.html\` appear on the next launch. Reinstall only"
-            echo "when the shell itself changes."
+            echo "Панель упакована в APK и открывается без сети."
+            echo "Интернет нужен только для запросов к GitHub API."
+            echo ""
+            echo "Страницы обновляются вместе с приложением, поэтому после"
+            echo "правки \`docs/\` нужно пересобрать и переустановить APK."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4

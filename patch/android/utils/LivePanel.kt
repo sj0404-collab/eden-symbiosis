@@ -19,7 +19,7 @@ object LivePanel {
 
     const val BRIDGE_VERSION = 16
 
-    private const val PANEL_URL = "https://sj0404-collab.github.io/eden-symbiosis/library.html"
+    private const val PANEL_URL = "https://sj0404-collab.github.io/symbiosis/library.html"
 
     const val OFFLINE_URL = "file:///android_asset/library.html"
 

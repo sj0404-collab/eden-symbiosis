@@ -130,7 +130,7 @@ except Exception:
 fi
 
 cp "$STAGE" "$FILE"
-git config user.email "session@eden-symbiosis"
+git config user.email "session@symbiosis"
 git config user.name  "Session state"
 git add "$FILE"
 

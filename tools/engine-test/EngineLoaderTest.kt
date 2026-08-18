@@ -55,7 +55,7 @@ fun main() {
 
     check("URL ядра указывает на релиз этого репо",
           EngineDownloader.urlFor(EngineLoader.Engine.KENJI).startsWith(
-            "https://github.com/sj0404-collab/eden-symbiosis/releases/download/engine-kenji/"))
+            "https://github.com/sj0404-collab/symbiosis/releases/download/engine-kenji/"))
 
     println(if (bad == 0) "ВСЁ ПРОШЛО" else "ПРОВАЛОВ: $bad")
     if (bad > 0) kotlin.system.exitProcess(1)

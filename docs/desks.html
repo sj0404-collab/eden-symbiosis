@@ -114,7 +114,7 @@
 // The panel keeps the token; this page only needs to read two small files, and
 // on a public repository it can do that without one. With a token it also
 // works on a private repository - the same key the panel already saved.
-const REPO = 'sj0404-collab/eden-symbiosis';
+const REPO = 'sj0404-collab/symbiosis';
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));

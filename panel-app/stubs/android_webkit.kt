@@ -9,7 +9,11 @@ open class WebSettings { var javaScriptEnabled = false; var domStorageEnabled = 
 open class WebResourceRequest { val url: android.net.Uri = android.net.Uri()
   val isForMainFrame: Boolean = true }
 open class WebResourceError
+open class WebResourceResponse(
+  mime: String?, encoding: String?, statusCode: Int, reasonPhrase: String,
+  headers: Map<String, String>?, data: java.io.InputStream?)
 open class WebViewClient {
+  open fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = null
   open fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = false
   open fun onReceivedError(view: WebView, request: WebResourceRequest, err: WebResourceError) {}
   open fun onPageFinished(view: WebView, url: String) {} }

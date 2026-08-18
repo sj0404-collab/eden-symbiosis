@@ -1,3 +1,4 @@
 package android.net
 class Uri { companion object { fun parse(s: String): Uri = Uri() }
-  val host: String? = null }
+  val host: String? = null
+  val path: String? = null }

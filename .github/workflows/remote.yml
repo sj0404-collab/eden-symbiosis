@@ -118,7 +118,7 @@ jobs:
           # lost. A dedicated branch keeps work safe without touching main: a
           # commit every two minutes, and one final commit on the way out.
           cd "$GITHUB_WORKSPACE/fork"
-          git config user.email "session@eden-symbiosis"
+          git config user.email "session@symbiosis"
           git config user.name  "Runner session"
           BRANCH="session/${{ inputs.label }}-$(date -u +%Y%m%d-%H%M)"
           git checkout -b "$BRANCH"
@@ -153,11 +153,11 @@ jobs:
           Eden Symbiosis - runner session
           ===============================
           Where things are:
-            ~/work/eden-symbiosis/eden   upstream v0.2.1, patch applied
-            ~/work/eden-symbiosis/fork   this repository
+            ~/work/symbiosis/eden   upstream v0.2.1, patch applied
+            ~/work/symbiosis/fork   this repository
 
           Build the APK:
-            cd ~/work/eden-symbiosis/eden/src/android
+            cd ~/work/symbiosis/eden/src/android
             ./gradlew assembleLegacyDebug --parallel --max-workers=$(nproc)
           Result: app/build/outputs/apk/legacy/debug/app-legacy-debug.apk
 
@@ -165,8 +165,8 @@ jobs:
             curl -F "file=@<apk>" https://store-eu-par-2.gofile.io/contents/uploadfile
 
           Run the tests:
-            bash ~/work/eden-symbiosis/fork/tools/run_tests.sh \
-              --eden ~/work/eden-symbiosis/eden
+            bash ~/work/symbiosis/fork/tools/run_tests.sh \
+              --eden ~/work/symbiosis/eden
 
           Survive a dropped phone connection:
             tmux new -s work      # first time

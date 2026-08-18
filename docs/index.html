@@ -292,7 +292,7 @@ const GH = 'https://api.github.com';
 // Where the panel points when nobody has signed in yet. Any account can be
 // added later; this is only the read-only starting view.
 const DEFAULT_OWNER = 'sj0404-collab';
-const DEFAULT_REPO  = DEFAULT_OWNER + '/eden-symbiosis';
+const DEFAULT_REPO  = DEFAULT_OWNER + '/symbiosis';
 
 // No hardcoded tunnel address. The reserved domain is only used when the
 // session actually got it; whichever address a session reports is the one the
@@ -402,7 +402,7 @@ async function addAccount() {
 // upstream name, so looking for it by name is right far more often than not;
 // when it is missing the user picks one by hand.
 async function guessControl(login, token) {
-  const mine = `${login}/eden-symbiosis`;
+  const mine = `${login}/symbiosis`;
   try {
     const r = await fetch(`${GH}/repos/${mine}`, {
       headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'token ' + token }

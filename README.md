@@ -1,4 +1,4 @@
-# Eden Symbiosis
+# Symbiosis
 
 A fork of the [Eden](https://git.eden-emu.dev/eden-emu/eden) Android emulator, tuned for
 **ARM Mali GPUs on 8 GB devices where no custom Vulkan driver can be installed**.
@@ -60,17 +60,36 @@ docs/
 ## Building
 
 **Builds run in GitHub Actions, not on a workstation.** Go to the
-[Actions tab](https://github.com/sj0404-collab/eden-symbiosis/actions), pick
+[Actions tab](https://github.com/sj0404-collab/symbiosis/actions), pick
 **Build APK**, press *Run workflow*. About 25 minutes; the APK is attached as an
 artefact and, if the box is ticked, uploaded to gofile.io with its MD5 printed
 in the run summary.
 
-Two workflows:
+Three workflows:
 
 | Workflow | Runs | Purpose |
 |---|---|---|
-| **Tests** | ~4 min | Host test suite plus the localisation check. Runs on every change to `tests/`, `tools/run_tests.sh` or the C++ layer. |
+| **Tests** | ~4 min | Host test suite, the localisation check and the agent/chat suite. Runs on every change to `tests/`, `tools/run_tests.sh`, the C++ layer or `agent/`. |
 | **Build APK** | ~25 min | The above, then the full NDK build, then verifies the fixes are present in the produced APK. |
+| **Panel APK** | ~5 min | The Symbiosis panel as a standalone, self-contained app. Independent of the emulator. |
+
+### Panel APK
+
+The panel is a separate, much smaller app: the control panel for this account
+and for the fork, with no emulator in it. **The pages are packaged inside the
+APK**, so it opens with no connection; the network is used only for what the
+panel actually does - the GitHub API, starting workflows, reaching a session
+tunnel.
+
+It is served to the WebView from `assets/panel/` under a private https origin
+rather than `file://`, because the page keeps its token in `localStorage` and
+calls `api.github.com`: a `file://` document gets an opaque origin, loses that
+storage between launches and has its cross-origin requests blocked.
+
+Because the pages ship in the APK, editing `docs/` no longer updates an
+installed app on its own - rebuild and reinstall. The build verifies that each
+page is really inside the APK and byte-identical to `docs/`, so a build that
+quietly shipped an empty `assets/` fails instead of reaching a phone.
 
 `ubuntu-latest` deliberately: Eden's native build is CMake + NDK and targets
 Linux, and `windows-latest` would add path-length and line-ending failures for
