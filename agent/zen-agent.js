@@ -3610,13 +3610,41 @@ TOOL_JSON:{"tool":"workspace_info","args":{}}
 ПРИМЕР ПЕРЕД РАБОТОЙ:
 TOOL_JSON:{"tool":"workspace_info","args":{}}
 
+ВОПРОС О СРЕДЕ = ВСЕГДА ИНСТРУМЕНТ. ЭТО ГЛАВНОЕ ПРАВИЛО.
+Любой вопрос о том, ГДЕ ты находишься, ЧТО вокруг тебя и В КАКОМ состоянии
+проект, отвечается ВЫЗОВОМ ИНСТРУМЕНТА, а не рассуждением. У тебя есть
+реальный доступ — не отвечай "я не совсем понял вопрос" и не говори, что ты
+"просто в этом чате". Ты находишься в конкретной папке на конкретной машине,
+и это можно посмотреть.
+
+Вопрос пользователя               -> что вызвать
+"где ты", "где ты открыт"          -> workspace_info
+"твоя рабочая сессия где"          -> workspace_info, затем termux_info
+"какая директория", "где мы"       -> workspace_info
+"что в папке", "покажи файлы"      -> list_dir
+"какой репозиторий", "что в гите"  -> git_status, затем git_log
+"какая ветка"                      -> git_branch
+"что на гитхабе", "какие репо"     -> git_status; для чужого репо git_clone
+"что ты видишь", "что тут есть"    -> workspace_info + list_dir
+"это запущено?", "сервер работает?"-> process_status, затем health_check
+
+Если формулировка непонятна, но речь явно про папку, файлы, git, GitHub,
+сессию или окружение — СНАЧАЛА вызови workspace_info и покажи факты, и только
+потом, при необходимости, уточняй. Показать реальный путь всегда полезнее,
+чем переспросить.
+
+Отвечая про среду, называй КОНКРЕТИКУ из результата инструмента: полный путь,
+имя ветки, число файлов. Ответ без конкретики означает, что ты не посмотрел.
+
 КОГДА ИНСТРУМЕНТЫ НЕ НУЖНЫ:
-Если сообщение — приветствие, короткая реплика ("Ну", "Привет", "как дела"),
-вопрос о твоих возможностях или что угодно, на что можно ответить словами —
-просто ответь текстом. Не вызывай инструмент ради самого вызова и никогда не
-отвечай пустотой: пустой ответ превращается в бессмысленное "Задача
-завершена", и человек видит, будто ты его проигнорировал. Одна короткая
-фраза лучше молчания.
+Только если сообщение вообще не касается среды: приветствие ("Привет"),
+короткая реплика ("Ну", "ок", "спасибо"), вопрос о том, что ты умеешь в
+принципе, объяснение или совет по коду, который не требует смотреть файлы.
+Тогда просто ответь текстом.
+
+Никогда не отвечай пустотой: пустой ответ превращается в бессмысленное
+"Задача завершена", и человек видит, будто ты его проигнорировал. Одна
+короткая фраза лучше молчания.
 
 ПРИМЕР СМЕНЫ ПРОЕКТА:
 TOOL_JSON:{"tool":"set_workspace","args":{"path":"/storage/emulated/0/Alarms/месенджер"}}
@@ -3665,10 +3693,42 @@ function buildSystemPrompt() {
     ? 'Режим Build: можно выполнять изменения после permission/подтверждения.'
     : `Режим ${AGENT_MODES[CONFIG.agentMode].label}: только анализ, вопросы и план. Изменяющие tools заблокированы permission engine.`;
   const pluginPrompt = pluginSystemPrompts();
+  // Live facts about the workspace, so "где ты открыт" has an answer already
+  // in the prompt instead of being met with "я не совсем понял вопрос".
+  //
+  // The model was told its working directory but nothing about what is in it,
+  // so a question about the environment looked to it like a question about
+  // itself - and it answered with philosophy rather than a path. Reading a
+  // directory listing costs nothing and turns that into a fact.
+  let envFacts = '';
+  try {
+    const entries = fs.readdirSync(WORKSPACE_ROOT, { withFileTypes: true });
+    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.')).map(e => e.name);
+    const files = entries.filter(e => e.isFile()).map(e => e.name);
+    const isRepo = fs.existsSync(path.join(WORKSPACE_ROOT, '.git'));
+    let branch = '';
+    if (isRepo) {
+      try {
+        branch = fs.readFileSync(path.join(WORKSPACE_ROOT, '.git', 'HEAD'), 'utf8')
+          .trim().replace(/^ref:\s*refs\/heads\//, '');
+      } catch {}
+    }
+    envFacts =
+      `\n\nЧТО СЕЙЧАС В РАБОЧЕЙ ПАПКЕ (снимок на момент запроса):\n` +
+      `- Полный путь: ${WORKSPACE_ROOT}\n` +
+      `- Папок: ${dirs.length}${dirs.length ? ' — ' + dirs.slice(0, 12).join(', ') + (dirs.length > 12 ? ', …' : '') : ''}\n` +
+      `- Файлов: ${files.length}${files.length ? ' — ' + files.slice(0, 12).join(', ') + (files.length > 12 ? ', …' : '') : ''}\n` +
+      `- Git-репозиторий: ${isRepo ? `да${branch ? `, ветка ${branch}` : ''}` : 'нет'}\n` +
+      `Эти данные — снимок. Если пользователь спрашивает про содержимое или git, ` +
+      `всё равно вызови list_dir / git_status: снимок мог устареть, а инструмент даст точный ответ.`;
+  } catch (e) {
+    envFacts = `\n\nРАБОЧАЯ ПАПКА ${WORKSPACE_ROOT} сейчас не читается (${String(e.message || e).slice(0, 80)}). ` +
+      `На вопрос о папке вызови workspace_info и скажи об этой ошибке прямо.`;
+  }
   const longRule = CONFIG.longTaskMode
     ? `Долгая задача включена: разрешено до ${agentStepLimit()} шагов и длительные команды. Для серверов используй process_start/process_logs, регулярно давай checkpoint и принимай /correct или /abort.`
     : 'Обычный лимит задачи: используй короткие безопасные шаги; для многочасовой работы пользователь включает /long on.';
-  return SYSTEM_PROMPT + `\n\nТЕКУЩИЙ КОНТЕКСТ MCP:\n- Платформа: ${PLATFORM.name}\n- Провайдер: ${currentProvider}\n- Модель: ${currentModel}\n- Режим: ${CONFIG.agentMode}\n- Активная AI-сессия: ${activeSession}\n- Активная рабочая папка: ${WORKSPACE_ROOT}\n- ${providerRule}\n- ${clarifyRule}\n- ${modeRule}\n- ${longRule}\n- Относительные пути разрешаются от неё; внутренняя папка Termux не используется.${pluginPrompt ? `\n\nPLUGIN SYSTEM INSTRUCTIONS:\n${pluginPrompt}` : ''}`;
+  return SYSTEM_PROMPT + `\n\nТЕКУЩИЙ КОНТЕКСТ MCP:\n- Платформа: ${PLATFORM.name}\n- Провайдер: ${currentProvider}\n- Модель: ${currentModel}\n- Режим: ${CONFIG.agentMode}\n- Активная AI-сессия: ${activeSession}\n- Активная рабочая папка: ${WORKSPACE_ROOT}\n- ${providerRule}\n- ${clarifyRule}\n- ${modeRule}\n- ${longRule}\n- Относительные пути разрешаются от неё; внутренняя папка Termux не используется.${envFacts}${pluginPrompt ? `\n\nPLUGIN SYSTEM INSTRUCTIONS:\n${pluginPrompt}` : ''}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════
