@@ -1,12 +1,6 @@
 {
-  "kind": "CLI-агент",
-  "os": "windows",
-  "url": "https://liberal-forests-ensemble-climate.trycloudflare.com",
-  "agentUrl": "https://liberal-forests-ensemble-climate.trycloudflare.com/hub?token=zen-2ab7a3932a674d7bbdd5c46c",
-  "agentToken": "zen-2ab7a3932a674d7bbdd5c46c",
-  "branch": "agent-work-windows",
-  "startedAt": "2026-08-19T06:53:35Z",
-  "state": "live",
+  "state": "ended",
+  "startedAt": "2026-08-19T12:53:05Z",
   "runId": "32225293280",
   "runNumber": "26",
   "repo": "sj0404-collab/symbiosis"
